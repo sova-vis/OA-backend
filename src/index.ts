@@ -5,6 +5,8 @@ import express, { Express, Request, Response } from 'express';
 import authRoutes from './auth.routes';
 import adminRoutes from './admin.routes';
 import papersRoutes from './papers.routes';
+import ragRoutes from './rag.routes';
+import contentRoutes from './content.routes';
 
 const app: Express = express();
 const PORT = process.env.PORT || 3001;
@@ -25,6 +27,12 @@ app.use('/admin', adminRoutes);
 
 // Papers API
 app.use('/papers', papersRoutes);
+
+// Content API (navigation/search)
+app.use('/content', contentRoutes);
+
+// RAG API
+app.use('/rag', ragRoutes);
 
 // Health check
 app.get('/health', (req: Request, res: Response) => {
