@@ -11,9 +11,14 @@ import contentRoutes from './content.routes';
 const app: Express = express();
 const PORT = process.env.PORT || 3001;
 
-// Basic middleware
+// CORS configuration - allow both local development and production
+const allowedOrigins = [
+  'http://localhost:3000',
+  process.env.FRONTEND_URL || 'http://localhost:3000'
+].filter(Boolean);
+
 app.use(cors({
-  origin: 'http://localhost:3000',
+  origin: allowedOrigins,
   credentials: true
 }));
 app.use(express.json());
