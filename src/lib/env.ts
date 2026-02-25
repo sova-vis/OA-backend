@@ -23,6 +23,11 @@ const envSchema = z.object({
   // CORS
   FRONTEND_URL: z.string().url().default('http://localhost:3000'),
   
+  // Clerk (optional for development)
+  CLERK_SECRET_KEY: z.string().optional(),
+  CLERK_JWT_KEY: z.string().optional(),
+  NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: z.string().optional(),
+  
   // Google Drive OAuth
   GOOGLE_CLIENT_ID: z.string().optional(),
   GOOGLE_CLIENT_SECRET: z.string().optional(),

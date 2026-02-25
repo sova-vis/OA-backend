@@ -17,46 +17,75 @@ const supabaseAdmin = createClient(
     }
 );
 
-export const createTeacherAccount = async (email: string, password: string, name: string) => {
-    // 1. Create Auth User
-    const { data: authData, error: authError } = await supabaseAdmin.auth.admin.createUser({
-        email,
-        password,
-        email_confirm: true,
-        user_metadata: { full_name: name, role: 'teacher' }
-    });
+function splitName(name: string) {
+    const parts = name.trim().split(/\s+/).filter(Boolean);
+    if (parts.length === 0) {
+        return { firstName: 'Teacher', lastName: '' };
+    }
+    if (parts.length === 1) {
+        return { firstName: parts[0], lastName: '' };
+    }
+    return {
+        firstName: parts[0],
+        lastName: parts.slice(1).join(' '),
+    };
+}
 
-    if (authError) throw authError;
-    if (!authData.user) throw new Error("Failed to create user");
+async function createClerkTeacher(email: string, password: string, name: string) {
+    const secretKey = process.env.CLERK_SECRET_KEY;
 
-    // 2. Create Profile Entry
-    // Note: If you have a Trigger on auth.users -> public.profiles, this might be redundant or require an update instead.
-    // Assuming manual profile creation or update:
-    const { error: profileError } = await supabaseAdmin
-        .from('profiles')
-        .insert([
-            {
-                id: authData.user.id,
-                full_name: name,
-                role: 'teacher',
-                level: 'N/A', // Teachers don't have levels usually
-                onboarding_complete: true
-            }
-        ]);
-
-    // If insert fails (e.g. trigger already created it), try update
-    if (profileError) {
-        // Check if duplicate key error, then update
-        if (profileError.code === '23505') {
-            const { error: updateError } = await supabaseAdmin
-                .from('profiles')
-                .update({ role: 'teacher', full_name: name, onboarding_complete: true })
-                .eq('id', authData.user.id);
-            if (updateError) throw updateError;
-        } else {
-            throw profileError;
-        }
+    if (!secretKey) {
+        throw new Error('CLERK_SECRET_KEY is not configured');
     }
 
-    return authData.user;
+    const { firstName, lastName } = splitName(name);
+
+    const response = await fetch('https://api.clerk.com/v1/users', {
+        method: 'POST',
+        headers: {
+            Authorization: `Bearer ${secretKey}`,
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+            email_address: [email],
+            password,
+            first_name: firstName,
+            last_name: lastName || undefined,
+            public_metadata: { role: 'teacher' },
+        }),
+    });
+
+    const payload = await response.json() as any;
+
+    if (!response.ok) {
+        const message = payload?.errors?.[0]?.long_message || payload?.errors?.[0]?.message || 'Failed to create Clerk user';
+        throw new Error(message);
+    }
+
+    return payload;
+}
+
+export const createTeacherAccount = async (email: string, password: string, name: string) => {
+    const clerkUser = await createClerkTeacher(email, password, name);
+
+    const { error: profileError } = await supabaseAdmin
+        .from('profiles')
+        .upsert({
+            clerk_id: clerkUser.id,
+            email,
+            full_name: name,
+            role: 'teacher',
+            level: 'N/A',
+            onboarding_complete: true,
+        }, {
+            onConflict: 'clerk_id',
+        });
+
+    if (profileError) {
+        throw profileError;
+    }
+
+    return {
+        id: clerkUser.id,
+    };
 };

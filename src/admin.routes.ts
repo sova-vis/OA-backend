@@ -1,30 +1,19 @@
 import { Router, Request, Response } from 'express';
 import { createTeacherAccount } from './services/adminService';
+import { AuthenticatedRequest, clerkAuth, requireRole } from './lib/clerkAuth';
 
 const router = Router();
 
-// Hardcoded admin credentials (keep for simple prototype admin access)
-const ADMIN_EMAIL = 'admin@gmail.com';
-const ADMIN_PASSWORD = '123';
-
-// Admin login
+// Deprecated legacy endpoint kept for backward compatibility
 router.post('/login', (req: Request, res: Response) => {
-  const { email, password } = req.body;
-  if (email === ADMIN_EMAIL && password === ADMIN_PASSWORD) {
-    return res.json({ token: 'admin-session-token', role: 'admin' });
-  }
-  return res.status(401).json({ error: 'Invalid credentials' });
+  return res.status(410).json({
+    error: 'Admin login is now handled by Clerk',
+    message: 'Use /sign-in and ensure your profile role is admin',
+  });
 });
 
-// Middleware
-function requireAdmin(req: Request, res: Response, next: Function) {
-  const token = req.headers['authorization'];
-  if (token === 'admin-session-token') return next();
-  return res.status(403).json({ error: 'Forbidden' });
-}
-
 // Add teacher using Supabase Admin
-router.post('/add-teacher', requireAdmin, async (req: Request, res: Response) => {
+router.post('/add-teacher', clerkAuth, requireRole('admin'), async (req: AuthenticatedRequest, res: Response) => {
   const { email, password, name } = req.body;
   if (!email || !password || !name) return res.status(400).json({ error: 'Missing fields' });
 
@@ -39,7 +28,7 @@ router.post('/add-teacher', requireAdmin, async (req: Request, res: Response) =>
 
 // Update user profile (admin only)
 // Update user profile (admin only) - Placeholder for future implementation using Supabase
-router.put('/update-profile/:id', requireAdmin, (req: Request, res: Response) => {
+router.put('/update-profile/:id', clerkAuth, requireRole('admin'), (req: Request, res: Response) => {
   return res.status(501).json({ error: 'Not implemented yet' });
 });
 
