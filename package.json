@@ -18,6 +18,9 @@
   ],
   "author": "",
   "license": "ISC",
+  "engines": {
+    "node": ">=20"
+  },
   "dependencies": {
     "@supabase/supabase-js": "^2.95.3",
     "bcrypt": "^5.1.1",

@@ -1,5 +1,4 @@
 import { Request, Response, NextFunction } from 'express';
-import { createRemoteJWKSet, importSPKI, jwtVerify } from 'jose';
 import { supabase } from './supabase';
 
 export interface AuthenticatedRequest extends Request {
@@ -25,6 +24,7 @@ function getBearerToken(authHeader?: string) {
 }
 
 async function verifyClerkJwt(token: string) {
+  const { createRemoteJWKSet, importSPKI, jwtVerify } = await import('jose');
   const publicKey = getPublicKeyFromEnv();
 
   if (publicKey) {
