@@ -12,13 +12,25 @@ const app: Express = express();
 const PORT = process.env.PORT || 3001;
 
 // CORS configuration - allow both local development and production
-const allowedOrigins = [
+const configuredOrigins = (process.env.FRONTEND_URL || '')
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+
+const allowedOrigins = Array.from(new Set([
   'http://localhost:3000',
-  process.env.FRONTEND_URL || 'http://localhost:3000'
-].filter(Boolean);
+  ...configuredOrigins
+]));
 
 app.use(cors({
-  origin: allowedOrigins,
+  origin: (origin, callback) => {
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+      return;
+    }
+
+    callback(new Error(`CORS blocked for origin: ${origin}`));
+  },
   credentials: true
 }));
 app.use(express.json());

@@ -14,6 +14,39 @@ import { env } from './lib/env';
 
 const router = Router();
 
+function getDriveErrorMessage(error: unknown): { status: number; message: string } {
+  const driveError = error as {
+    code?: number;
+    response?: { status?: number; data?: { error?: { message?: string } } };
+    message?: string;
+  };
+
+  const status = driveError?.response?.status ?? driveError?.code;
+  const providerMessage =
+    driveError?.response?.data?.error?.message ?? driveError?.message;
+
+  if (status === 401 || status === 403) {
+    return {
+      status: 502,
+      message:
+        'Google Drive authorization failed. Verify GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REFRESH_TOKEN, and Drive file permissions.',
+    };
+  }
+
+  if (status === 404) {
+    return {
+      status: 404,
+      message:
+        'Configured Google Drive folder was not found or is not accessible. Verify GOOGLE_DRIVE_FOLDER_ID and sharing permissions.',
+    };
+  }
+
+  return {
+    status: 500,
+    message: providerMessage || 'Failed to browse folder',
+  };
+}
+
 /**
  * GET /papers/drive/list
  * List all papers from Google Drive folder (recursively gets all PDFs)
@@ -137,7 +170,8 @@ router.get('/browse/:folderId?', async (req, res) => {
     });
   } catch (error) {
     console.error('Error browsing folder:', error);
-    res.status(500).json({ error: 'Failed to browse folder' });
+    const mappedError = getDriveErrorMessage(error);
+    res.status(mappedError.status).json({ error: mappedError.message });
   }
 });
 
