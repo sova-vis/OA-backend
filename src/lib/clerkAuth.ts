@@ -11,11 +11,31 @@ export interface AuthenticatedRequest extends Request {
 
 const issuer = process.env.CLERK_ISSUER?.replace(/\/$/, '');
 const audience = process.env.CLERK_AUDIENCE;
+let cachedJwks: ReturnType<(typeof import('jose'))['createRemoteJWKSet']> | null = null;
 
 function getPublicKeyFromEnv() {
   const raw = process.env.CLERK_JWT_KEY;
   if (!raw) return null;
-  return raw.includes('\\n') ? raw.replace(/\\n/g, '\n') : raw;
+  const normalized = (raw.includes('\\n') ? raw.replace(/\\n/g, '\n') : raw)
+    .trim()
+    .replace(/^"|"$/g, '');
+
+  // If CLERK_JWT_KEY is not an SPKI PEM, we'll fall back to JWKS verification.
+  if (!normalized.includes('BEGIN PUBLIC KEY')) {
+    return null;
+  }
+
+  // Validate the key has enough content (a real RSA SPKI key is 300+ chars).
+  // Short/malformed keys cause DOMException: Invalid keyData errors.
+  const keyBody = normalized
+    .replace(/-----BEGIN PUBLIC KEY-----/, '')
+    .replace(/-----END PUBLIC KEY-----/, '')
+    .replace(/\s/g, '');
+  if (keyBody.length < 100) {
+    return null;
+  }
+
+  return normalized;
 }
 
 function getBearerToken(authHeader?: string) {
@@ -28,19 +48,34 @@ async function verifyClerkJwt(token: string) {
   const publicKey = getPublicKeyFromEnv();
 
   if (publicKey) {
-    const key = await importSPKI(publicKey, 'RS256');
-    return jwtVerify(token, key, {
-      ...(issuer ? { issuer } : {}),
-      ...(audience ? { audience } : {}),
-      algorithms: ['RS256'],
-    });
+    try {
+      const key = await importSPKI(publicKey, 'RS256');
+      return jwtVerify(token, key, {
+        ...(issuer ? { issuer } : {}),
+        ...(audience ? { audience } : {}),
+        algorithms: ['RS256'],
+      });
+    } catch {
+      // Invalid key — silently fall back to JWKS if issuer is configured.
+      if (!issuer) {
+        throw new Error('CLERK_JWT_KEY is invalid and no CLERK_ISSUER configured for JWKS fallback');
+      }
+    }
   }
 
   if (!issuer) {
     throw new Error('Missing Clerk verifier config: set CLERK_JWT_KEY or CLERK_ISSUER');
   }
 
-  const jwks = createRemoteJWKSet(new URL(`${issuer}/.well-known/jwks.json`));
+  if (!cachedJwks) {
+    cachedJwks = createRemoteJWKSet(new URL(`${issuer}/.well-known/jwks.json`));
+  }
+
+  const jwks = cachedJwks;
+  if (!jwks) {
+    throw new Error('Unable to initialize Clerk JWKS verifier');
+  }
+
   return jwtVerify(token, jwks, {
     issuer,
     ...(audience ? { audience } : {}),
