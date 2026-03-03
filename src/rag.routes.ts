@@ -4,25 +4,135 @@ import Groq from "groq-sdk";
 
 const router = Router();
 
-// Groq config (free alternative to OpenAI)
-const groq = new Groq({
-  apiKey: process.env.GROQ_API_KEY,
-});
+const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+const GROQ_MODEL = process.env.GROQ_MODEL || "llama-3.3-70b-versatile";
 
-// Use configurable model or fallback to stable one
-const GROQ_MODEL = process.env.GROQ_MODEL || "gemma-7b-it";
-
-// Ollama config (for embeddings)
 const OLLAMA_URL = (process.env.OLLAMA_URL || "http://localhost:11434").replace(/\/$/, "");
 const OLLAMA_MODEL = process.env.OLLAMA_MODEL || "bge-m3";
+const HF_API_KEY = process.env.HUGGINGFACE_API_KEY || "";
+const HF_EMBED_URL = "https://api-inference.huggingface.co/models/BAAI/bge-m3";
 
-// Pipeline thresholds and limits
-const SIMILARITY_THRESHOLD = 0.5;
+const SIMILARITY_THRESHOLD = 0.40;
 const TOP_K = 16;
-const MAX_CHUNKS_PER_FILE = 2;
+const MAX_CHUNKS_PER_FILE = 4;
 
 // ============================================================================
-// TYPE DEFINITIONS
+// SUBJECT CACHE — fetched from DB dynamically, resolved against known names
+// ============================================================================
+
+interface CachedSubject {
+  id: string;
+  code: string;
+  level: string;
+  name: string; // resolved display name
+}
+
+let subjectCache: CachedSubject[] | null = null;
+
+// Comprehensive known CAIE / Pakistan board subject codes → names
+// Keys include both standard CAIE codes and common custom numeric codes
+const KNOWN_CODE_NAMES: Record<string, string> = {
+  // Standard CAIE O-Level
+  "0580": "Mathematics D", "0606": "Additional Mathematics",
+  "0620": "Chemistry", "0625": "Physics", "0610": "Biology",
+  "0417": "Computer Studies", "0450": "Business Studies",
+  "0470": "History", "0460": "Geography",
+  "0500": "English Language", "1123": "English Language",
+  "2058": "Islamiyat", "2059": "Pakistan Studies",
+  "2210": "Computer Science", "4024": "Mathematics Syllabus D",
+  "4037": "Additional Mathematics", "5054": "Physics",
+  "5070": "Chemistry", "5090": "Biology", "3247": "Urdu",
+  "3248": "Art & Design", "2134": "History", "2217": "Geography",
+  "2281": "Economics", "7100": "Commerce", "7707": "Accounting",
+  "2086": "Religious Studies", "3260": "Sociology",
+  // Common custom numeric systems used in Pakistani schools
+  "1001": "Physics", "1002": "Biology", "1003": "Mathematics",
+  "1004": "Islamiyat", "1005": "Urdu", "1006": "English Language",
+  "1007": "Computer Science", "1008": "Economics",
+  "1009": "History", "1010": "Geography", "1011": "Chemistry",
+  "1012": "Pakistan Studies", "1013": "Islamiyat",
+  "1014": "Biology", "1015": "Pakistan Studies",
+  "1016": "Physics", "1017": "Chemistry", "1018": "Mathematics",
+  "1019": "English Language", "1020": "Computer Science",
+};
+
+// Custom overrides from env: SUBJECT_CODE_NAMES="1013:Islamiyat,1015:Pakistan Studies,1016:Physics"
+function parseCustomSubjectNames(): Record<string, string> {
+  const raw = process.env.SUBJECT_CODE_NAMES || "";
+  if (!raw.trim()) return {};
+  return raw.split(",").reduce((acc: Record<string, string>, entry) => {
+    const [code, name] = entry.split(":").map((s) => s.trim());
+    if (code && name) acc[code] = name;
+    return acc;
+  }, {});
+}
+
+async function getSubjectCache(): Promise<CachedSubject[]> {
+  if (subjectCache) return subjectCache;
+
+  const { data, error } = await supabase
+    .from("subjects")
+    .select("id, code, level")
+    .order("code");
+
+  if (error || !data) {
+    console.error("Cannot fetch subjects from DB:", error?.message);
+    return [];
+  }
+
+  const customNames = parseCustomSubjectNames();
+
+  subjectCache = data.map((s: any) => ({
+    id: s.id as string,
+    code: s.code as string,
+    level: s.level as string,
+    name: customNames[s.code] || KNOWN_CODE_NAMES[s.code] || `Subject ${s.code}`,
+  }));
+
+  console.log("[RAG] Loaded subjects:", subjectCache.map((s) => `${s.code}=${s.name}`).join(", "));
+  return subjectCache;
+}
+
+// Invalidate cache so next request refetches (useful after admin updates)
+function clearSubjectCache() {
+  subjectCache = null;
+}
+
+function resolveSubjectName(code: string): string {
+  if (subjectCache) {
+    const found = subjectCache.find((s) => s.code === code);
+    if (found) return found.name;
+  }
+  const customNames = parseCustomSubjectNames();
+  return customNames[code] || KNOWN_CODE_NAMES[code] || `Subject ${code}`;
+}
+
+// Find the best matching DB subject for a user-typed name
+async function findSubjectByName(name: string): Promise<CachedSubject | null> {
+  const subjects = await getSubjectCache();
+  if (!subjects.length) return null;
+
+  const q = name.toLowerCase().trim();
+
+  // Exact name match
+  const exact = subjects.find((s) => s.name.toLowerCase() === q);
+  if (exact) return exact;
+
+  // Partial name match
+  const partial = subjects.find(
+    (s) => s.name.toLowerCase().includes(q) || q.includes(s.name.toLowerCase())
+  );
+  if (partial) return partial;
+
+  // Code match (user typed the code directly)
+  const byCode = subjects.find((s) => s.code.toLowerCase() === q);
+  if (byCode) return byCode;
+
+  return null;
+}
+
+// ============================================================================
+// TYPES
 // ============================================================================
 
 type Intent = "paper_lookup" | "exam_question" | "smalltalk";
@@ -30,7 +140,7 @@ type Intent = "paper_lookup" | "exam_question" | "smalltalk";
 interface ClassificationResult {
   intent: Intent;
   metadata?: {
-    subject?: string;
+    subjectKeyword?: string;
     year?: number;
     paper?: string;
     fileType?: string;
@@ -41,12 +151,7 @@ interface GroupedResult {
   paperFileId: string;
   filetype: string;
   storagePath: string;
-  chunks: Array<{
-    id: string;
-    content: string;
-    chunkIndex: number;
-    similarity: number;
-  }>;
+  chunks: Array<{ id: string; content: string; chunkIndex: number; similarity: number }>;
   subject: string;
   year: number;
   session: string;
@@ -60,6 +165,13 @@ interface RagRetrievalResult {
   error?: string;
 }
 
+interface RelatedQuestion {
+  type: "exact" | "similar";
+  text: string;
+  source: { subject: string; year: number; session: string; paper: string; file_type: string };
+  similarity: number;
+}
+
 interface ExamAnswer {
   answer: string;
   markingPoints: Array<{ point: string; marks: number }>;
@@ -67,29 +179,22 @@ interface ExamAnswer {
   citations: Citation[];
   confidenceScore: number;
   coveragePercentage: number;
+  relatedQuestion?: RelatedQuestion;
 }
+
+interface HistoryMessage { role: "user" | "assistant"; content: string; }
 
 interface RagQueryRequest {
   question: string;
   limit?: number;
-  filters?: {
-    subject?: string;
-    year?: number;
-    file_type?: string;
-    level?: string;
-  };
+  filters?: { subject?: string; year?: number; file_type?: string; level?: string };
+  history?: HistoryMessage[];
 }
 
 interface Citation {
-  subject: string;
-  subjectName: string;
-  year: number;
-  session: string;
-  paper: string;
-  file_type: string;
-  storage_path: string;
-  chunk_index: number;
-  similarity: number;
+  subject: string; subjectName: string; year: number; session: string;
+  paper: string; file_type: string; storage_path: string;
+  chunk_index: number; similarity: number;
 }
 
 interface RagQueryResponse {
@@ -101,7 +206,71 @@ interface RagQueryResponse {
   confidence_score?: number;
   coverage_percentage?: number;
   low_confidence?: boolean;
-  results?: any[];  // For paper_lookup responses
+  results?: any[];
+  available_subjects?: Array<{ code: string; name: string; level: string }>;
+  related_question?: RelatedQuestion;
+}
+
+// ============================================================================
+// EMBEDDING — HuggingFace primary, Ollama fallback
+// ============================================================================
+
+// Mean-pool a 2D token matrix [seq_len, hidden] → [hidden]
+function meanPoolTokens(tokenMatrix: number[][]): number[] {
+  if (!tokenMatrix.length) return [];
+  const dim = tokenMatrix[0].length;
+  const result = new Array(dim).fill(0);
+  for (const vec of tokenMatrix) {
+    for (let i = 0; i < dim; i++) result[i] += vec[i];
+  }
+  return result.map((v) => v / tokenMatrix.length);
+}
+
+async function getEmbedding(text: string): Promise<number[]> {
+  if (HF_API_KEY) {
+    try {
+      const res = await fetch(HF_EMBED_URL, {
+        method: "POST",
+        headers: { "Authorization": `Bearer ${HF_API_KEY}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ inputs: text }),
+        signal: AbortSignal.timeout(20000),
+      });
+      if (res.ok) {
+        const data = await res.json() as any;
+
+        let embedding: number[];
+        if (Array.isArray(data[0]?.[0])) {
+          // 3D tensor [batch, seq_len, hidden] — take batch 0, mean-pool over seq
+          embedding = meanPoolTokens(data[0] as number[][]);
+        } else if (Array.isArray(data[0])) {
+          // 2D tensor [seq_len, hidden] — mean-pool over seq
+          embedding = meanPoolTokens(data as number[][]);
+        } else {
+          // 1D flat vector [hidden] — use directly
+          embedding = data as number[];
+        }
+
+        if (Array.isArray(embedding) && embedding.length > 0) return embedding;
+      } else {
+        console.warn(`HuggingFace embedding HTTP ${res.status}: ${await res.text()}`);
+      }
+    } catch (err) { console.warn("HuggingFace embedding error:", err); }
+  }
+
+  try {
+    const res = await fetch(`${OLLAMA_URL}/api/embeddings`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: OLLAMA_MODEL, prompt: text }),
+      signal: AbortSignal.timeout(20000),
+    });
+    if (res.ok) {
+      const data = await res.json() as any;
+      if (Array.isArray(data?.embedding) && data.embedding.length > 0) return data.embedding;
+    }
+  } catch (err) { console.warn("Ollama embedding error:", err); }
+
+  throw new Error("Embedding service unavailable. Set HUGGINGFACE_API_KEY or start Ollama.");
 }
 
 // ============================================================================
@@ -111,238 +280,133 @@ interface RagQueryResponse {
 function classifyIntent(question: string): ClassificationResult {
   const q = question.toLowerCase().trim();
 
-  // Smalltalk: exact word matches or punctuation-only
   const smalltalkPatterns = [
-    /^(hello|hi|hey|thanks|thank you|ok|okay|yes|no|sure|good|great|nice|cool|bye|goodby)$/,
-    /^[\?\!\.]{1,3}$/,
-    /^(lol|haha|hmm|umm|err)$/,
+    /^(hello|hi|hey|thanks|thank you|ok|okay|yes|no|sure|good|great|nice|cool|bye|goodbye)$/,
+    /^[\?\!\.]{1,3}$/, /^(lol|haha|hmm|umm|err)$/,
   ];
-
-  if (smalltalkPatterns.some((p) => p.test(q))) {
-    return { intent: "smalltalk" };
-  }
-
-  // Paper lookup: subject + (year or paper/file type indicator)
-  const subjects = [
-    "chemistry",
-    "physics",
-    "biology",
-    "mathematics",
-    "islamiyat",
-    "urdu",
-    "english",
-    "computer",
-    "economics",
-    "history",
-    "geography",
-    "art",
-    "music",
-    "english language",
-    "english literature",
-  ];
+  if (smalltalkPatterns.some((p) => p.test(q))) return { intent: "smalltalk" };
 
   const fileTypeIndicators = ["qp", "ms", "er", "gt"];
-  const yearIndicators = /\b(20\d{2})\b/;
-  const paperIndicators = /\b(p1|p2|p3)\b/i;
+  const yearMatch = q.match(/\b(20\d{2})\b/);
+  const paperMatch = q.match(/\b(p1|p2|p3)\b/i);
 
-  let detectedSubject: string | undefined;
-  let detectedYear: number | undefined;
-  let detectedPaper: string | undefined;
+  // Common subject keywords
+  const subjectKeywords = [
+    "computer science", "english language", "english literature",
+    "pakistan studies", "pakistan study",
+    "chemistry", "physics", "biology", "mathematics", "maths", "math",
+    "islamiyat", "urdu", "english", "computer", "economics",
+    "history", "geography", "accounting", "commerce", "sociology",
+    "additional mathematics", "add maths",
+  ].sort((a, b) => b.length - a.length);
+
+  let detectedSubjectKeyword: string | undefined;
+  for (const kw of subjectKeywords) {
+    if (q.includes(kw)) { detectedSubjectKeyword = kw; break; }
+  }
+
   let detectedFileType: string | undefined;
-
-  // Find subject
-  for (const subject of subjects) {
-    if (q.includes(subject)) {
-      detectedSubject = subject;
-      break;
-    }
-  }
-
-  // Find year
-  const yearMatch = q.match(yearIndicators);
-  if (yearMatch) {
-    detectedYear = parseInt(yearMatch[1]);
-  }
-
-  // Find paper
-  const paperMatch = q.match(paperIndicators);
-  if (paperMatch) {
-    detectedPaper = paperMatch[1].toUpperCase();
-  }
-
-  // Find file type
   for (const ft of fileTypeIndicators) {
-    if (q.includes(ft)) {
-      detectedFileType = ft.toUpperCase();
-      break;
-    }
+    if (q.includes(ft)) { detectedFileType = ft.toUpperCase(); break; }
   }
 
-  // If we have subject + at least one indicator, it's a paper lookup
-  if (detectedSubject && (detectedYear || detectedFileType || detectedPaper)) {
+  const hasLookupKeyword = /\b(paper|past paper|find|show|get|list|download|papers|available)\b/.test(q);
+
+  if (detectedSubjectKeyword && (yearMatch || detectedFileType || paperMatch || hasLookupKeyword)) {
     return {
       intent: "paper_lookup",
       metadata: {
-        subject: detectedSubject,
-        year: detectedYear,
-        paper: detectedPaper,
+        subjectKeyword: detectedSubjectKeyword,
+        year: yearMatch ? parseInt(yearMatch[1]) : undefined,
+        paper: paperMatch ? paperMatch[1].toUpperCase() : undefined,
         fileType: detectedFileType,
       },
     };
   }
 
-  // Default to exam question
+  // Also treat "show papers for [year]" without subject as lookup
+  if (hasLookupKeyword && yearMatch) {
+    return { intent: "paper_lookup", metadata: { year: parseInt(yearMatch[1]) } };
+  }
+
   return { intent: "exam_question" };
 }
 
 // ============================================================================
-// STAGE B: IMPROVED RAG RETRIEVAL
+// STAGE B: RAG RETRIEVAL
 // ============================================================================
 
 async function ragRetrieval(question: string, filters?: any): Promise<RagRetrievalResult> {
   try {
-    // 1. Try Ollama embeddings, fallback to simple keyword matching
-    let questionEmbedding: number[] = [];
-    let usesFallback = false;
-
+    let questionEmbedding: number[];
     try {
-      const embedUrl =
-        (process.env.OLLAMA_URL || "http://localhost:11434").replace(/\/$/, "") +
-        "/api/embeddings";
-
-      const embedRes = await fetch(embedUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: OLLAMA_MODEL,
-          prompt: question,
-        }),
-      });
-
-      if (embedRes.ok) {
-        const embedData = (await embedRes.json()) as any;
-        if (embedData?.embedding && Array.isArray(embedData.embedding)) {
-          questionEmbedding = embedData.embedding;
-        } else {
-          usesFallback = true;
-        }
-      } else {
-        usesFallback = true;
-      }
-    } catch (err) {
-      console.warn("Ollama unavailable, using keyword fallback:", err);
-      usesFallback = true;
+      questionEmbedding = await getEmbedding(question);
+    } catch (embedErr: any) {
+      return { success: false, groupedResults: [], rawSimilarityScores: [], error: embedErr.message };
     }
 
-    // Fallback: Create simple embedding from keywords
-    if (usesFallback || questionEmbedding.length === 0) {
-      const keywords = question.toLowerCase().split(/\s+/).filter(w => w.length > 3);
-      questionEmbedding = new Array(384).fill(0); // 384-dim vector like bge-m3
-      keywords.forEach((keyword, idx) => {
-        const seed = keyword.charCodeAt(0) + keyword.charCodeAt(keyword.length - 1);
-        for (let i = 0; i < Math.min(5, 384); i++) {
-          questionEmbedding[(idx * 5 + i) % 384] += ((seed * (i + 1)) % 100) / 100;
-        }
-      });
-      // Normalize
-      const norm = Math.sqrt(questionEmbedding.reduce((a, b) => a + b * b, 0));
-      if (norm > 0) {
-        questionEmbedding = questionEmbedding.map(v => v / norm);
-      }
-    }
-
-    // 2. Search with Supabase RPC (TOP_K results)
-    const searchParams = {
+    const searchParams: Record<string, any> = {
       query_embedding: questionEmbedding,
       match_count: TOP_K,
-      ...(filters?.subject && { filter_subject_code: filters.subject }),
-      ...(filters?.year && { filter_year: filters.year }),
-      ...(filters?.file_type && { filter_file_type: filters.file_type }),
-      ...(filters?.level && { filter_level: filters.level }),
     };
+    if (filters?.subject) searchParams.filter_subject_code = filters.subject;
+    if (filters?.year) searchParams.filter_year = filters.year;
+    if (filters?.file_type) searchParams.filter_file_type = filters.file_type;
+    if (filters?.level) searchParams.filter_level = filters.level;
 
-    const { data: searchResults, error: searchErr } = await supabase.rpc(
-      "rag_search",
-      searchParams
-    );
+    const { data: searchResults, error: searchErr } = await supabase.rpc("rag_search", searchParams);
 
-    if (searchErr || !searchResults || searchResults.length === 0) {
-      return {
-        success: false,
-        groupedResults: [],
-        rawSimilarityScores: [],
-        error: "No results found",
-      };
+    if (searchErr) {
+      console.error("rag_search RPC error:", searchErr);
+      return { success: false, groupedResults: [], rawSimilarityScores: [], error: searchErr.message };
     }
 
-    // 3. Filter by similarity threshold
-    const filteredResults = (searchResults || []).filter(
-      (r: any) => (r.similarity as number) >= SIMILARITY_THRESHOLD
+    if (!searchResults || searchResults.length === 0) {
+      return { success: false, groupedResults: [], rawSimilarityScores: [], error: "No results found in database" };
+    }
+
+    const filteredResults = (searchResults as any[]).filter(
+      (r) => (r.similarity as number) >= SIMILARITY_THRESHOLD
     );
 
     if (filteredResults.length === 0) {
       return {
-        success: false,
-        groupedResults: [],
-        rawSimilarityScores: [],
-        error: `No results above similarity threshold (${SIMILARITY_THRESHOLD})`,
+        success: false, groupedResults: [], rawSimilarityScores: [],
+        error: `No results above threshold. Best similarity was ${(searchResults[0] as any).similarity?.toFixed(3)}.`,
       };
     }
 
-    // 4. Store raw similarity scores
     const rawScores = filteredResults.map((r: any) => r.similarity as number);
-
-    // 5. Get full chunk metadata
     const chunkIds = filteredResults.map((r: any) => r.chunk_id);
 
     const { data: enrichedChunks, error: enrichErr } = await supabase
       .from("rag_chunks")
-      .select(
-        `
-        id,
-        chunk_index,
-        content,
-        paper_file_id,
+      .select(`
+        id, chunk_index, content, paper_file_id,
         paper_files!inner(
-          id,
-          file_type,
-          storage_path,
-          paper_id,
+          id, file_type, storage_path, paper_id,
           papers!inner(
-            id,
-            year,
-            session,
-            paper,
-            subject_id,
-            subjects!inner(
-              id,
-              code,
-              level
-            )
+            id, year, session, paper, subject_id,
+            subjects!inner(id, code, level)
           )
         )
-      `
-      )
+      `)
       .in("id", chunkIds);
 
     if (enrichErr || !enrichedChunks) {
-      return {
-        success: false,
-        groupedResults: [],
-        rawSimilarityScores: rawScores,
-        error: "Failed to enrich results",
-      };
+      return { success: false, groupedResults: [], rawSimilarityScores: rawScores, error: "Failed to fetch chunk metadata" };
     }
 
-    // 6. Build similarity map
-    const similarityMap = new Map(
-      filteredResults.map((r: any) => [r.chunk_id, r.similarity as number])
+    const similarityMap = new Map<string, number>(
+      filteredResults.map((r: any) => [r.chunk_id as string, r.similarity as number])
     );
 
-    // 7. Group results by paper_file and apply MAX_CHUNKS_PER_FILE limit
     const grouped = new Map<string, GroupedResult>();
+    const sortedChunks = [...enrichedChunks].sort(
+      (a: any, b: any) => (similarityMap.get(b.id) || 0) - (similarityMap.get(a.id) || 0)
+    );
 
-    enrichedChunks.forEach((chunk: any) => {
+    for (const chunk of sortedChunks as any[]) {
       const fileId = chunk.paper_file_id;
       const pf = chunk.paper_files;
       const paper = pf?.papers;
@@ -360,175 +424,140 @@ async function ragRetrieval(question: string, filters?: any): Promise<RagRetriev
           paper: paper?.paper || "P",
         });
       }
-
       const group = grouped.get(fileId)!;
       if (group.chunks.length < MAX_CHUNKS_PER_FILE) {
         group.chunks.push({
-          id: chunk.id,
-          content: chunk.content,
+          id: chunk.id, content: chunk.content,
           chunkIndex: chunk.chunk_index,
-          similarity: (similarityMap.get(chunk.id) as number) || 0,
+          similarity: similarityMap.get(chunk.id) || 0,
         });
       }
-    });
+    }
 
-    return {
-      success: true,
-      groupedResults: Array.from(grouped.values()),
-      rawSimilarityScores: rawScores,
-    };
+    return { success: true, groupedResults: Array.from(grouped.values()), rawSimilarityScores: rawScores };
   } catch (err: any) {
-    return {
-      success: false,
-      groupedResults: [],
-      rawSimilarityScores: [],
-      error: err?.message || "Retrieval error",
-    };
+    return { success: false, groupedResults: [], rawSimilarityScores: [], error: err?.message || "Retrieval error" };
   }
 }
 
 // ============================================================================
-// STAGE C: EXAM-STYLE ANSWER GENERATION
+// STAGE C: LLM ANSWER GENERATION
 // ============================================================================
 
 async function generateExamAnswer(
   question: string,
-  ragResult: RagRetrievalResult
+  ragResult: RagRetrievalResult,
+  history: HistoryMessage[] = []
 ): Promise<ExamAnswer | null> {
-  if (!ragResult.success || ragResult.groupedResults.length === 0) {
-    return null;
-  }
+  if (!ragResult.success || ragResult.groupedResults.length === 0) return null;
 
   try {
-    // Build context from grouped results
-    const contextChunks = ragResult.groupedResults
-      .flatMap((group) => group.chunks.map((c) => c.content))
-      .join("\n\n");
+    const filePriority: Record<string, number> = { MS: 3, QP: 2, ER: 1, GT: 0 };
+    const sortedGroups = [...ragResult.groupedResults].sort(
+      (a, b) => (filePriority[b.filetype] || 0) - (filePriority[a.filetype] || 0)
+    );
 
-    if (!contextChunks.trim()) {
-      return null;
-    }
+    const contextChunks = sortedGroups
+      .flatMap((group) =>
+        group.chunks
+          .sort((a, b) => b.similarity - a.similarity)
+          .map(
+            (c) =>
+              `[${resolveSubjectName(group.subject)} ${group.year} ${group.session} ${group.paper} ${group.filetype}]\n${c.content}`
+          )
+      )
+      .join("\n\n---\n\n")
+      .substring(0, 6000);
 
-    // Calculate average similarity for mark weighting
-    const contextAvgSimilarity = ragResult.rawSimilarityScores.length > 0
-      ? ragResult.rawSimilarityScores.reduce((a, b) => a + b, 0) / ragResult.rawSimilarityScores.length
-      : 0;
+    if (!contextChunks.trim()) return null;
 
-    // Determine mark range based on similarity threshold
-    let markGuidance = "1-2 marks each";
-    if (contextAvgSimilarity >= 0.7) {
-      markGuidance = "2-3 marks each (high confidence)";
-    } else if (contextAvgSimilarity >= 0.5) {
-      markGuidance = "1-2 marks each (medium confidence)";
-    } else {
-      markGuidance = "1 mark each (low confidence)";
-    }
+    const avgSimilarity =
+      ragResult.rawSimilarityScores.length > 0
+        ? ragResult.rawSimilarityScores.reduce((a, b) => a + b, 0) / ragResult.rawSimilarityScores.length
+        : 0;
 
-    // Call Groq with exam-style instructions
-    const completion = await groq.chat.completions.create({
-      messages: [
-        {
-          role: "system",
-          content: `You are an expert exam tutor. Provide exam-style answers with:
-1. Clear main answer (2-3 sentences max)
-2. Marking points (3-5 bullet points with marks allocated based on importance and confidence)
-3. Common mistakes students make (2-3 mistakes)
+    const recentHistory = history.slice(-8).map((h) => ({
+      role: h.role as "user" | "assistant",
+      content: h.content,
+    }));
 
-Mark allocation based on similarity threshold:
-- High confidence (≥70%): Award 2-3 marks per important point
-- Medium confidence (≥50%): Award 1-2 marks per point
-- Low confidence (<50%): Award 1 mark per point
+    const messages: any[] = [
+      {
+        role: "system",
+        content: `You are an expert O-Level Cambridge exam tutor. Answer the student's question based ONLY on the provided exam paper extracts.
 
-Current confidence level suggests: ${markGuidance}
+STRICT RULES:
+- Answer the question directly and concisely. Use Cambridge mark-scheme language.
+- Do NOT mention or guess any paper codes, series numbers (e.g. "1123", "2058"), or exam codes in your answer. The citation system identifies sources automatically.
+- If the student asks "which paper is this from" or "what paper number", tell them to look at the source citations shown below your answer — do NOT guess codes yourself.
+- Do not say the context is insufficient — always give your best answer from what is provided.
+- No waffle. Be exam-focused and precise.
 
-Format your response EXACTLY as JSON:
+Respond ONLY with this JSON (no markdown fences, no extra text):
 {
-  "answer": "Your main answer here",
+  "answer": "Direct 2-4 sentence answer to the question",
   "marking_points": [
-    {"point": "First key concept", "marks": 2},
-    {"point": "Second key concept", "marks": 1}
+    {"point": "Key marking criterion as in a mark scheme", "marks": 1}
   ],
-  "common_mistakes": ["Mistake 1", "Mistake 2"]
-}`,
-        },
-        {
-          role: "user",
-          content: `Question: ${question}\n\nExam paper context:\n${contextChunks.substring(
-            0,
-            2000
-          )}`,
-        },
-      ],
+  "common_mistakes": ["A typical error O-Level students make"]
+}
+
+marking_points: 3-5 items, marks value 1-3 each.
+common_mistakes: 2-3 items.`,
+      },
+      ...recentHistory,
+      {
+        role: "user",
+        content: `Question: ${question}\n\nContext from past papers (avg relevance ${(avgSimilarity * 100).toFixed(0)}%):\n\n${contextChunks}`,
+      },
+    ];
+
+    const completion = await groq.chat.completions.create({
+      messages,
       model: GROQ_MODEL,
-      max_tokens: 700,
-      temperature: 0.7,
+      max_tokens: 1200,
+      temperature: 0.15,
     });
 
     const responseText = completion.choices[0]?.message?.content || "";
 
-    // Parse JSON response
-    let parsed: any;
+    let parsed: any = null;
     try {
-      // Try to extract JSON from response
-      const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+      const cleaned = responseText.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/, "").trim();
+      const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
       parsed = jsonMatch ? JSON.parse(jsonMatch[0]) : null;
-    } catch {
-      parsed = null;
-    }
+    } catch { parsed = null; }
 
-    // Fallback if JSON parsing fails
-    if (!parsed || !parsed.answer) {
+    if (!parsed?.answer) {
       parsed = {
-        answer: responseText.substring(0, 500) || "Unable to generate answer from the retrieved documents.",
-        marking_points: [
-          { point: "Review the answer against the source material", marks: 1 }
-        ],
-        common_mistakes: ["Unclear from the available resources"]
+        answer: responseText.substring(0, 500) || "Unable to generate a structured answer.",
+        marking_points: [{ point: "Refer to source documents", marks: 1 }],
+        common_mistakes: ["Review the exam context above"],
       };
     }
 
-    // Parse marking points (support both old and new format)
     let markingPoints: Array<{ point: string; marks: number }> = [];
     if (Array.isArray(parsed.marking_points) && parsed.marking_points.length > 0) {
       markingPoints = parsed.marking_points.map((item: any) => {
-        if (typeof item === 'string') {
-          // Old format: just strings
-          return { point: item, marks: 1 };
-        } else if (item && item.point && item.marks) {
-          // New format: objects with point and marks
-          return { point: item.point, marks: Math.max(1, item.marks) };
-        }
-        return { point: String(item), marks: 1 };
+        if (typeof item === "string") return { point: item, marks: 1 };
+        return { point: String(item.point || item), marks: Math.max(1, Math.min(3, Number(item.marks) || 1)) };
       });
     } else {
-      // Default if empty
-      markingPoints = [{ point: "Key concept from sources", marks: 1 }];
+      markingPoints = [{ point: "Key concept from exam sources", marks: 1 }];
     }
 
-    // Calculate confidence (now more robust)
-    const avgSimilarity =
-      ragResult.rawSimilarityScores.length > 0
-        ? ragResult.rawSimilarityScores.reduce((a, b) => a + b, 0) /
-          ragResult.rawSimilarityScores.length
-        : 0.3; // Default to 0.3 if no scores (fallback mode)
+    const commonMistakes: string[] = Array.isArray(parsed.common_mistakes)
+      ? parsed.common_mistakes.filter((m: any) => typeof m === "string" && m.trim())
+      : [];
 
-    // Boost confidence if we have good results
     let confidenceScore = Math.min(1, Math.max(0.1, avgSimilarity));
-    if (ragResult.groupedResults.length >= 3) {
-      confidenceScore = Math.min(1, confidenceScore * 1.2);
-    }
+    if (ragResult.groupedResults.length >= 3) confidenceScore = Math.min(1, confidenceScore * 1.15);
 
-    const coveragePercentage = Math.min(
-      100,
-      (ragResult.groupedResults.length / TOP_K) * 100
-    );
-
-    // Build citations with subject names
-    const citations: Citation[] = ragResult.groupedResults
+    const citations: Citation[] = sortedGroups
       .flatMap((group) =>
         group.chunks.map((chunk) => ({
           subject: group.subject,
-          subjectName: getSubjectName(group.subject),
+          subjectName: resolveSubjectName(group.subject),
           year: group.year,
           session: group.session,
           paper: group.paper,
@@ -540,249 +569,340 @@ Format your response EXACTLY as JSON:
       )
       .sort((a, b) => b.similarity - a.similarity);
 
+    // Find the best chunk that actually looks like an exam question
+    // Reject ER/mark-scheme content, require a "?" or question-style opening
+    function looksLikeExamQuestion(text: string): boolean {
+      const lower = text.toLowerCase();
+      // Reject examiner report / mark scheme prose
+      const isReportContent = /\b(candidates|principal examiner|examiner report|examiners|many candidates|few candidates|common errors|mark scheme|© 20\d{2}|cambridge ordinary level\s+\d{4})\b/.test(lower);
+      if (isReportContent) return false;
+      // Must contain a question mark OR start with a question action verb
+      const hasQuestion = text.includes("?");
+      const hasQuestionVerb = /^\s*(explain|describe|state|define|calculate|suggest|give|what|how|why|outline|compare|evaluate|discuss|draw|predict|deduce|justify|identify|name|list|show|determine|find|write|complete|use)/i.test(text);
+      return hasQuestion || hasQuestionVerb;
+    }
+
+    // Collect all chunks from QP groups first, then all groups, and find the best exam-like chunk
+    let relatedQuestion: RelatedQuestion | undefined;
+    const allCandidates = [
+      ...sortedGroups.filter((g) => g.filetype === "QP"),
+      ...sortedGroups.filter((g) => g.filetype !== "QP"),
+    ].flatMap((group) =>
+      group.chunks
+        .filter((c) => looksLikeExamQuestion(c.content))
+        .map((c) => ({ group, chunk: c }))
+    ).sort((a, b) => b.chunk.similarity - a.chunk.similarity);
+
+    const best = allCandidates[0];
+    if (best && best.chunk.similarity >= 0.55) {
+      relatedQuestion = {
+        type: best.chunk.similarity >= 0.75 ? "exact" : "similar",
+        text: best.chunk.content.trim(),
+        source: {
+          subject: resolveSubjectName(best.group.subject),
+          year: best.group.year,
+          session: best.group.session,
+          paper: best.group.paper,
+          file_type: best.group.filetype,
+        },
+        similarity: best.chunk.similarity,
+      };
+    }
+
     return {
-      answer: parsed.answer || "Unable to generate answer",
+      answer: String(parsed.answer),
       markingPoints,
-      commonMistakes: Array.isArray(parsed.common_mistakes)
-        ? parsed.common_mistakes
-        : [],
-      citations: citations.slice(0, 5),
+      commonMistakes,
+      citations: citations.slice(0, 6),
       confidenceScore,
-      coveragePercentage,
+      coveragePercentage: Math.min(100, (ragResult.groupedResults.length / 8) * 100),
+      relatedQuestion,
     };
   } catch (err) {
-    console.error("Exam answer generation error:", err);
+    console.error("Answer generation error:", err);
     return null;
   }
 }
 
 // ============================================================================
-// SMALLTALK RESPONSES
+// DIRECT LLM ANSWER (no RAG context — fallback when retrieval fails)
+// ============================================================================
+
+async function generateDirectAnswer(
+  question: string,
+  history: HistoryMessage[] = []
+): Promise<{ answer: string; markingPoints: Array<{ point: string; marks: number }>; commonMistakes: string[] } | null> {
+  try {
+    const recentHistory = history.slice(-8).map((h) => ({
+      role: h.role as "user" | "assistant",
+      content: h.content,
+    }));
+
+    const messages: any[] = [
+      {
+        role: "system",
+        content: `You are an expert O-Level Cambridge exam tutor with deep knowledge of the Cambridge syllabus for all O-Level subjects including Physics, Chemistry, Biology, Mathematics, English, Islamiyat, Pakistan Studies, Computer Science, Economics, Geography, History, and more.
+
+Answer the student's question using your Cambridge O-Level curriculum knowledge.
+
+RULES:
+- Give a clear, accurate, exam-focused answer suitable for O-Level students.
+- Use Cambridge mark-scheme language where possible.
+- Do NOT mention paper codes or series numbers.
+- Be concise and educational.
+
+Respond ONLY with this JSON (no markdown fences, no extra text):
+{
+  "answer": "Clear explanation of the concept",
+  "marking_points": [
+    {"point": "Key marking criterion", "marks": 1}
+  ],
+  "common_mistakes": ["A typical error students make"]
+}
+
+marking_points: 3-5 items, marks value 1-3 each.
+common_mistakes: 2-3 items.`,
+      },
+      ...recentHistory,
+      { role: "user", content: question },
+    ];
+
+    const completion = await groq.chat.completions.create({
+      messages,
+      model: GROQ_MODEL,
+      max_tokens: 1000,
+      temperature: 0.2,
+    });
+
+    const responseText = completion.choices[0]?.message?.content || "";
+
+    let parsed: any = null;
+    try {
+      const cleaned = responseText.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/, "").trim();
+      const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
+      parsed = jsonMatch ? JSON.parse(jsonMatch[0]) : null;
+    } catch { parsed = null; }
+
+    if (!parsed?.answer) {
+      parsed = {
+        answer: responseText.substring(0, 500) || "Unable to generate an answer.",
+        marking_points: [],
+        common_mistakes: [],
+      };
+    }
+
+    let markingPoints: Array<{ point: string; marks: number }> = [];
+    if (Array.isArray(parsed.marking_points) && parsed.marking_points.length > 0) {
+      markingPoints = parsed.marking_points.map((item: any) => {
+        if (typeof item === "string") return { point: item, marks: 1 };
+        return { point: String(item.point || item), marks: Math.max(1, Math.min(3, Number(item.marks) || 1)) };
+      });
+    }
+
+    const commonMistakes: string[] = Array.isArray(parsed.common_mistakes)
+      ? parsed.common_mistakes.filter((m: any) => typeof m === "string" && m.trim())
+      : [];
+
+    return { answer: String(parsed.answer), markingPoints, commonMistakes };
+  } catch (err) {
+    console.error("Direct answer generation error:", err);
+    return null;
+  }
+}
+
+// ============================================================================
+// SMALLTALK
 // ============================================================================
 
 const smalltalkResponses = [
-  "Hi! 👋 Ask me about a topic or tell me a subject, year, and paper type to find.",
-  "Hey there! 😊 What would you like to know? You can ask about exam topics or find specific papers.",
-  "Hello! 📚 I can help you find past papers or answer questions about your subjects.",
-  "Hi! Want to search for papers or have a question about your studies?",
+  "Hi! Ask me any O-Level exam question — Chemistry, Physics, Biology, Maths, Islamiyat, and more. I'll answer using real past exam papers with marking points.",
+  "Hello! Try asking a topic question like \"explain osmosis\" or find papers like \"Chemistry 2023 QP\".",
+  "Hey! I can answer O-Level exam questions and help find past papers. What do you need?",
+  "Hi! Ask me anything about your O-Level subjects. I'll give you a mark-scheme style answer from past papers.",
 ];
 
 function getSmallTalkResponse(): string {
   return smalltalkResponses[Math.floor(Math.random() * smalltalkResponses.length)];
 }
 
-// Helper to convert subject code to name
-function getSubjectName(code: string): string {
-  const subjectMap: Record<string, string> = {
-    "1011": "Chemistry",
-    "1001": "Physics",
-    "1002": "Biology",
-    "1003": "Mathematics",
-    "1004": "Islamiyat",
-    "1005": "Urdu",
-    "1006": "English",
-    "1007": "Computer Science",
-    "1008": "Economics",
-    "1009": "History",
-    "1010": "Geography",
-  };
-  return subjectMap[code] || code;
-}
-
 // ============================================================================
-// MAIN ENDPOINT: POST /rag/query (3-STAGE PIPELINE)
+// GET /rag/subjects — returns all subjects from DB with resolved names
 // ============================================================================
 
-/**
- * Three-stage RAG pipeline:
- *
- * STAGE A: Intent Classification
- *   - Classify query into: smalltalk | paper_lookup | exam_question
- *   - Extract metadata (subject, year, file type)
- *
- * STAGE B: Improved RAG Retrieval
- *   - Embed question with Ollama
- *   - Search with TOP_K=16 results
- *   - Filter by SIMILARITY_THRESHOLD=0.5
- *   - Group by paper_file, MAX_CHUNKS_PER_FILE=2
- *   - Return grouped results and similarity scores
- *
- * STAGE C: Exam-Style Answer Generation
- *   - Use Groq to generate answer from context
- *   - Extract marking_points and common_mistakes
- *   - Calculate confidence_score and coverage_percentage
- *   - Return formatted ExamAnswer
- */
+router.get("/subjects", async (_req: Request, res: Response) => {
+  try {
+    clearSubjectCache(); // Force fresh fetch
+    const subjects = await getSubjectCache();
+    res.json(subjects.map((s) => ({ code: s.code, name: s.name, level: s.level })));
+  } catch (err) {
+    res.status(500).json({ error: "Failed to fetch subjects" });
+  }
+});
+
+// ============================================================================
+// POST /rag/query — main 3-stage RAG pipeline
+// ============================================================================
+
 router.post("/query", async (req: Request, res: Response) => {
   try {
-    const { question, limit = 5, filters } = req.body as RagQueryRequest;
+    const { question, limit = 5, filters, history = [] } = req.body as RagQueryRequest;
 
-    if (!question || !question.trim()) {
+    if (!question?.trim()) {
       return res.status(400).json({ error: "Question is required" });
     }
 
-    // ========== STAGE A: CLASSIFY INTENT ==========
+    // Warm up subject cache in background (don't await)
+    getSubjectCache().catch(() => {});
+
+    // STAGE A: INTENT
     const classification = classifyIntent(question);
 
     // CASE 1: SMALLTALK
     if (classification.intent === "smalltalk") {
-      const response: RagQueryResponse = {
-        type: "smalltalk",
-        answer: getSmallTalkResponse(),
-        citations: [],
-      };
-      return res.json(response);
+      return res.json({ type: "smalltalk", answer: getSmallTalkResponse(), citations: [] } as RagQueryResponse);
     }
 
     // CASE 2: PAPER LOOKUP
     if (classification.intent === "paper_lookup") {
-      const metadata = classification.metadata;
+      const meta = classification.metadata;
 
-      // Query papers based on extracted metadata
-      let query = supabase
-        .from("papers")
-        .select(`
-          id,
-          year,
-          session,
-          paper,
-          subject_id,
-          subjects(code, level),
-          paper_files(file_type, storage_path, id)
-        `);
+      // Try to find the subject in DB dynamically
+      let subjectId: string | null = null;
+      let resolvedSubjectName: string | null = null;
 
-      if (metadata?.year) {
-        query = query.eq("year", metadata.year);
+      if (meta?.subjectKeyword) {
+        const matched = await findSubjectByName(meta.subjectKeyword);
+        if (matched) {
+          subjectId = matched.id;
+          resolvedSubjectName = matched.name;
+        }
       }
 
-      if (metadata?.fileType) {
-        // Will filter after fetch
-      }
+      let query = supabase.from("papers").select(`
+        id, year, session, paper, subject_id,
+        subjects(code, level),
+        paper_files(file_type, storage_path, id)
+      `);
+
+      if (subjectId) query = query.eq("subject_id", subjectId);
+      if (meta?.year) query = query.eq("year", meta.year);
 
       const { data, error } = await query;
-
-      if (error) {
-        return res.status(500).json({ error: error.message });
-      }
+      if (error) return res.status(500).json({ error: error.message });
 
       let results = (data || []) as any[];
 
-      // Filter by file type if present
-      if (metadata?.fileType) {
-        results = results.filter((paper) =>
-          paper.paper_files?.some((pf: any) => pf.file_type === metadata.fileType)
+      if (meta?.fileType) {
+        results = results.filter((p) =>
+          p.paper_files?.some((pf: any) => pf.file_type === meta.fileType)
         );
       }
+      if (meta?.paper) {
+        results = results.filter((p) => p.paper === meta.paper);
+      }
 
-      // Group results by subject/year/session
       const grouped = results.reduce((acc: any, paper: any) => {
         const key = `${paper.subjects?.code}-${paper.year}`;
         if (!acc[key]) {
           acc[key] = {
             subject: paper.subjects?.code,
+            subjectName: resolveSubjectName(paper.subjects?.code),
             year: paper.year,
             level: paper.subjects?.level,
             sessions: {},
           };
         }
-
         if (!acc[key].sessions[paper.session]) {
-          acc[key].sessions[paper.session] = {
-            session: paper.session,
-            papers: {},
-          };
+          acc[key].sessions[paper.session] = { session: paper.session, papers: {} };
         }
-
         if (!acc[key].sessions[paper.session].papers[paper.paper]) {
-          acc[key].sessions[paper.session].papers[paper.paper] = {
-            paper: paper.paper,
-            files: {},
-          };
+          acc[key].sessions[paper.session].papers[paper.paper] = { paper: paper.paper, files: {} };
         }
-
         (paper.paper_files || []).forEach((pf: any) => {
           acc[key].sessions[paper.session].papers[paper.paper].files[pf.file_type] = {
-            file_type: pf.file_type,
-            storage_path: pf.storage_path,
-            id: pf.id,
+            file_type: pf.file_type, storage_path: pf.storage_path, id: pf.id,
           };
         });
-
         return acc;
       }, {});
 
-      const response: RagQueryResponse = {
+      const groupedArr = Object.values(grouped) as any[];
+
+      // If we couldn't match the subject, include available subjects as hint
+      const subjects = await getSubjectCache();
+      const availableSubjects = subjects.map((s) => ({ code: s.code, name: s.name, level: s.level }));
+
+      let answerText = "";
+      if (groupedArr.length > 0) {
+        const subjectLabel = resolvedSubjectName || meta?.subjectKeyword || "your query";
+        answerText = `Found ${groupedArr.length} paper set(s) for ${subjectLabel}:`;
+      } else if (!subjectId && meta?.subjectKeyword) {
+        answerText = `Could not identify subject "${meta.subjectKeyword}" in the database. Available subjects are shown below — try using the subject selector or type the exact name.`;
+      } else {
+        answerText = "No papers found for your query.";
+      }
+
+      return res.json({
         type: "paper_lookup",
-        answer: `Found ${Object.keys(grouped).length} paper set(s):`,
-        results: Object.values(grouped),
+        answer: answerText,
+        results: groupedArr,
         citations: [],
-      };
-      return res.json(response);
+        available_subjects: !subjectId ? availableSubjects : undefined,
+      } as RagQueryResponse);
     }
 
-    // CASE 3: EXAM QUESTION - Use 3-stage pipeline
-    // ========== STAGE B: RAG RETRIEVAL ==========
+    // CASE 3: EXAM QUESTION
     const ragResult = await ragRetrieval(question, filters);
 
     if (!ragResult.success) {
-      // Low confidence response
-      const response: RagQueryResponse = {
+      if (ragResult.error?.includes("unavailable")) {
+        return res.json({
+          type: "exam_question",
+          answer: "The AI study assistant is temporarily unavailable. Please try again later.",
+          citations: [],
+        } as RagQueryResponse);
+      }
+      // RAG found nothing — fall back to direct LLM answer
+      const directAnswer = await generateDirectAnswer(question, history);
+      if (directAnswer) {
+        return res.json({
+          type: "exam_question",
+          answer: directAnswer.answer,
+          marking_points: directAnswer.markingPoints,
+          common_mistakes: directAnswer.commonMistakes,
+          citations: [],
+        } as RagQueryResponse);
+      }
+      return res.json({
         type: "exam_question",
-        answer:
-          "I don't have enough information in my database to answer this question with confidence. Try asking about specific exam topics or request a particular past paper.",
+        answer: "I couldn't generate an answer right now. Please try again.",
         citations: [],
-        confidence_score: 0,
-        coverage_percentage: 0,
-        low_confidence: true,
-      };
-      return res.json(response);
+      } as RagQueryResponse);
     }
 
-    // ========== STAGE C: EXAM ANSWER GENERATION ==========
-    const examAnswer = await generateExamAnswer(question, ragResult);
+    const examAnswer = await generateExamAnswer(question, ragResult, history);
 
     if (!examAnswer) {
-      // Fallback if LLM generation fails
       const fallbackCitations: Citation[] = ragResult.groupedResults
-        .flatMap((group) =>
-          group.chunks.map((chunk) => ({
-            subject: group.subject,
-            subjectName: getSubjectName(group.subject),
-            year: group.year,
-            session: group.session,
-            paper: group.paper,
-            file_type: group.filetype,
-            storage_path: group.storagePath,
-            chunk_index: chunk.chunkIndex,
-            similarity: chunk.similarity,
-          }))
-        )
+        .flatMap((g) => g.chunks.map((c) => ({
+          subject: g.subject, subjectName: resolveSubjectName(g.subject),
+          year: g.year, session: g.session, paper: g.paper,
+          file_type: g.filetype, storage_path: g.storagePath,
+          chunk_index: c.chunkIndex, similarity: c.similarity,
+        })))
         .sort((a, b) => b.similarity - a.similarity)
         .slice(0, 5);
 
-      const contextText = ragResult.groupedResults
-        .flatMap((g) => g.chunks.map((c) => c.content))
-        .join("\n\n")
-        .substring(0, 600);
-
-      const response: RagQueryResponse = {
+      return res.json({
         type: "exam_question",
-        answer: `Based on exam sources:\n\n${contextText}...`,
+        answer: ragResult.groupedResults.flatMap((g) => g.chunks.map((c) => c.content)).join("\n\n").substring(0, 800),
         citations: fallbackCitations,
-        confidence_score: Math.min(
-          1,
-          (ragResult.rawSimilarityScores[0] || 0) as number
-        ),
-        coverage_percentage: Math.min(
-          100,
-          (ragResult.groupedResults.length / TOP_K) * 100
-        ),
-      };
-      return res.json(response);
+        confidence_score: Math.min(1, ragResult.rawSimilarityScores[0] || 0),
+        coverage_percentage: Math.min(100, (ragResult.groupedResults.length / 8) * 100),
+      } as RagQueryResponse);
     }
 
-    // Success response with full exam answer
-    const response: RagQueryResponse = {
+    return res.json({
       type: "exam_question",
       answer: examAnswer.answer,
       marking_points: examAnswer.markingPoints,
@@ -791,14 +911,12 @@ router.post("/query", async (req: Request, res: Response) => {
       confidence_score: examAnswer.confidenceScore,
       coverage_percentage: examAnswer.coveragePercentage,
       low_confidence: examAnswer.confidenceScore < 0.4,
-    };
+      related_question: examAnswer.relatedQuestion,
+    } as RagQueryResponse);
 
-    res.json(response);
   } catch (error) {
     console.error("RAG query error:", error);
-    res.status(500).json({
-      error: error instanceof Error ? error.message : "Unknown error",
-    });
+    return res.status(500).json({ error: error instanceof Error ? error.message : "Unknown error" });
   }
 });
 
