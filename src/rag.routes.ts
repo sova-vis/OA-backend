@@ -10,7 +10,7 @@ const GROQ_MODEL = process.env.GROQ_MODEL || "llama-3.3-70b-versatile";
 const OLLAMA_URL = (process.env.OLLAMA_URL || "http://localhost:11434").replace(/\/$/, "");
 const OLLAMA_MODEL = process.env.OLLAMA_MODEL || "bge-m3";
 const HF_API_KEY = process.env.HUGGINGFACE_API_KEY || "";
-const HF_EMBED_URL = "https://api-inference.huggingface.co/models/BAAI/bge-m3";
+const HF_EMBED_URL = "https://router.huggingface.co/models/BAAI/bge-m3";
 
 const SIMILARITY_THRESHOLD = 0.40;
 const TOP_K = 16;
