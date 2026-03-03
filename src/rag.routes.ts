@@ -10,7 +10,7 @@ const GROQ_MODEL = process.env.GROQ_MODEL || "llama-3.3-70b-versatile";
 const OLLAMA_URL = (process.env.OLLAMA_URL || "http://localhost:11434").replace(/\/$/, "");
 const OLLAMA_MODEL = process.env.OLLAMA_MODEL || "bge-m3";
 const HF_API_KEY = process.env.HUGGINGFACE_API_KEY || "";
-const HF_EMBED_URL = "https://router.huggingface.co/models/BAAI/bge-m3";
+const HF_EMBED_URL = "https://router.huggingface.co/hf-inference/models/BAAI/bge-m3";
 
 const SIMILARITY_THRESHOLD = 0.40;
 const TOP_K = 16;
@@ -242,9 +242,17 @@ async function getEmbedding(text: string): Promise<number[]> {
 
       if (res.ok) {
         const data = await res.json() as any;
-        // router API may return [[...]] or [...]
-        const embedding: number[] = Array.isArray(data[0]) ? meanPoolTokens(data as number[][]) : (data as number[]);
-        if (Array.isArray(embedding) && embedding.length > 0) {
+        // bge-m3 returns [[...1024 floats]] (batch of 1) — take data[0]
+        // flat [float] returned by some endpoints is also handled
+        let embedding: number[];
+        if (Array.isArray(data) && Array.isArray(data[0])) {
+          embedding = data[0] as number[];
+        } else if (Array.isArray(data)) {
+          embedding = data as number[];
+        } else {
+          embedding = [];
+        }
+        if (embedding.length > 0) {
           console.log("[Embeddings] HuggingFace success:", embedding.length, "dims");
           return embedding;
         }
