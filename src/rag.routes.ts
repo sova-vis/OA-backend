@@ -11,7 +11,7 @@ const GROQ_MODEL = process.env.GROQ_MODEL || "llama-3.3-70b-versatile";
 const OLLAMA_URL = (process.env.OLLAMA_URL || "http://localhost:11434").replace(/\/$/, "");
 const OLLAMA_MODEL = process.env.OLLAMA_MODEL || "bge-m3";
 const HF_API_KEY = process.env.HUGGINGFACE_API_KEY || "";
-const hf = HF_API_KEY ? new HfInference(HF_API_KEY) : null;
+const hf = HF_API_KEY ? new HfInference(HF_API_KEY, { baseURL: "https://router.huggingface.co" }) : null;
 
 const SIMILARITY_THRESHOLD = 0.40;
 const TOP_K = 16;
