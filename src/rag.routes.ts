@@ -1,6 +1,7 @@
 import { Router, Request, Response } from "express";
 import { supabase } from "./lib/supabase";
 import Groq from "groq-sdk";
+import { HfInference } from "@huggingface/inference";
 
 const router = Router();
 
@@ -10,7 +11,7 @@ const GROQ_MODEL = process.env.GROQ_MODEL || "llama-3.3-70b-versatile";
 const OLLAMA_URL = (process.env.OLLAMA_URL || "http://localhost:11434").replace(/\/$/, "");
 const OLLAMA_MODEL = process.env.OLLAMA_MODEL || "bge-m3";
 const HF_API_KEY = process.env.HUGGINGFACE_API_KEY || "";
-const HF_EMBED_URL = "https://router.huggingface.co/models/BAAI/bge-m3";
+const hf = HF_API_KEY ? new HfInference(HF_API_KEY) : null;
 
 const SIMILARITY_THRESHOLD = 0.40;
 const TOP_K = 16;
@@ -227,36 +228,24 @@ function meanPoolTokens(tokenMatrix: number[][]): number[] {
 }
 
 async function getEmbedding(text: string): Promise<number[]> {
-  if (HF_API_KEY) {
+  if (hf) {
     try {
-      console.log("[Embeddings] Calling HuggingFace with key:", HF_API_KEY.substring(0, 10) + "...");
-      const res = await fetch(HF_EMBED_URL, {
-        method: "POST",
-        headers: { "Authorization": `Bearer ${HF_API_KEY}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ inputs: text }),
-        signal: AbortSignal.timeout(20000),
+      console.log("[Embeddings] Calling HuggingFace Inference API...");
+      const result = await hf.featureExtraction({
+        model: "BAAI/bge-m3",
+        inputs: text,
       });
-      if (res.ok) {
-        const data = await res.json() as any;
 
-        let embedding: number[];
-        if (Array.isArray(data[0]?.[0])) {
-          // 3D tensor [batch, seq_len, hidden] — take batch 0, mean-pool over seq
-          embedding = meanPoolTokens(data[0] as number[][]);
-        } else if (Array.isArray(data[0])) {
-          // 2D tensor [seq_len, hidden] — mean-pool over seq
-          embedding = meanPoolTokens(data as number[][]);
-        } else {
-          // 1D flat vector [hidden] — use directly
-          embedding = data as number[];
+      if (Array.isArray(result) && result.length > 0) {
+        const embedding = result as number[];
+        if (embedding.length > 0) {
+          console.log("[Embeddings] Success! Embeddings received:", embedding.length, "dimensions");
+          return embedding;
         }
-
-        if (Array.isArray(embedding) && embedding.length > 0) return embedding;
-      } else {
-        const errorText = await res.text();
-        console.warn(`HuggingFace embedding HTTP ${res.status}: ${errorText}`);
       }
-    } catch (err) { console.warn("HuggingFace embedding error:", err); }
+    } catch (err) {
+      console.warn("[Embeddings] HuggingFace error:", err);
+    }
   } else {
     console.warn("[Embeddings] HUGGINGFACE_API_KEY not set in environment variables. Falling back to Ollama.");
   }
