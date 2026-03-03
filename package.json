@@ -22,7 +22,6 @@
     "node": ">=20"
   },
   "dependencies": {
-    "@huggingface/inference": "^2.7.0",
     "@supabase/supabase-js": "^2.95.3",
     "bcrypt": "^5.1.1",
     "cors": "^2.8.5",
