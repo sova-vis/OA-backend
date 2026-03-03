@@ -10,7 +10,7 @@ const GROQ_MODEL = process.env.GROQ_MODEL || "llama-3.3-70b-versatile";
 const OLLAMA_URL = (process.env.OLLAMA_URL || "http://localhost:11434").replace(/\/$/, "");
 const OLLAMA_MODEL = process.env.OLLAMA_MODEL || "bge-m3";
 const HF_API_KEY = process.env.HUGGINGFACE_API_KEY || "";
-const HF_EMBED_URL = "https://router.huggingface.co/models/BAAI/bge-m3";
+const HF_EMBED_URL = "https://api-inference.huggingface.co/models/BAAI/bge-m3";
 
 const SIMILARITY_THRESHOLD = 0.40;
 const TOP_K = 16;
@@ -229,6 +229,7 @@ function meanPoolTokens(tokenMatrix: number[][]): number[] {
 async function getEmbedding(text: string): Promise<number[]> {
   if (HF_API_KEY) {
     try {
+      console.log("[Embeddings] Calling HuggingFace with key:", HF_API_KEY.substring(0, 10) + "...");
       const res = await fetch(HF_EMBED_URL, {
         method: "POST",
         headers: { "Authorization": `Bearer ${HF_API_KEY}`, "Content-Type": "application/json" },
@@ -252,9 +253,12 @@ async function getEmbedding(text: string): Promise<number[]> {
 
         if (Array.isArray(embedding) && embedding.length > 0) return embedding;
       } else {
-        console.warn(`HuggingFace embedding HTTP ${res.status}: ${await res.text()}`);
+        const errorText = await res.text();
+        console.warn(`HuggingFace embedding HTTP ${res.status}: ${errorText}`);
       }
     } catch (err) { console.warn("HuggingFace embedding error:", err); }
+  } else {
+    console.warn("[Embeddings] HUGGINGFACE_API_KEY not set in environment variables. Falling back to Ollama.");
   }
 
   try {
