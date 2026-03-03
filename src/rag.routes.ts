@@ -235,9 +235,10 @@ async function getEmbedding(text: string): Promise<number[]> {
         headers: {
           "Authorization": `Bearer ${HF_API_KEY}`,
           "Content-Type": "application/json",
+          "X-Wait-For-Model": "true",
         },
-        body: JSON.stringify({ inputs: text }),
-        signal: AbortSignal.timeout(30000),
+        body: JSON.stringify({ inputs: text, options: { wait_for_model: true, use_cache: false } }),
+        signal: AbortSignal.timeout(90000),
       });
 
       if (res.ok) {
