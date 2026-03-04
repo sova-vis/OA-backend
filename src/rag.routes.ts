@@ -7,10 +7,21 @@ const router = Router();
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 const GROQ_MODEL = process.env.GROQ_MODEL || "llama-3.3-70b-versatile";
 
+function parseBooleanEnv(value: string | undefined, defaultValue: boolean): boolean {
+  if (!value || !value.trim()) return defaultValue;
+  return ["1", "true", "yes", "on"].includes(value.trim().toLowerCase());
+}
+
 const OLLAMA_URL = (process.env.OLLAMA_URL || "http://localhost:11434").replace(/\/$/, "");
 const OLLAMA_MODEL = process.env.OLLAMA_MODEL || "bge-m3";
-const HF_API_KEY = process.env.HUGGINGFACE_API_KEY || "";
-const HF_EMBED_URL = "https://router.huggingface.co/hf-inference/pipeline/feature-extraction/BAAI/bge-m3";
+const HUGGINGFACE_API_KEY = (process.env.HUGGINGFACE_API_KEY || "").trim();
+const HUGGINGFACE_EMBEDDING_MODEL = (process.env.HUGGINGFACE_EMBEDDING_MODEL || "BAAI/bge-m3").trim();
+const HUGGINGFACE_ROUTER_BASE_URL = (process.env.HUGGINGFACE_ROUTER_BASE_URL || "https://router.huggingface.co").replace(/\/$/, "");
+const JINA_API_KEY = (process.env.JINA_API_KEY || "").trim();
+const ALLOW_OLLAMA_FALLBACK = parseBooleanEnv(
+  process.env.ALLOW_OLLAMA_FALLBACK,
+  process.env.NODE_ENV !== "production"
+);
 
 const SIMILARITY_THRESHOLD = 0.40;
 const TOP_K = 16;
@@ -212,7 +223,7 @@ interface RagQueryResponse {
 }
 
 // ============================================================================
-// EMBEDDING — HuggingFace primary, Ollama fallback
+// EMBEDDING — HuggingFace bge-m3 primary, Jina secondary, Ollama optional
 // ============================================================================
 
 // Mean-pool a 2D token matrix [seq_len, hidden] → [hidden]
@@ -226,48 +237,153 @@ function meanPoolTokens(tokenMatrix: number[][]): number[] {
   return result.map((v) => v / tokenMatrix.length);
 }
 
-async function getEmbedding(text: string): Promise<number[]> {
-  if (HF_API_KEY) {
-    try {
-      console.log("[Embeddings] Calling HuggingFace router API...");
-      const res = await fetch(HF_EMBED_URL, {
-        method: "POST",
-        headers: {
-          "Authorization": `Bearer ${HF_API_KEY}`,
-          "Content-Type": "application/json",
-          "X-Wait-For-Model": "true",
-        },
-        body: JSON.stringify({ inputs: text, options: { wait_for_model: true, use_cache: false } }),
-        signal: AbortSignal.timeout(90000),
-      });
+function isNumberVector(value: unknown): value is number[] {
+  return Array.isArray(value) && value.length > 0 && value.every((n) => typeof n === "number");
+}
 
-      if (res.ok) {
-        const data = await res.json() as any;
-        // bge-m3 returns [[...1024 floats]] (batch of 1) — take data[0]
-        // flat [float] returned by some endpoints is also handled
-        let embedding: number[];
-        if (Array.isArray(data) && Array.isArray(data[0])) {
-          embedding = data[0] as number[];
-        } else if (Array.isArray(data)) {
-          embedding = data as number[];
-        } else {
-          embedding = [];
-        }
-        if (embedding.length > 0) {
-          console.log("[Embeddings] HuggingFace success:", embedding.length, "dims");
-          return embedding;
-        }
-      } else {
-        const body = await res.text();
-        console.warn(`[Embeddings] HuggingFace HTTP ${res.status}: ${body}`);
-      }
-    } catch (err) {
-      console.warn("[Embeddings] HuggingFace error:", err);
-    }
-  } else {
-    console.warn("[Embeddings] HUGGINGFACE_API_KEY not set. Falling back to Ollama.");
+function extractEmbeddingFromPayload(payload: any): number[] | null {
+  if (isNumberVector(payload)) return payload;
+
+  if (Array.isArray(payload) && payload.length > 0 && Array.isArray(payload[0])) {
+    const tokenMatrix = payload.filter((row: unknown) => isNumberVector(row)) as number[][];
+    const pooled = meanPoolTokens(tokenMatrix);
+    if (pooled.length > 0) return pooled;
   }
 
+  if (isNumberVector(payload?.embedding)) return payload.embedding;
+  if (isNumberVector(payload?.data?.[0]?.embedding)) return payload.data[0].embedding;
+
+  return null;
+}
+
+function buildHuggingFaceModelPath(model: string): string {
+  return model
+    .split("/")
+    .map((segment) => encodeURIComponent(segment))
+    .join("/");
+}
+
+async function embedWithHuggingFace(text: string): Promise<number[] | null> {
+  try {
+    const modelPath = buildHuggingFaceModelPath(HUGGINGFACE_EMBEDDING_MODEL);
+    const endpointCandidates = [
+      {
+        label: "router/models/pipeline",
+        url: `${HUGGINGFACE_ROUTER_BASE_URL}/hf-inference/models/${modelPath}/pipeline/feature-extraction`,
+        body: {
+          inputs: text,
+          options: { wait_for_model: true, use_cache: true },
+        },
+      },
+      {
+        label: "router/pipeline",
+        url: `${HUGGINGFACE_ROUTER_BASE_URL}/hf-inference/pipeline/feature-extraction/${modelPath}`,
+        body: {
+          inputs: text,
+          options: { wait_for_model: true, use_cache: true },
+        },
+      },
+      {
+        label: "router/models",
+        url: `${HUGGINGFACE_ROUTER_BASE_URL}/hf-inference/models/${modelPath}`,
+        body: {
+          inputs: text,
+          options: { wait_for_model: true, use_cache: true },
+        },
+      },
+    ];
+
+    for (const endpoint of endpointCandidates) {
+      console.log(`[Embeddings] Calling HuggingFace ${HUGGINGFACE_EMBEDDING_MODEL} via ${endpoint.label}...`);
+
+      const res = await fetch(endpoint.url, {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${HUGGINGFACE_API_KEY}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(endpoint.body),
+        signal: AbortSignal.timeout(45000),
+      });
+
+      const bodyText = await res.text();
+
+      if (!res.ok) {
+        if (endpoint.label === "router/models" && /SentenceSimilarityPipeline/i.test(bodyText)) {
+          console.warn("[Embeddings] HuggingFace router/models mapped to sentence-similarity for this model. Skipping endpoint.");
+          continue;
+        }
+        console.warn(`[Embeddings] HuggingFace ${endpoint.label} HTTP ${res.status}: ${bodyText.slice(0, 300)}`);
+        continue;
+      }
+
+      let payload: any;
+      try {
+        payload = JSON.parse(bodyText);
+      } catch {
+        console.warn(`[Embeddings] HuggingFace ${endpoint.label} returned non-JSON response.`);
+        continue;
+      }
+
+      const embedding = extractEmbeddingFromPayload(payload);
+      if (embedding) {
+        console.log("[Embeddings] HuggingFace success:", embedding.length, "dims");
+        return embedding;
+      }
+
+      if (typeof payload?.error === "string") {
+        console.warn(`[Embeddings] HuggingFace ${endpoint.label} response error: ${payload.error}`);
+      } else {
+        console.warn(`[Embeddings] HuggingFace ${endpoint.label} response shape not recognized.`);
+      }
+    }
+  } catch (err) {
+    console.warn("[Embeddings] HuggingFace error:", err);
+  }
+
+  return null;
+}
+
+async function embedWithJina(text: string): Promise<number[] | null> {
+  try {
+    console.log("[Embeddings] Calling Jina AI...");
+    const res = await fetch("https://api.jina.ai/v1/embeddings", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${JINA_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "jina-embeddings-v3",
+        input: [text],
+        task: "text-matching",
+        dimensions: 1024,
+      }),
+      signal: AbortSignal.timeout(30000),
+    });
+
+    if (!res.ok) {
+      const body = await res.text();
+      console.warn(`[Embeddings] Jina AI HTTP ${res.status}: ${body}`);
+      return null;
+    }
+
+    const data = await res.json() as any;
+    const embedding = data?.data?.[0]?.embedding as number[];
+    if (isNumberVector(embedding)) {
+      console.log("[Embeddings] Jina AI success:", embedding.length, "dims");
+      return embedding;
+    }
+
+    console.warn("[Embeddings] Jina AI response missing embedding vector.");
+  } catch (err) {
+    console.warn("[Embeddings] Jina AI error:", err);
+  }
+
+  return null;
+}
+
+async function embedWithOllama(text: string): Promise<number[] | null> {
   try {
     const res = await fetch(`${OLLAMA_URL}/api/embeddings`, {
       method: "POST",
@@ -275,13 +391,59 @@ async function getEmbedding(text: string): Promise<number[]> {
       body: JSON.stringify({ model: OLLAMA_MODEL, prompt: text }),
       signal: AbortSignal.timeout(20000),
     });
-    if (res.ok) {
-      const data = await res.json() as any;
-      if (Array.isArray(data?.embedding) && data.embedding.length > 0) return data.embedding;
-    }
-  } catch (err) { console.warn("Ollama embedding error:", err); }
 
-  throw new Error("Embedding service unavailable. Set HUGGINGFACE_API_KEY or start Ollama.");
+    if (!res.ok) {
+      const body = await res.text();
+      console.warn(`[Embeddings] Ollama HTTP ${res.status}: ${body}`);
+      return null;
+    }
+
+    const data = await res.json() as any;
+    if (isNumberVector(data?.embedding)) {
+      console.log("[Embeddings] Ollama success:", data.embedding.length, "dims");
+      return data.embedding;
+    }
+
+    console.warn("[Embeddings] Ollama response missing embedding vector.");
+  } catch (err) {
+    console.warn("Ollama embedding error:", err);
+  }
+
+  return null;
+}
+
+async function getEmbedding(text: string): Promise<number[]> {
+  const attempts: string[] = [];
+
+  if (HUGGINGFACE_API_KEY) {
+    attempts.push("HuggingFace");
+    const hfEmbedding = await embedWithHuggingFace(text);
+    if (hfEmbedding) return hfEmbedding;
+  }
+
+  if (JINA_API_KEY) {
+    attempts.push("Jina");
+    const jinaEmbedding = await embedWithJina(text);
+    if (jinaEmbedding) return jinaEmbedding;
+  }
+
+  if (ALLOW_OLLAMA_FALLBACK) {
+    attempts.push("Ollama");
+    const ollamaEmbedding = await embedWithOllama(text);
+    if (ollamaEmbedding) return ollamaEmbedding;
+  } else {
+    console.warn("[Embeddings] Ollama fallback disabled (ALLOW_OLLAMA_FALLBACK=false).");
+  }
+
+  const configured = [
+    HUGGINGFACE_API_KEY ? "HuggingFace" : null,
+    JINA_API_KEY ? "Jina" : null,
+    ALLOW_OLLAMA_FALLBACK ? "Ollama" : null,
+  ].filter(Boolean).join(", ") || "none";
+
+  throw new Error(
+    `Embedding service unavailable. Configured providers: ${configured}. Attempted: ${attempts.join(", ") || "none"}.`
+  );
 }
 
 // ============================================================================
