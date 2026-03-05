@@ -8,10 +8,10 @@ import { env } from './lib/env';
 
 async function makeAllFilesPublic() {
   try {
-    const folderId = env.GOOGLE_DRIVE_FOLDER_ID;
+    const folderId = env.GOOGLE_DRIVE_FOLDER_ID || env.GOOGLE_DRIVE_ROOT_FOLDER_ID;
     
     if (!folderId) {
-      console.error('❌ GOOGLE_DRIVE_FOLDER_ID is not set in .env');
+      console.error('❌ GOOGLE_DRIVE_FOLDER_ID (or GOOGLE_DRIVE_ROOT_FOLDER_ID) is not set in .env');
       process.exit(1);
     }
 

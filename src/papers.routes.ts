@@ -14,6 +14,21 @@ import { env } from './lib/env';
 
 const router = Router();
 
+function resolveDriveFolderId(explicitFolderId?: string): string | undefined {
+  const fromParam = explicitFolderId?.trim();
+  const fromPrimaryEnv = env.GOOGLE_DRIVE_FOLDER_ID?.trim();
+  const fromLegacyEnv = env.GOOGLE_DRIVE_ROOT_FOLDER_ID?.trim();
+
+  return fromParam || fromPrimaryEnv || fromLegacyEnv;
+}
+
+function missingFolderConfigError() {
+  return {
+    error:
+      'Google Drive folder ID is not configured. Set GOOGLE_DRIVE_FOLDER_ID in OA-backend/.env (or GOOGLE_DRIVE_ROOT_FOLDER_ID for legacy setups).',
+  };
+}
+
 function getDriveErrorMessage(error: unknown): { status: number; message: string } {
   const driveError = error as {
     code?: number;
@@ -53,12 +68,10 @@ function getDriveErrorMessage(error: unknown): { status: number; message: string
  */
 router.get('/drive/list', async (req, res) => {
   try {
-    const folderId = env.GOOGLE_DRIVE_FOLDER_ID;
+    const folderId = resolveDriveFolderId();
 
     if (!folderId) {
-      return res.status(400).json({
-        error: 'Google Drive folder ID not configured'
-      });
+      return res.status(500).json(missingFolderConfigError());
     }
 
     console.log('📂 Getting all PDFs recursively...');
@@ -93,12 +106,10 @@ router.get('/drive/list', async (req, res) => {
  */
 router.get('/browse/:folderId?', async (req, res) => {
   try {
-    const folderId = req.params.folderId || env.GOOGLE_DRIVE_FOLDER_ID;
+    const folderId = resolveDriveFolderId(req.params.folderId);
 
     if (!folderId) {
-      return res.status(400).json({
-        error: 'Folder ID required'
-      });
+      return res.status(500).json(missingFolderConfigError());
     }
 
     console.log(`📂 Browsing folder: ${folderId}`);
@@ -230,12 +241,10 @@ router.get('/download/:fileId', async (req, res) => {
 router.get('/drive/search', async (req, res) => {
   try {
     const { q } = req.query;
-    const folderId = env.GOOGLE_DRIVE_FOLDER_ID;
+    const folderId = resolveDriveFolderId();
 
     if (!folderId) {
-      return res.status(400).json({
-        error: 'Google Drive folder ID not configured'
-      });
+      return res.status(500).json(missingFolderConfigError());
     }
 
     if (!q || typeof q !== 'string') {
@@ -294,12 +303,10 @@ router.get('/drive/:fileId', async (req, res) => {
  */
 router.get('/organized', async (req, res) => {
   try {
-    const folderId = env.GOOGLE_DRIVE_FOLDER_ID;
+    const folderId = resolveDriveFolderId();
 
     if (!folderId) {
-      return res.status(400).json({
-        error: 'Google Drive folder ID not configured'
-      });
+      return res.status(500).json(missingFolderConfigError());
     }
 
     const files = await listFilesInFolder(folderId);

@@ -37,6 +37,7 @@ const envSchema = z.object({
   GOOGLE_REDIRECT_URI: z.preprocess(trimString, z.string().optional()),
   GOOGLE_REFRESH_TOKEN: z.preprocess(trimString, z.string().optional()),
   GOOGLE_DRIVE_FOLDER_ID: z.preprocess(trimString, z.string().optional()),
+  GOOGLE_DRIVE_ROOT_FOLDER_ID: z.preprocess(trimString, z.string().optional()),
 });
 
 export type Env = z.infer<typeof envSchema>;
