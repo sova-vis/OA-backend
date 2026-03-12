@@ -16,7 +16,10 @@ const envSchema = z.object({
   
   // Supabase
   SUPABASE_URL: z.preprocess(trimString, z.string().url()),
-  SUPABASE_SERVICE_ROLE_KEY: z.preprocess(trimString, z.string().min(1, 'Supabase service role key is required')),
+  SUPABASE_SERVICE_ROLE_KEY: z.preprocess(
+    (value) => trimString(value ?? process.env.SUPABASE_KEY),
+    z.string().min(1, 'Supabase service role key is required')
+  ),
   SUPABASE_JWKS_URL: z.preprocess(trimString, z.string().url()),
   SUPABASE_JWT_ISSUER: z.preprocess(trimString, z.string().url()),
   

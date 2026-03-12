@@ -3,9 +3,10 @@ import { supabase } from "./lib/supabase";
 import Groq from "groq-sdk";
 
 const router = Router();
-
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 const GROQ_MODEL = process.env.GROQ_MODEL || "llama-3.3-70b-versatile";
+const COHERE_API_KEY = (process.env.COHERE_API_KEY || "").trim();
+const EMBEDDING_MODEL = "embed-multilingual-v3.0";
 
 function parseBooleanEnv(value: string | undefined, defaultValue: boolean): boolean {
   if (!value || !value.trim()) return defaultValue;
@@ -18,24 +19,14 @@ function parseNumberEnv(value: string | undefined, defaultValue: number): number
   return Number.isFinite(parsed) ? parsed : defaultValue;
 }
 
-const OLLAMA_URL = (process.env.OLLAMA_URL || "http://localhost:11434").replace(/\/$/, "");
-const OLLAMA_MODEL = process.env.OLLAMA_MODEL || "bge-m3";
-const HUGGINGFACE_API_KEY = (process.env.HUGGINGFACE_API_KEY || "").trim();
-const HUGGINGFACE_EMBEDDING_MODEL = (process.env.HUGGINGFACE_EMBEDDING_MODEL || "BAAI/bge-m3").trim();
-const HUGGINGFACE_ROUTER_BASE_URL = (process.env.HUGGINGFACE_ROUTER_BASE_URL || "https://router.huggingface.co").replace(/\/$/, "");
-const JINA_API_KEY = (process.env.JINA_API_KEY || "").trim();
-const SUPABASE_STORAGE_BUCKET = (process.env.SUPABASE_STORAGE_BUCKET || "content").trim() || "content";
 const INCLUDE_STUDENT_RETRIEVAL_DIAGNOSTICS = parseBooleanEnv(
   process.env.INCLUDE_STUDENT_RETRIEVAL_DIAGNOSTICS,
   false
 );
-const ALLOW_OLLAMA_FALLBACK = parseBooleanEnv(
-  process.env.ALLOW_OLLAMA_FALLBACK,
-  process.env.NODE_ENV !== "production"
-);
-
 const SIMILARITY_THRESHOLD = 0.40;
-const TOP_K = 16;
+// Unfiltered (no subject) retrieval: fetch more candidates to compensate for
+// searching across all subjects at once.
+const TOP_K = 32;
 const TOP_K_WITH_FILTERS = Math.max(
   TOP_K,
   Math.floor(parseNumberEnv(process.env.TOP_K_WITH_FILTERS, 96))
@@ -44,201 +35,84 @@ const NEARBY_REFERENCE_LIMIT = Math.max(
   3,
   Math.floor(parseNumberEnv(process.env.NEARBY_REFERENCE_LIMIT, 4))
 );
-const MAX_CHUNKS_PER_FILE = 4;
-const MIN_BEST_SIMILARITY_FOR_CONTEXT = parseNumberEnv(process.env.MIN_BEST_SIMILARITY_FOR_CONTEXT, 0.55);
-const MIN_AVG_TOP3_SIMILARITY_FOR_CONTEXT = parseNumberEnv(process.env.MIN_AVG_TOP3_SIMILARITY_FOR_CONTEXT, 0.48);
-const MIN_BEST_SIMILARITY_FOR_CONTEXT_WITH_SUBJECT = parseNumberEnv(
+// Reliability thresholds for unfiltered retrieval (no subject filter).
+// Slightly looser than the old 0.55/0.48 — embedding cosine similarity of
+// ~0.48 across ALL subjects is still a strong topical match.
+const MIN_BEST_SIMILARITY = parseNumberEnv(
+  process.env.MIN_BEST_SIMILARITY_FOR_CONTEXT,
+  0.48
+);
+const MIN_AVG_TOP3_SIMILARITY = parseNumberEnv(
+  process.env.MIN_AVG_TOP3_SIMILARITY_FOR_CONTEXT,
+  0.42
+);
+const MIN_BEST_SIMILARITY_WITH_SUBJECT = parseNumberEnv(
   process.env.MIN_BEST_SIMILARITY_FOR_CONTEXT_WITH_SUBJECT,
   0.40
 );
-const MIN_AVG_TOP3_SIMILARITY_FOR_CONTEXT_WITH_SUBJECT = parseNumberEnv(
+const MIN_AVG_TOP3_WITH_SUBJECT = parseNumberEnv(
   process.env.MIN_AVG_TOP3_SIMILARITY_FOR_CONTEXT_WITH_SUBJECT,
   0.34
 );
 
-// ============================================================================
-// SUBJECT CACHE — fetched from DB dynamically, resolved against known names
-// ============================================================================
-
-interface CachedSubject {
-  id: string;
-  code: string;
-  level: string;
-  name: string; // resolved display name
-}
-
-let subjectCache: CachedSubject[] | null = null;
-
-// Known CAIE subject code → name fallbacks.
-// Custom/internal codes should come from DB subject name or SUBJECT_CODE_NAMES.
-const KNOWN_CODE_NAMES: Record<string, string> = {
-  // Standard CAIE O-Level
-  "0580": "Mathematics D", "0606": "Additional Mathematics",
-  "0620": "Chemistry", "0625": "Physics", "0610": "Biology",
-  "0417": "Computer Studies", "0450": "Business Studies",
-  "0470": "History", "0460": "Geography",
-  "0500": "English Language", "1123": "English Language",
-  "2058": "Islamiyat", "2059": "Pakistan Studies",
-  "2210": "Computer Science", "4024": "Mathematics Syllabus D",
-  "4037": "Additional Mathematics", "5054": "Physics",
-  "5070": "Chemistry", "5090": "Biology", "3247": "Urdu",
-  "3248": "Art & Design", "2134": "History", "2217": "Geography",
-  "2281": "Economics", "7100": "Commerce", "7707": "Accounting",
-  "2086": "Religious Studies", "3260": "Sociology",
+// -- SUBJECT MAP -------------------------------------------------------------
+// Maps normalized keyword -> exact subject name in past_paper_meta
+const SUBJECT_NAME_MAP: Record<string, string> = {
+  chemistry: "Chemistry 1011",
+  english: "English 1012",
+  islamiyat: "Islamiyat 1013",
+  islamiat: "Islamiyat 1013",
+  "islamic studies": "Islamiyat 1013",
+  mathematics: "Mathematics 1014",
+  maths: "Mathematics 1014",
+  math: "Mathematics 1014",
+  "pakistan studies": "Pakistan Studies 1015",
+  "pak studies": "Pakistan Studies 1015",
+  "pakistan study": "Pakistan Studies 1015",
+  physics: "Physics 1016",
 };
 
 const SUBJECT_KEYWORDS = [
-  "computer science", "english language", "english literature",
-  "pakistan studies", "pakistan study", "pak studies",
-  "chemistry", "physics", "biology", "mathematics", "maths", "math",
-  "islamiyat", "islamiat", "islamic studies", "urdu", "english", "computer", "economics",
-  "history", "geography", "accounting", "commerce", "sociology",
-  "additional mathematics", "add maths",
+  "pakistan studies",
+  "pak studies",
+  "pakistan study",
+  "islamic studies",
+  "additional mathematics",
+  "chemistry",
+  "physics",
+  "mathematics",
+  "islamiyat",
+  "islamiat",
+  "english",
+  "maths",
+  "math",
 ].sort((a, b) => b.length - a.length);
 
-const SUBJECT_ALIAS_TO_CANONICAL: Record<string, string> = {
-  "math": "mathematics",
-  "maths": "mathematics",
-  "pakistan study": "pakistan studies",
-  "pak studies": "pakistan studies",
-  "add maths": "additional mathematics",
-  "islamiat": "islamiyat",
-  "islamic studies": "islamiyat",
-  "computer": "computer science",
-};
-
 const TOPIC_SUBJECT_HINTS: Array<{ pattern: RegExp; subjectHint: string }> = [
-  { pattern: /\b(vector|vectors|scalar|scalars|momentum|force|displacement|velocity|acceleration|newton|resultant)\b/i, subjectHint: "physics" },
-  { pattern: /\b(logarithm|logarithms|integration|differentiat|derivative|gradient|trigonometry|algebra|matrix|matrices|determinant|transpose|inverse matrix|simultaneous equations)\b/i, subjectHint: "mathematics" },
-  { pattern: /\b(mole|moles|stoichiometry|acid|alkali|electrolysis|oxidation|reduction|salt)\b/i, subjectHint: "chemistry" },
-  { pattern: /\b(cell|osmosis|diffusion|photosynthesis|enzyme|mitosis|meiosis|organism)\b/i, subjectHint: "biology" },
-  { pattern: /\b(hazrat|sahaba|khulafa|prophet muhammad|quran|qur'an|hadith|sunnah|hijrah|madinah|makkah|abu bakr|umar|umer|uthman|ali)\b/i, subjectHint: "islamiyat" },
-  { pattern: /\b(pakistan movement|lahore resolution|two nation theory|muslim league|jinnah|allama iqbal|partition|1947|cabinet mission|simla conference|indus water treaty)\b/i, subjectHint: "pakistan studies" },
+  {
+    pattern: /\b(vector|momentum|force|displacement|velocity|acceleration|newton|resultant|pressure|density|wave|current|voltage|resistance|circuit|lens|refraction|thermal energy|kinetic energy|potential energy|internal energy|specific heat|latent heat|heat transfer|conduction|convection|radiation|temperature|thermometer|energy transfer|work done|power output|gravitational|centripetal|magnetic field|electric field|capacitor|transistor|nuclear|radioactive|half.?life|photon|electron|proton|neutron)\b/i,
+    subjectHint: "physics",
+  },
+  {
+    pattern: /\b(logarithm|integration|differentiat|derivative|gradient|trigonometry|algebra|matrix|matrices|simultaneous equations|probability|statistics|quadratic)\b/i,
+    subjectHint: "mathematics",
+  },
+  {
+    pattern: /\b(mole|moles|stoichiometry|acid|alkali|electrolysis|oxidation|reduction|salt|bond|ionic|covalent|periodic table|redox)\b/i,
+    subjectHint: "chemistry",
+  },
+  {
+    pattern: /\b(hazrat|sahaba|prophet muhammad|quran|hadith|sunnah|hijrah|madinah|makkah|abu bakr|umar|uthman|ali|khalifa)\b/i,
+    subjectHint: "islamiyat",
+  },
+  {
+    pattern: /\b(pakistan movement|lahore resolution|two nation theory|muslim league|jinnah|allama iqbal|partition|1947|mughal|british raj)\b/i,
+    subjectHint: "pakistan studies",
+  },
 ];
 
-function normalizeSubjectTerm(value: string): string {
-  const normalized = value.toLowerCase().trim().replace(/\s+/g, " ");
-  return SUBJECT_ALIAS_TO_CANONICAL[normalized] || normalized;
-}
-
-// Custom overrides from env: SUBJECT_CODE_NAMES="1013:Islamiyat,1015:Pakistan Studies,1016:Physics"
-function parseCustomSubjectNames(): Record<string, string> {
-  const raw = process.env.SUBJECT_CODE_NAMES || "";
-  if (!raw.trim()) return {};
-  return raw.split(",").reduce((acc: Record<string, string>, entry) => {
-    const [code, name] = entry.split(":").map((s) => s.trim());
-    if (code && name) acc[code] = name;
-    return acc;
-  }, {});
-}
-
-async function getSubjectCache(): Promise<CachedSubject[]> {
-  if (subjectCache) return subjectCache;
-
-  let subjectsData: any[] | null = null;
-
-  const withName = await supabase
-    .from("subjects")
-    .select("id, code, level, name")
-    .order("code");
-
-  if (withName.error) {
-    const fallback = await supabase
-      .from("subjects")
-      .select("id, code, level")
-      .order("code");
-
-    if (fallback.error || !fallback.data) {
-      console.error("Cannot fetch subjects from DB:", fallback.error?.message || withName.error.message);
-      return [];
-    }
-
-    subjectsData = fallback.data as any[];
-  } else {
-    subjectsData = (withName.data || []) as any[];
-  }
-
-  const customNames = parseCustomSubjectNames();
-
-  subjectCache = subjectsData.map((s: any) => {
-    const dbName = typeof s.name === "string" ? s.name.trim() : "";
-    return {
-      id: s.id as string,
-      code: s.code as string,
-      level: s.level as string,
-      name: customNames[s.code] || dbName || KNOWN_CODE_NAMES[s.code] || `Subject ${s.code}`,
-    };
-  });
-
-  console.log("[RAG] Loaded subjects:", subjectCache.map((s) => `${s.code}=${s.name}`).join(", "));
-  return subjectCache;
-}
-
-// Invalidate cache so next request refetches (useful after admin updates)
-function clearSubjectCache() {
-  subjectCache = null;
-}
-
-function resolveSubjectName(code: string): string {
-  if (subjectCache) {
-    const found = subjectCache.find((s) => s.code === code);
-    if (found) return found.name;
-  }
-  const customNames = parseCustomSubjectNames();
-  return customNames[code] || KNOWN_CODE_NAMES[code] || `Subject ${code}`;
-}
-
-// Find the best matching DB subject for a user-typed name
-async function findSubjectByName(name: string): Promise<CachedSubject | null> {
-  const subjects = await getSubjectCache();
-  if (!subjects.length) return null;
-
-  const q = normalizeSubjectTerm(name);
-
-  // Exact name match
-  const exact = subjects.find((s) => normalizeSubjectTerm(s.name) === q);
-  if (exact) return exact;
-
-  // Partial name match
-  const partial = subjects.find(
-    (s) => {
-      const subjectName = normalizeSubjectTerm(s.name);
-      return subjectName.includes(q) || q.includes(subjectName);
-    }
-  );
-  if (partial) return partial;
-
-  // Code match (user typed the code directly)
-  const byCode = subjects.find((s) => s.code.toLowerCase() === q);
-  if (byCode) return byCode;
-
-  return null;
-}
-
-interface SubjectInference {
-  keyword: string;
-  matchedSubject?: CachedSubject;
-  source: "explicit-keyword" | "topic-hint" | "topic-hint-strong";
-}
-
-function isEnglishCompositionPrompt(question: string): boolean {
-  const numberedPromptLines = (question.match(/(?:^|\n)\s*\d+\s+/g) || []).length;
-
-  const compositionSignals = [
-    /\bwrite a story\b/i,
-    /\bdescribe (the|a) scene\b/i,
-    /\bincludes the words\b/i,
-    /\bgreat disappointment or happiness\b/i,
-    /\bopen air\b/i,
-    /\bsuccess\.?\s*$/im,
-    /\bletter\b/i,
-    /\bcomposition\b/i,
-    /\bnarrative\b/i,
-    /\bcreative writing\b/i,
-  ];
-
-  const signalHits = compositionSignals.reduce((count, pattern) => count + (pattern.test(question) ? 1 : 0), 0);
-  return signalHits >= 2 || (numberedPromptLines >= 2 && signalHits >= 1);
+function resolveSubjectName(keyword: string): string {
+  return SUBJECT_NAME_MAP[keyword.toLowerCase().trim()] || keyword;
 }
 
 function detectSubjectKeyword(question: string): string | undefined {
@@ -246,966 +120,470 @@ function detectSubjectKeyword(question: string): string | undefined {
   return SUBJECT_KEYWORDS.find((kw) => lower.includes(kw));
 }
 
-function isStrongMathematicsPrompt(question: string): boolean {
-  return /\b(matrix|matrices|determinant|inverse matrix|matrix multiplication|adjoint|cofactor|simultaneous equations)\b/i.test(question);
-}
-
-async function inferSubjectFromQuestion(question: string): Promise<SubjectInference | null> {
+function inferSubjectFromQuestion(question: string): string | null {
   const keyword = detectSubjectKeyword(question);
-  if (keyword) {
-    const matchedSubject = await findSubjectByName(keyword);
-    if (matchedSubject) return { keyword, matchedSubject, source: "explicit-keyword" };
-
-    return { keyword, source: "explicit-keyword" };
-  }
-
-  if (isEnglishCompositionPrompt(question)) {
-    const matchedSubject = await findSubjectByName("english");
-    if (matchedSubject) {
-      return {
-        keyword: "english",
-        matchedSubject,
-        source: "topic-hint-strong",
-      };
-    }
-
-    return {
-      keyword: "english",
-      source: "topic-hint-strong",
-    };
-  }
-
-  if (isStrongMathematicsPrompt(question)) {
-    const matchedSubject = await findSubjectByName("mathematics");
-    if (matchedSubject) {
-      return {
-        keyword: "mathematics",
-        matchedSubject,
-        source: "topic-hint-strong",
-      };
-    }
-
-    return {
-      keyword: "mathematics",
-      source: "topic-hint-strong",
-    };
-  }
+  if (keyword) return keyword;
 
   for (const hint of TOPIC_SUBJECT_HINTS) {
-    if (!hint.pattern.test(question)) continue;
-
-    const matchedSubject = await findSubjectByName(hint.subjectHint);
-    if (matchedSubject) {
-      return {
-        keyword: hint.subjectHint,
-        matchedSubject,
-        source: "topic-hint",
-      };
-    }
+    if (hint.pattern.test(question)) return hint.subjectHint;
   }
-
   return null;
 }
 
-// ============================================================================
-// TYPES
-// ============================================================================
+// -- TYPES -------------------------------------------------------------------
+type Intent = "exam_question" | "smalltalk";
 
-type Intent = "paper_lookup" | "exam_question" | "smalltalk";
-
-interface ClassificationResult {
-  intent: Intent;
-  metadata?: {
-    subjectKeyword?: string;
-    year?: number;
-    paper?: string;
-    fileType?: string;
-  };
-}
-
-interface GroupedResult {
-  paperFileId?: string;
-  filetype: string;
-  storagePath: string;
-  chunks: Array<{ id: string; content: string; chunkIndex: number; similarity: number }>;
+interface PastPaperChunk {
+  chunk_id: string;
+  content: string;
+  similarity: number;
   subject: string;
   year: number;
   session: string;
   paper: string;
-}
-
-interface RagRetrievalResult {
-  success: boolean;
-  groupedResults: GroupedResult[];
-  rawSimilarityScores: number[];
-  nearbyGroupedResults: GroupedResult[];
-  stats?: {
-    matchCountRequested: number;
-    rpcMatchCount: number;
-    thresholdMatchCount: number;
-    metadataChunkCount: number;
-    groupedFileCount: number;
-    bestSimilarity: number;
-    avgTop3Similarity: number;
-    usedThresholdFallback: boolean;
-  };
-  error?: string;
-}
-
-interface RelatedQuestion {
-  type: "exact" | "similar";
-  text: string;
-  source: { subject: string; year: number; session: string; paper: string; file_type: string; paper_file_id?: string; storage_path?: string; paper_view_url?: string };
-  similarity: number;
-}
-
-interface ExamAnswer {
-  answer: string;
-  markingPoints: Array<{ point: string; marks: number }>;
-  commonMistakes: string[];
-  citations: Citation[];
-  confidenceScore: number;
-  coveragePercentage: number;
-  relatedQuestion?: RelatedQuestion;
-}
-
-interface HistoryMessage { role: "user" | "assistant"; content: string; }
-
-interface RagQueryRequest {
-  question: string;
-  limit?: number;
-  filters?: { subject?: string; year?: number; file_type?: string; level?: string };
-  history?: HistoryMessage[];
+  variant: string;
 }
 
 interface Citation {
-  subject: string; subjectName: string; year: number; session: string;
-  paper: string; file_type: string; storage_path: string;
-  chunk_index: number; similarity: number;
-  paper_file_id?: string;
-  paper_view_url?: string;
-  relation?: "direct" | "nearby";
+  subject: string;
+  year: number;
+  session: string;
+  paper: string;
+  variant: string;
+  similarity: number;
+  relation: "direct" | "nearby";
 }
 
 interface RetrievalDiagnostics {
   mode: "grounded" | "nearby" | "general";
-  used_embeddings: boolean;
   subject_filter?: string;
-  reason?: string;
-  match_count_requested?: number;
-  rpc_match_count?: number;
-  threshold_match_count?: number;
-  metadata_chunk_count?: number;
-  grouped_file_count?: number;
+  match_count?: number;
   best_similarity?: number;
-  avg_top3_similarity?: number;
+  avg_top3?: number;
+  reason?: string;
+  requested_match_count?: number;
+  similarity_threshold?: number;
+}
+
+interface HistoryMessage {
+  role: "user" | "assistant";
+  content: string;
+}
+
+type AnswerMode = "full_answer" | "mark_scheme_only";
+
+type SourceType = "past_paper" | "nearby_only" | "none";
+
+interface QuestionResolution {
+  retrievalQuestion: string;
+  answerMode: AnswerMode;
+  usedHistoryQuestion: boolean;
+}
+
+interface RagQueryRequest {
+  question: string;
+  limit?: number;
+  filters?: { subject?: string; year?: number };
+  history?: HistoryMessage[];
 }
 
 interface RagQueryResponse {
-  type: "smalltalk" | "paper_lookup" | "exam_question";
+  type: "smalltalk" | "exam_question";
   answer: string;
   marking_points?: Array<{ point: string; marks: number }>;
   common_mistakes?: string[];
   citations: Citation[];
   confidence_score?: number;
-  coverage_percentage?: number;
   low_confidence?: boolean;
-  results?: any[];
-  available_subjects?: Array<{ code: string; name: string; level: string }>;
-  related_question?: RelatedQuestion;
   retrieval?: RetrievalDiagnostics;
   nearby_references?: Citation[];
+  source_note?: string;
+  source_type?: SourceType;
+  resolved_question?: string;
 }
 
-// ============================================================================
-// EMBEDDING — HuggingFace bge-m3 primary, Jina secondary, Ollama optional
-// ============================================================================
-
-// Mean-pool a 2D token matrix [seq_len, hidden] → [hidden]
-function meanPoolTokens(tokenMatrix: number[][]): number[] {
-  if (!tokenMatrix.length) return [];
-  const dim = tokenMatrix[0].length;
-  const result = new Array(dim).fill(0);
-  for (const vec of tokenMatrix) {
-    for (let i = 0; i < dim; i++) result[i] += vec[i];
-  }
-  return result.map((v) => v / tokenMatrix.length);
-}
-
-function isNumberVector(value: unknown): value is number[] {
-  return Array.isArray(value) && value.length > 0 && value.every((n) => typeof n === "number");
-}
-
-function extractEmbeddingFromPayload(payload: any): number[] | null {
-  if (isNumberVector(payload)) return payload;
-
-  if (Array.isArray(payload) && payload.length > 0 && Array.isArray(payload[0])) {
-    const tokenMatrix = payload.filter((row: unknown) => isNumberVector(row)) as number[][];
-    const pooled = meanPoolTokens(tokenMatrix);
-    if (pooled.length > 0) return pooled;
-  }
-
-  if (isNumberVector(payload?.embedding)) return payload.embedding;
-  if (isNumberVector(payload?.data?.[0]?.embedding)) return payload.data[0].embedding;
-
-  return null;
-}
-
-function buildHuggingFaceModelPath(model: string): string {
-  return model
-    .split("/")
-    .map((segment) => encodeURIComponent(segment))
-    .join("/");
-}
-
-async function embedWithHuggingFace(text: string): Promise<number[] | null> {
-  try {
-    const modelPath = buildHuggingFaceModelPath(HUGGINGFACE_EMBEDDING_MODEL);
-    const endpointCandidates = [
-      {
-        label: "router/models/pipeline",
-        url: `${HUGGINGFACE_ROUTER_BASE_URL}/hf-inference/models/${modelPath}/pipeline/feature-extraction`,
-        body: {
-          inputs: text,
-          options: { wait_for_model: true, use_cache: true },
-        },
-      },
-      {
-        label: "router/pipeline",
-        url: `${HUGGINGFACE_ROUTER_BASE_URL}/hf-inference/pipeline/feature-extraction/${modelPath}`,
-        body: {
-          inputs: text,
-          options: { wait_for_model: true, use_cache: true },
-        },
-      },
-      {
-        label: "router/models",
-        url: `${HUGGINGFACE_ROUTER_BASE_URL}/hf-inference/models/${modelPath}`,
-        body: {
-          inputs: text,
-          options: { wait_for_model: true, use_cache: true },
-        },
-      },
-    ];
-
-    for (const endpoint of endpointCandidates) {
-      console.log(`[Embeddings] Calling HuggingFace ${HUGGINGFACE_EMBEDDING_MODEL} via ${endpoint.label}...`);
-
-      const res = await fetch(endpoint.url, {
-        method: "POST",
-        headers: {
-          "Authorization": `Bearer ${HUGGINGFACE_API_KEY}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(endpoint.body),
-        signal: AbortSignal.timeout(45000),
-      });
-
-      const bodyText = await res.text();
-
-      if (!res.ok) {
-        if (endpoint.label === "router/models" && /SentenceSimilarityPipeline/i.test(bodyText)) {
-          console.warn("[Embeddings] HuggingFace router/models mapped to sentence-similarity for this model. Skipping endpoint.");
-          continue;
-        }
-        console.warn(`[Embeddings] HuggingFace ${endpoint.label} HTTP ${res.status}: ${bodyText.slice(0, 300)}`);
-        continue;
-      }
-
-      let payload: any;
-      try {
-        payload = JSON.parse(bodyText);
-      } catch {
-        console.warn(`[Embeddings] HuggingFace ${endpoint.label} returned non-JSON response.`);
-        continue;
-      }
-
-      const embedding = extractEmbeddingFromPayload(payload);
-      if (embedding) {
-        console.log("[Embeddings] HuggingFace success:", embedding.length, "dims");
-        return embedding;
-      }
-
-      if (typeof payload?.error === "string") {
-        console.warn(`[Embeddings] HuggingFace ${endpoint.label} response error: ${payload.error}`);
-      } else {
-        console.warn(`[Embeddings] HuggingFace ${endpoint.label} response shape not recognized.`);
-      }
-    }
-  } catch (err) {
-    console.warn("[Embeddings] HuggingFace error:", err);
-  }
-
-  return null;
-}
-
-async function embedWithJina(text: string): Promise<number[] | null> {
-  try {
-    console.log("[Embeddings] Calling Jina AI...");
-    const res = await fetch("https://api.jina.ai/v1/embeddings", {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${JINA_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "jina-embeddings-v3",
-        input: [text],
-        task: "text-matching",
-        dimensions: 1024,
-      }),
-      signal: AbortSignal.timeout(30000),
-    });
-
-    if (!res.ok) {
-      const body = await res.text();
-      console.warn(`[Embeddings] Jina AI HTTP ${res.status}: ${body}`);
-      return null;
-    }
-
-    const data = await res.json() as any;
-    const embedding = data?.data?.[0]?.embedding as number[];
-    if (isNumberVector(embedding)) {
-      console.log("[Embeddings] Jina AI success:", embedding.length, "dims");
-      return embedding;
-    }
-
-    console.warn("[Embeddings] Jina AI response missing embedding vector.");
-  } catch (err) {
-    console.warn("[Embeddings] Jina AI error:", err);
-  }
-
-  return null;
-}
-
-async function embedWithOllama(text: string): Promise<number[] | null> {
-  try {
-    const res = await fetch(`${OLLAMA_URL}/api/embeddings`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ model: OLLAMA_MODEL, prompt: text }),
-      signal: AbortSignal.timeout(20000),
-    });
-
-    if (!res.ok) {
-      const body = await res.text();
-      console.warn(`[Embeddings] Ollama HTTP ${res.status}: ${body}`);
-      return null;
-    }
-
-    const data = await res.json() as any;
-    if (isNumberVector(data?.embedding)) {
-      console.log("[Embeddings] Ollama success:", data.embedding.length, "dims");
-      return data.embedding;
-    }
-
-    console.warn("[Embeddings] Ollama response missing embedding vector.");
-  } catch (err) {
-    console.warn("Ollama embedding error:", err);
-  }
-
-  return null;
-}
-
+// -- EMBEDDING ---------------------------------------------------------------
 async function getEmbedding(text: string): Promise<number[]> {
-  const attempts: string[] = [];
+  if (!COHERE_API_KEY) throw new Error("COHERE_API_KEY not set");
 
-  if (HUGGINGFACE_API_KEY) {
-    attempts.push("HuggingFace");
-    const hfEmbedding = await embedWithHuggingFace(text);
-    if (hfEmbedding) return hfEmbedding;
+  const res = await fetch("https://api.cohere.com/v2/embed", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${COHERE_API_KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: EMBEDDING_MODEL,
+      texts: [text],
+      input_type: "search_query",
+      embedding_types: ["float"],
+    }),
+    signal: AbortSignal.timeout(30000),
+  });
+
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`Cohere HTTP ${res.status}: ${body.slice(0, 200)}`);
   }
 
-  if (JINA_API_KEY) {
-    attempts.push("Jina");
-    const jinaEmbedding = await embedWithJina(text);
-    if (jinaEmbedding) return jinaEmbedding;
+  const data = (await res.json()) as any;
+  const embedding = data?.embeddings?.float?.[0] as number[];
+  if (!Array.isArray(embedding) || embedding.length === 0) {
+    throw new Error("Cohere returned empty embedding");
   }
 
-  if (ALLOW_OLLAMA_FALLBACK) {
-    attempts.push("Ollama");
-    const ollamaEmbedding = await embedWithOllama(text);
-    if (ollamaEmbedding) return ollamaEmbedding;
-  } else {
-    console.warn("[Embeddings] Ollama fallback disabled (ALLOW_OLLAMA_FALLBACK=false).");
-  }
-
-  const configured = [
-    HUGGINGFACE_API_KEY ? "HuggingFace" : null,
-    JINA_API_KEY ? "Jina" : null,
-    ALLOW_OLLAMA_FALLBACK ? "Ollama" : null,
-  ].filter(Boolean).join(", ") || "none";
-
-  throw new Error(
-    `Embedding service unavailable. Configured providers: ${configured}. Attempted: ${attempts.join(", ") || "none"}.`
-  );
+  console.log(`[Embeddings] Cohere success: ${embedding.length} dims`);
+  return embedding;
 }
 
-// ============================================================================
-// STAGE A: INTENT CLASSIFICATION
-// ============================================================================
-
-function classifyIntent(question: string): ClassificationResult {
-  const q = question.toLowerCase().trim();
-  const normalized = q
-    .replace(/[\u2019']/g, "'")
-    .replace(/[^a-z0-9'\s]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-
-  const smalltalkExact = new Set([
-    "hello", "hi", "hey", "yo", "thanks", "thank you", "ok", "okay", "yes", "no",
-    "sure", "good", "great", "nice", "cool", "bye", "goodbye", "good night", "gn",
-    "lol", "haha", "hmm", "umm", "hru", "sup",
-    "how are you", "how r u", "how are u", "how you doing", "what's up", "whats up",
-    "who are you", "are you there", "good morning", "good afternoon", "good evening",
-  ]);
-  if (smalltalkExact.has(normalized)) return { intent: "smalltalk" };
-
-  const smalltalkPatterns = [
-    /^(hello|hi|hey|thanks|thank you|ok|okay|yes|no|sure|good|great|nice|cool|bye|goodbye)$/,
-    /^(how are you|how r u|how are u|how you doing|what'?s up|who are you|are you there|good morning|good afternoon|good evening)$/,
-    /^[\?\!\.]{1,3}$/, /^(lol|haha|hmm|umm|err)$/,
-  ];
-  if (smalltalkPatterns.some((p) => p.test(q))) return { intent: "smalltalk" };
-
-  const shortCasualPattern = /^(hi+|he+y+|ok(ay)?|thanks?|thank you|cool|nice|great|good|bye|goodbye)$/;
-  if (normalized.split(" ").length <= 4 && shortCasualPattern.test(normalized)) {
-    return { intent: "smalltalk" };
-  }
-
-  const fileTypeIndicators = ["qp", "ms", "er", "gt"];
-  const yearMatch = q.match(/\b(20\d{2})\b/);
-  const paperMatch = q.match(/\b(p1|p2|p3)\b/i);
-
-  let detectedSubjectKeyword: string | undefined;
-  for (const kw of SUBJECT_KEYWORDS) {
-    if (q.includes(kw)) { detectedSubjectKeyword = kw; break; }
-  }
-
-  let detectedFileType: string | undefined;
-  for (const ft of fileTypeIndicators) {
-    if (q.includes(ft)) { detectedFileType = ft.toUpperCase(); break; }
-  }
-
-  const hasLookupKeyword = /\b(paper|past paper|find|show|get|list|download|papers|available)\b/.test(q);
-
-  if (detectedSubjectKeyword && (yearMatch || detectedFileType || paperMatch || hasLookupKeyword)) {
-    return {
-      intent: "paper_lookup",
-      metadata: {
-        subjectKeyword: detectedSubjectKeyword,
-        year: yearMatch ? parseInt(yearMatch[1]) : undefined,
-        paper: paperMatch ? paperMatch[1].toUpperCase() : undefined,
-        fileType: detectedFileType,
-      },
-    };
-  }
-
-  // Also treat "show papers for [year]" without subject as lookup
-  if (hasLookupKeyword && yearMatch) {
-    return { intent: "paper_lookup", metadata: { year: parseInt(yearMatch[1]) } };
-  }
-
-  return { intent: "exam_question" };
+// -- RAG RETRIEVAL -----------------------------------------------------------
+interface RagRetrievalResult {
+  success: boolean;
+  chunks: PastPaperChunk[];
+  nearbyChunks: PastPaperChunk[];
+  scores: number[];
+  bestSimilarity: number;
+  avgTop3: number;
+  error?: string;
 }
 
-// ============================================================================
-// STAGE B: RAG RETRIEVAL
-// ============================================================================
+async function ragRetrieval(
+  question: string,
+  subjectFilter?: string,
+  yearFilter?: number
+): Promise<RagRetrievalResult> {
+  const empty: RagRetrievalResult = {
+    success: false,
+    chunks: [],
+    nearbyChunks: [],
+    scores: [],
+    bestSimilarity: 0,
+    avgTop3: 0,
+  };
 
-function isUsableId(value: unknown): value is string {
-  if (typeof value !== "string") return false;
-  const trimmed = value.trim();
-  return Boolean(trimmed && trimmed !== "undefined" && trimmed !== "null");
-}
-
-function normalizeStoragePath(value?: string): string | undefined {
-  if (!value || !value.trim()) return undefined;
-  let normalized = value.trim().replace(/^\/+/, "");
-  const bucketPrefix = `${SUPABASE_STORAGE_BUCKET}/`;
-  if (normalized.toLowerCase().startsWith(bucketPrefix.toLowerCase())) {
-    normalized = normalized.slice(bucketPrefix.length);
-  }
-  return normalized || undefined;
-}
-
-function getPaperViewUrl(paperFileId?: string, storagePath?: string): string | undefined {
-  const normalizedStoragePath = normalizeStoragePath(storagePath);
-  const storagePathQuery = normalizedStoragePath
-    ? `?storagePath=${encodeURIComponent(normalizedStoragePath)}`
-    : "";
-
-  if (isUsableId(paperFileId)) {
-    return `/rag/paper-file/${encodeURIComponent(paperFileId.trim())}/view${storagePathQuery}`;
-  }
-
-  if (normalizedStoragePath) {
-    return `/rag/paper-file/by-path/view?storagePath=${encodeURIComponent(normalizedStoragePath)}`;
-  }
-
-  return undefined;
-}
-
-function summarizeSimilarityScores(scores: number[]): { best: number; avgTop3: number } {
-  const sortedScores = [...scores].sort((a, b) => b - a);
-  const best = sortedScores[0] || 0;
-  const top3 = sortedScores.slice(0, 3);
-  const avgTop3 = top3.length
-    ? top3.reduce((sum, score) => sum + score, 0) / top3.length
-    : 0;
-  return { best, avgTop3 };
-}
-
-function groupChunksByPaperFile(chunks: any[], similarityMap: Map<string, number>): GroupedResult[] {
-  const grouped = new Map<string, GroupedResult>();
-  const sortedChunks = [...chunks].sort(
-    (a: any, b: any) => (similarityMap.get(b.id) || 0) - (similarityMap.get(a.id) || 0)
-  );
-
-  for (const chunk of sortedChunks as any[]) {
-    const fileId = chunk.paper_file_id ? String(chunk.paper_file_id) : undefined;
-    const pf = chunk.paper_files;
-    const paper = pf?.papers;
-    const subject = paper?.subjects;
-    const groupingKey = fileId || `path:${pf?.storage_path || chunk.id}`;
-
-    if (!grouped.has(groupingKey)) {
-      grouped.set(groupingKey, {
-        paperFileId: fileId,
-        filetype: pf?.file_type || "Unknown",
-        storagePath: pf?.storage_path || "",
-        chunks: [],
-        subject: subject?.code || "Unknown",
-        year: paper?.year || 0,
-        session: paper?.session || "Unknown",
-        paper: paper?.paper || "P",
-      });
-    }
-
-    const group = grouped.get(groupingKey)!;
-    if (group.chunks.length < MAX_CHUNKS_PER_FILE) {
-      group.chunks.push({
-        id: chunk.id,
-        content: chunk.content,
-        chunkIndex: chunk.chunk_index,
-        similarity: similarityMap.get(chunk.id) || 0,
-      });
-    }
-  }
-
-  return Array.from(grouped.values());
-}
-
-function buildCitationsFromGroups(groups: GroupedResult[], relation: "direct" | "nearby" = "direct"): Citation[] {
-  return groups
-    .flatMap((group) =>
-      group.chunks.map((chunk) => {
-        const paperViewUrl = getPaperViewUrl(group.paperFileId, group.storagePath);
-        return {
-          subject: group.subject,
-          subjectName: resolveSubjectName(group.subject),
-          year: group.year,
-          session: group.session,
-          paper: group.paper,
-          file_type: group.filetype,
-          storage_path: group.storagePath,
-          chunk_index: chunk.chunkIndex,
-          similarity: chunk.similarity,
-          paper_file_id: group.paperFileId,
-          paper_view_url: paperViewUrl,
-          relation,
-        };
-      })
-    )
-    .sort((a, b) => b.similarity - a.similarity);
-}
-
-function dedupeCitations(citations: Citation[]): Citation[] {
-  const deduped = new Map<string, Citation>();
-
-  for (const citation of citations) {
-    const normalizedStoragePath = normalizeStoragePath(citation.storage_path);
-    const primaryKey = isUsableId(citation.paper_file_id)
-      ? citation.paper_file_id.trim()
-      : (normalizedStoragePath || `${citation.subject}-${citation.year}-${citation.session}-${citation.paper}-${citation.file_type}`);
-    const dedupeKey = `${primaryKey}:${citation.file_type}`;
-
-    const existing = deduped.get(dedupeKey);
-    if (!existing || citation.similarity >= existing.similarity) {
-      deduped.set(dedupeKey, citation);
-    }
-  }
-
-  return Array.from(deduped.values()).sort((a, b) => b.similarity - a.similarity);
-}
-
-function hasReliableRagContext(ragResult: RagRetrievalResult, expectedSubjectCode?: string): boolean {
-  if (!ragResult.success || ragResult.groupedResults.length === 0) return false;
-
-  if (expectedSubjectCode) {
-    const hasUnexpectedSubject = ragResult.groupedResults.some(
-      (g) => String(g.subject) !== String(expectedSubjectCode)
-    );
-    if (hasUnexpectedSubject) return false;
-  }
-
-  const { best: bestScore, avgTop3 } = summarizeSimilarityScores(ragResult.rawSimilarityScores);
-
-  const minBest = expectedSubjectCode
-    ? MIN_BEST_SIMILARITY_FOR_CONTEXT_WITH_SUBJECT
-    : MIN_BEST_SIMILARITY_FOR_CONTEXT;
-  const minAvgTop3 = expectedSubjectCode
-    ? MIN_AVG_TOP3_SIMILARITY_FOR_CONTEXT_WITH_SUBJECT
-    : MIN_AVG_TOP3_SIMILARITY_FOR_CONTEXT;
-
-  return bestScore >= minBest && avgTop3 >= minAvgTop3;
-}
-
-async function ragRetrieval(question: string, filters?: any): Promise<RagRetrievalResult> {
   try {
-    let questionEmbedding: number[];
-    try {
-      questionEmbedding = await getEmbedding(question);
-    } catch (embedErr: any) {
-      return {
-        success: false,
-        groupedResults: [],
-        nearbyGroupedResults: [],
-        rawSimilarityScores: [],
-        error: embedErr.message,
-      };
+    const embedding = await getEmbedding(question);
+    const matchCount = subjectFilter ? TOP_K_WITH_FILTERS : TOP_K;
+
+    const { data, error } = await supabase.rpc("search_past_papers", {
+      query_embedding: embedding,
+      match_count: matchCount,
+      filter_subject: subjectFilter || null,
+      filter_year: yearFilter || null,
+    });
+
+    if (error || !data) {
+      return { ...empty, error: error?.message || "RPC failed" };
     }
 
-    const hasMetadataFilters = Boolean(
-      filters?.subject || filters?.year || filters?.file_type || filters?.level
+    const all = (data as PastPaperChunk[]).sort(
+      (a, b) => b.similarity - a.similarity
     );
 
-    const searchParams: Record<string, any> = {
-      query_embedding: questionEmbedding,
-      match_count: hasMetadataFilters ? TOP_K_WITH_FILTERS : TOP_K,
-    };
+    const scores = all.map((c) => c.similarity);
+    const sorted = [...scores].sort((a, b) => b - a);
+    const bestSimilarity = sorted[0] || 0;
+    const top3 = sorted.slice(0, 3);
+    const avgTop3 = top3.length
+      ? top3.reduce((s, v) => s + v, 0) / top3.length
+      : 0;
+
+    const aboveThreshold = all.filter(
+      (c) => c.similarity >= SIMILARITY_THRESHOLD
+    );
+    const nearbyChunks = all.slice(0, Math.min(all.length, TOP_K));
+    const chunks = aboveThreshold.length > 0 ? aboveThreshold : [];
 
     console.log(
-      `[RAG] Querying rag_search with match_count=${searchParams.match_count}${hasMetadataFilters ? " (expanded for backend metadata filtering)" : ""}`
+      `[RAG] Retrieved ${all.length}/${matchCount} candidates; ${chunks.length} are >= similarity ${SIMILARITY_THRESHOLD}`
     );
-
-    const { data: searchResults, error: searchErr } = await supabase.rpc("rag_search", searchParams);
-
-    if (searchErr) {
-      console.error("rag_search RPC error:", searchErr);
-      return {
-        success: false,
-        groupedResults: [],
-        nearbyGroupedResults: [],
-        rawSimilarityScores: [],
-        error: searchErr.message,
-      };
-    }
-
-    if (!searchResults || searchResults.length === 0) {
-      return {
-        success: false,
-        groupedResults: [],
-        nearbyGroupedResults: [],
-        rawSimilarityScores: [],
-        stats: {
-          matchCountRequested: searchParams.match_count,
-          rpcMatchCount: 0,
-          thresholdMatchCount: 0,
-          metadataChunkCount: 0,
-          groupedFileCount: 0,
-          bestSimilarity: 0,
-          avgTop3Similarity: 0,
-          usedThresholdFallback: false,
-        },
-        error: "No results found in database",
-      };
-    }
-
-    const sortedSearchResults = [...(searchResults as any[])].sort(
-      (a, b) => (b.similarity as number) - (a.similarity as number)
-    );
-    console.log(`[RAG] rag_search returned ${sortedSearchResults.length} embedding matches.`);
-
-    const thresholdResults = sortedSearchResults.filter(
-      (r) => (r.similarity as number) >= SIMILARITY_THRESHOLD
-    );
-
-    const usedThresholdFallback = thresholdResults.length === 0;
-    if (usedThresholdFallback) {
-      console.warn(
-        `[RAG] No matches met similarity threshold ${SIMILARITY_THRESHOLD}. Keeping top nearby candidates for relation hints.`
-      );
-    }
-
-    const candidateResults = usedThresholdFallback
-      ? sortedSearchResults.slice(0, Math.min(sortedSearchResults.length, Math.max(TOP_K, 24)))
-      : thresholdResults;
-
-    if (candidateResults.length === 0) {
-      return {
-        success: false,
-        groupedResults: [],
-        nearbyGroupedResults: [],
-        rawSimilarityScores: [],
-        stats: {
-          matchCountRequested: searchParams.match_count,
-          rpcMatchCount: sortedSearchResults.length,
-          thresholdMatchCount: thresholdResults.length,
-          metadataChunkCount: 0,
-          groupedFileCount: 0,
-          bestSimilarity: 0,
-          avgTop3Similarity: 0,
-          usedThresholdFallback,
-        },
-        error: "No embedding candidates available after search",
-      };
-    }
-
-    const candidateScores = candidateResults.map((r: any) => Number(r.similarity) || 0);
-    const { best: bestCandidateSimilarity, avgTop3: avgTop3CandidateSimilarity } = summarizeSimilarityScores(candidateScores);
-    const chunkIds = Array.from(new Set(candidateResults.map((r: any) => r.chunk_id).filter(Boolean)));
-
-    const { data: enrichedChunks, error: enrichErr } = await supabase
-      .from("rag_chunks")
-      .select(`
-        id, chunk_index, content, paper_file_id,
-        paper_files!inner(
-          id, file_type, storage_path, paper_id,
-          papers!inner(
-            id, year, session, paper, subject_id,
-            subjects!inner(id, code, level)
-          )
-        )
-      `)
-      .in("id", chunkIds);
-
-    if (enrichErr || !enrichedChunks) {
-      return {
-        success: false,
-        groupedResults: [],
-        nearbyGroupedResults: [],
-        rawSimilarityScores: candidateScores,
-        stats: {
-          matchCountRequested: searchParams.match_count,
-          rpcMatchCount: sortedSearchResults.length,
-          thresholdMatchCount: thresholdResults.length,
-          metadataChunkCount: 0,
-          groupedFileCount: 0,
-          bestSimilarity: bestCandidateSimilarity,
-          avgTop3Similarity: avgTop3CandidateSimilarity,
-          usedThresholdFallback,
-        },
-        error: "Failed to fetch chunk metadata",
-      };
-    }
-
-    const similarityMap = new Map<string, number>(
-      candidateResults.map((r: any) => [r.chunk_id as string, r.similarity as number])
-    );
-
-    const nearbyGroupedResults = groupChunksByPaperFile(enrichedChunks as any[], similarityMap);
-
-    const metadataFilteredChunks = (enrichedChunks as any[]).filter((chunk: any) => {
-      const pf = chunk.paper_files;
-      const paper = pf?.papers;
-      const subject = paper?.subjects;
-
-      if (filters?.subject && String(subject?.code) !== String(filters.subject)) return false;
-      if (filters?.year && Number(paper?.year) !== Number(filters.year)) return false;
-      if (filters?.file_type && String(pf?.file_type) !== String(filters.file_type)) return false;
-      if (filters?.level && String(subject?.level) !== String(filters.level)) return false;
-
-      return true;
-    });
-
-    if (metadataFilteredChunks.length === 0) {
-      return {
-        success: false,
-        groupedResults: [],
-        nearbyGroupedResults,
-        rawSimilarityScores: [],
-        stats: {
-          matchCountRequested: searchParams.match_count,
-          rpcMatchCount: sortedSearchResults.length,
-          thresholdMatchCount: thresholdResults.length,
-          metadataChunkCount: 0,
-          groupedFileCount: 0,
-          bestSimilarity: bestCandidateSimilarity,
-          avgTop3Similarity: avgTop3CandidateSimilarity,
-          usedThresholdFallback,
-        },
-        error: "No results matched the requested filters",
-      };
-    }
-
-    console.log(`[RAG] Context chunks after metadata filters: ${metadataFilteredChunks.length}`);
-
-    const rawScores = metadataFilteredChunks
-      .map((chunk: any) => similarityMap.get(chunk.id) || 0)
-      .filter((score) => score > 0);
-    const groupedResults = groupChunksByPaperFile(metadataFilteredChunks as any[], similarityMap);
-    const uniqueSubjects = Array.from(new Set(groupedResults.map((g) => g.subject)));
-    console.log(`[RAG] Grouped into ${groupedResults.length} files across subjects: ${uniqueSubjects.join(", ")}`);
-
-    const { best: bestFilteredSimilarity, avgTop3: avgTop3FilteredSimilarity } = summarizeSimilarityScores(rawScores);
 
     return {
-      success: true,
-      groupedResults,
-      nearbyGroupedResults,
-      rawSimilarityScores: rawScores,
-      stats: {
-        matchCountRequested: searchParams.match_count,
-        rpcMatchCount: sortedSearchResults.length,
-        thresholdMatchCount: thresholdResults.length,
-        metadataChunkCount: metadataFilteredChunks.length,
-        groupedFileCount: groupedResults.length,
-        bestSimilarity: bestFilteredSimilarity,
-        avgTop3Similarity: avgTop3FilteredSimilarity,
-        usedThresholdFallback,
-      },
+      success: chunks.length > 0,
+      chunks,
+      nearbyChunks,
+      scores: chunks.map((c) => c.similarity),
+      bestSimilarity,
+      avgTop3,
     };
   } catch (err: any) {
+    return { ...empty, error: err.message };
+  }
+}
+
+function hasReliableContext(
+  result: RagRetrievalResult,
+  hasSubjectFilter: boolean
+): boolean {
+  if (!result.success || result.chunks.length === 0) return false;
+  const minBest = hasSubjectFilter
+    ? MIN_BEST_SIMILARITY_WITH_SUBJECT
+    : MIN_BEST_SIMILARITY;
+  const minAvg = hasSubjectFilter
+    ? MIN_AVG_TOP3_WITH_SUBJECT
+    : MIN_AVG_TOP3_SIMILARITY;
+  return result.bestSimilarity >= minBest && result.avgTop3 >= minAvg;
+}
+
+function buildCitations(
+  chunks: PastPaperChunk[],
+  relation: "direct" | "nearby" = "direct"
+): Citation[] {
+  const seen = new Set<string>();
+  return chunks
+    .map((c) => {
+      const key = `${c.subject}|${c.year}|${c.session}|${c.paper}|${c.variant}`;
+      if (seen.has(key)) return null;
+      seen.add(key);
+      return {
+        subject: c.subject,
+        year: c.year,
+        session: c.session,
+        paper: c.paper,
+        variant: c.variant,
+        similarity: c.similarity,
+        relation,
+      } as Citation;
+    })
+    .filter(Boolean) as Citation[];
+}
+
+function inferDominantSubject(
+  chunks: PastPaperChunk[],
+  takeTop: number = 8
+): string | undefined {
+  if (!chunks.length) return undefined;
+
+  const bySimilarity = [...chunks]
+    .sort((a, b) => b.similarity - a.similarity)
+    .slice(0, takeTop);
+
+  const weighted: Record<string, number> = {};
+  for (const chunk of bySimilarity) {
+    weighted[chunk.subject] = (weighted[chunk.subject] || 0) + chunk.similarity;
+  }
+
+  return Object.entries(weighted).sort((a, b) => b[1] - a[1])[0]?.[0];
+}
+
+function isMarkSchemeRequest(question: string): boolean {
+  return /(mark(?:ing)?\s*scheme|mark\s*breakdown|mark\s*distribution|how\s+many\s+marks|award\s+marks?|marking\s+points?)/i.test(
+    question
+  );
+}
+
+function looksLikeFollowUpReference(question: string): boolean {
+  return /\b(this|that|it|same|above|previous|last|earlier|that question|this question)\b/i.test(
+    question
+  );
+}
+
+function findLastExamUserQuestion(history: HistoryMessage[]): string | null {
+  for (let i = history.length - 1; i >= 0; i -= 1) {
+    const h = history[i];
+    if (h.role !== "user") continue;
+    const content = (h.content || "").trim();
+    if (!content) continue;
+    if (classifyIntent(content) === "smalltalk") continue;
+    if (isMarkSchemeRequest(content) && looksLikeFollowUpReference(content)) {
+      continue;
+    }
+    return content;
+  }
+  return null;
+}
+
+function resolveQuestionForAnswering(
+  question: string,
+  history: HistoryMessage[]
+): QuestionResolution {
+  const trimmed = question.trim();
+  if (!isMarkSchemeRequest(trimmed)) {
     return {
-      success: false,
-      groupedResults: [],
-      nearbyGroupedResults: [],
-      rawSimilarityScores: [],
-      error: err?.message || "Retrieval error",
+      retrievalQuestion: trimmed,
+      answerMode: "full_answer",
+      usedHistoryQuestion: false,
     };
   }
+
+  const followUpLikely =
+    looksLikeFollowUpReference(trimmed) || trimmed.split(/\s+/).length <= 8;
+
+  if (followUpLikely) {
+    const previousQuestion = findLastExamUserQuestion(history);
+    if (previousQuestion) {
+      return {
+        retrievalQuestion: previousQuestion,
+        answerMode: "mark_scheme_only",
+        usedHistoryQuestion: true,
+      };
+    }
+  }
+
+  return {
+    retrievalQuestion: trimmed,
+    answerMode: "mark_scheme_only",
+    usedHistoryQuestion: false,
+  };
 }
 
-// ============================================================================
-// STAGE C: LLM ANSWER GENERATION
-// ============================================================================
+// -- INTENT ------------------------------------------------------------------
+function classifyIntent(question: string): Intent {
+  const q = question.toLowerCase().trim().replace(/\s+/g, " ");
 
+  const smalltalkExact = new Set([
+    "hello",
+    "hi",
+    "hey",
+    "yo",
+    "thanks",
+    "thank you",
+    "ok",
+    "okay",
+    "yes",
+    "no",
+    "sure",
+    "good",
+    "great",
+    "nice",
+    "cool",
+    "bye",
+    "goodbye",
+    "good night",
+    "gn",
+    "lol",
+    "haha",
+    "hmm",
+    "umm",
+    "hru",
+    "sup",
+    "how are you",
+    "how r u",
+    "how are u",
+    "how you doing",
+    "what's up",
+    "whats up",
+    "who are you",
+    "are you there",
+    "good morning",
+    "good afternoon",
+    "good evening",
+  ]);
+  if (smalltalkExact.has(q)) return "smalltalk";
+
+  if (
+    q.split(" ").length <= 3 &&
+    /^(hi+|hey+|ok(ay)?|thanks?|cool|nice|great|good|bye)$/.test(q)
+  ) {
+    return "smalltalk";
+  }
+  return "exam_question";
+}
+
+const smalltalkResponses = [
+  "Hi! Ask me any O-Level exam question - Chemistry, Physics, Mathematics, English, Islamiyat, Pakistan Studies and more. I'll answer using real past exam papers.",
+  "Hello! Try asking something like \"explain Newton's second law\" or \"what is oxidation in chemistry\".",
+  "Hey! I can answer O-Level exam questions with mark-scheme style answers from past papers. What do you need?",
+];
+
+function getSmallTalkResponse(): string {
+  return smalltalkResponses[Math.floor(Math.random() * smalltalkResponses.length)];
+}
+
+// -- ANSWER STYLE ------------------------------------------------------------
 interface AnswerStyle {
-  detailLevel: "short" | "standard" | "long";
-  format: "plain" | "structured";
+  detailLevel: "short" | "long";
+  responseShape: "standard" | "directed_writing";
+  requiresHeadline: boolean;
 }
 
-function inferAnswerStyle(question: string, history: HistoryMessage[] = []): AnswerStyle {
-  const combined = `${question}`.toLowerCase();
+// Classic IGCSE/GCSE short-answer command words that expect 1-3 sentence replies
+const SHORT_COMMAND_RE = /^\s*(state|name|give|identify|write\s+down|list|define|state\s+one|state\s+two|state\s+three|give\s+one|give\s+two|name\s+one|name\s+two|what\s+is\s+meant\s+by|what\s+are\s+the\s+units)\b/i;
 
-  const wantsLong = /(long answer|in detail|detailed|elaborate|thorough|comprehensive|step by step|in depth|properly formatted|full answer)/i.test(combined);
-  const wantsShort = /(short answer|briefly|in short|concise)/i.test(combined);
-  const wantsStructured = /(format|formatted|bullet|points|headings|steps)/i.test(combined) || wantsLong;
-
-  if (wantsShort) return { detailLevel: "short", format: wantsStructured ? "structured" : "plain" };
-  if (wantsLong) return { detailLevel: "long", format: "structured" };
-  return { detailLevel: "long", format: "structured" };
+function isDirectedWritingTask(question: string): boolean {
+  return /(write\s+(an?|the)?\s*(article|letter|speech|report|email|blog|story|narrative|journal)|school\s+magazine|suitable\s+headline|tone\s+and\s+register|specified\s+situation\s+and\s+audience|task\s+fulfilment|directed\s+writing)/i.test(
+    question
+  );
 }
 
-function buildExamAnswerFormatInstruction(answerStyle: AnswerStyle): string {
-  if (answerStyle.detailLevel === "long") {
-    return `- Write a complete, detailed answer with clear markdown formatting.
-- Structure: short intro paragraph, then 3-5 sections with headings and bullet points.
-- Include an exam-focused "How this appears in past papers" section.
-- End with a clear summary and quick exam tip.
-- Minimum length: around 180-260 words unless the user explicitly asked for a short reply.`;
+function requiresHeadlineForTask(question: string): boolean {
+  return /\bheadline\b|school\s+magazine|write\s+an\s+article/i.test(question);
+}
+
+function inferAnswerStyle(
+  question: string,
+  answerMode: AnswerMode = "full_answer"
+): AnswerStyle {
+  const directedWriting = isDirectedWritingTask(question);
+  const requiresHeadline = requiresHeadlineForTask(question);
+
+  if (answerMode === "mark_scheme_only") {
+    return {
+      detailLevel: "short",
+      responseShape: directedWriting ? "directed_writing" : "standard",
+      requiresHeadline,
+    };
   }
 
-  if (answerStyle.detailLevel === "short") {
-    return `- Keep the answer concise (2-4 lines) but still exam-focused.`;
+  const wantsShort =
+    /(short|briefly|in short|concise)/i.test(question) ||
+    SHORT_COMMAND_RE.test(question);
+  return {
+    detailLevel: wantsShort ? "short" : "long",
+    responseShape: directedWriting ? "directed_writing" : "standard",
+    requiresHeadline,
+  };
+}
+
+function buildFormatInstruction(
+  style: AnswerStyle,
+  answerMode: AnswerMode = "full_answer"
+): string {
+  if (answerMode === "mark_scheme_only") {
+    return `- Return ONLY the marking scheme for the question.
+- Keep "answer" short and focused on assessable criteria, not full teaching notes.
+- Use markdown heading ## Marking Scheme and concise bullets.`;
   }
 
-  if (answerStyle.format === "structured") {
-    return `- Use a structured format with short heading + bullet points where useful.`;
+  if (style.responseShape === "directed_writing") {
+    return `- Write the final student-facing response in the requested text type (e.g., article/letter/speech), not as tutor notes.
+- Do NOT use meta sections like Core Idea, Explanation, Key Points, Exam Tip, or Quick Summary.
+- Cover every required bullet/point from the prompt in full detail.
+- Keep tone, register, and audience appropriate to the task.
+- Use natural paragraphs and clear flow.
+- Do NOT use HTML tags such as <h1>, <p>, <br>, <ul>, or <li>.
+- ${
+      style.requiresHeadline
+        ? "Start with a suitable headline before the body."
+        : "Use an appropriate opening for the requested format."
+    }
+- Do not output planning notes; output the final polished writing piece.`;
   }
 
-  return `- Keep the answer clear and exam-focused in 1-2 short paragraphs.`;
-}
-
-function buildMaxTokens(answerStyle: AnswerStyle, withContext: boolean): number {
-  if (answerStyle.detailLevel === "long") return withContext ? 2600 : 2200;
-  if (answerStyle.detailLevel === "short") return withContext ? 900 : 800;
-  return withContext ? 1600 : 1300;
-}
-
-function buildAnswerMarkdownHeadingInstruction(answerStyle: AnswerStyle): string {
-  const bulletCount = answerStyle.detailLevel === "short" ? "2-3" : "3-5";
-  return `- In "answer", write markdown using EXACTLY these headings in this order:
-## Introduction
-## Key Points
-## Exam Tip
-## Quick Summary
-- Under "Key Points", include ${bulletCount} bullet points.`;
-}
-
-function splitSentences(text: string): string[] {
-  return (text.replace(/\n+/g, " ").match(/[^.!?]+[.!?]?/g) || [text])
-    .map((s) => s.trim())
-    .filter(Boolean);
-}
-
-function enforceConsistentAnswerMarkdown(answer: string, answerStyle: AnswerStyle): string {
-  const cleaned = decodeJsonLikeString(answer || "").trim();
-  if (!cleaned) {
-    return `## Introduction
-Here is a clear response to your question.
-
-## Key Points
-- Key idea 1.
-- Key idea 2.
-
-## Exam Tip
-Use key terms and write in short, focused points.
-
-## Quick Summary
-Answer in a clear and structured way.`;
+  if (style.detailLevel === "short") {
+    return "- Keep the answer concise (2-4 lines), exam-focused.";
   }
 
-  const hasRequiredHeadings =
-    /(^|\n)##\s*Introduction\b/i.test(cleaned) &&
-    /(^|\n)##\s*Key Points\b/i.test(cleaned) &&
-    /(^|\n)##\s*Exam Tip\b/i.test(cleaned) &&
-    /(^|\n)##\s*Quick Summary\b/i.test(cleaned);
-
-  if (hasRequiredHeadings) return cleaned;
-
-  const plain = cleaned.replace(/^\s*#{1,6}\s+/gm, "").trim();
-  const sentences = splitSentences(plain);
-
-  const intro = sentences.slice(0, Math.min(2, sentences.length)).join(" ") || plain;
-  const summary = sentences[sentences.length - 1] || intro;
-
-  const bodyCandidates = sentences.length > 3
-    ? sentences.slice(1, -1)
-    : sentences.slice(1);
-  const maxPoints = answerStyle.detailLevel === "short" ? 3 : 5;
-  const minPoints = answerStyle.detailLevel === "short" ? 2 : 3;
-
-  const points = bodyCandidates.slice(0, maxPoints);
-  while (points.length < minPoints && points.length < sentences.length) {
-    const next = sentences[points.length] || plain;
-    if (!points.includes(next)) points.push(next);
-    else break;
-  }
-
-  const normalizedPoints = points.length
-    ? points
-    : [plain];
-
-  const examTip = answerStyle.detailLevel === "short"
-    ? "Keep your answer short, use subject keywords, and write direct points."
-    : "Use headings, include key terms, and support each point with a relevant explanation.";
-
-  return `## Introduction
-${intro}
-
-## Key Points
-${normalizedPoints.map((point) => `- ${point}`).join("\n")}
-
-## Exam Tip
-${examTip}
-
-## Quick Summary
-${summary}`;
+  return `- Write a complete, detailed answer in markdown.
+- Choose section headings intelligently based on the question type; do NOT force one fixed template every time.
+- For quantitative questions, use headings like: ## Given, ## Working, ## Final Answer.
+- For theory / process / explain questions, use headings like: ## Core Idea, ## Explanation, ## Key Points.
+- Use bullets only where they improve clarity.
+- Write as much as the question genuinely needs — never pad sections with repeated content.`;
 }
 
+function buildMaxTokens(
+  style: AnswerStyle,
+  withContext: boolean,
+  answerMode: AnswerMode = "full_answer"
+): number {
+  if (answerMode === "mark_scheme_only") return withContext ? 1200 : 900;
+  if (style.responseShape === "directed_writing") return withContext ? 3200 : 2400;
+  if (style.detailLevel === "short") return withContext ? 900 : 800;
+  return withContext ? 2600 : 2200;
+}
+
+// -- TEXT HELPERS ------------------------------------------------------------
 function decodeJsonLikeString(text: string): string {
   return text
     .replace(/\\n/g, "\n")
@@ -1216,19 +594,65 @@ function decodeJsonLikeString(text: string): string {
 }
 
 function isTemplateAnswer(text: string): boolean {
-  const normalized = text.toLowerCase().trim();
-  if (!normalized) return true;
-
-  const templateSnippets = [
-    "detailed, properly formatted answer with headings and bullet points",
-    "brief exam-focused answer in 2-4 lines",
-    "clear exam-focused answer in 1-2 short paragraphs",
+  const snippets = [
     "write the actual answer content here",
     "write the real answer here",
-    "actual answer text here",
+    "detailed, properly formatted answer",
   ];
+  return !text.trim() || snippets.some((s) => text.toLowerCase().includes(s));
+}
 
-  return templateSnippets.some((snippet) => normalized.includes(snippet));
+function extractLooseJsonStringField(
+  text: string,
+  fieldName: string
+): string | undefined {
+  const keyPattern = new RegExp(`"${escapeRegExp(fieldName)}"\\s*:\\s*"`, "i");
+  const keyMatch = keyPattern.exec(text);
+  if (!keyMatch) return undefined;
+
+  let i = keyMatch.index + keyMatch[0].length;
+  let raw = "";
+  let escaped = false;
+
+  for (; i < text.length; i += 1) {
+    const ch = text[i];
+
+    if (escaped) {
+      raw += ch;
+      escaped = false;
+      continue;
+    }
+
+    if (ch === "\\") {
+      raw += ch;
+      escaped = true;
+      continue;
+    }
+
+    if (ch === '"') break;
+    raw += ch;
+  }
+
+  const decoded = decodeJsonLikeString(raw);
+  return decoded || undefined;
+}
+
+function extractLooseAnswerFromJsonish(text: string): string | undefined {
+  const direct = extractLooseJsonStringField(text, "answer");
+  if (direct) return direct;
+
+  const blockMatch = text.match(
+    /"answer"\s*:\s*([\s\S]*?)(?=\n\s*"(?:marking_points|common_mistakes)"\s*:|\}\s*$)/i
+  );
+  if (!blockMatch) return undefined;
+
+  const raw = blockMatch[1]
+    .trim()
+    .replace(/^"/, "")
+    .replace(/"\s*,?\s*$/, "")
+    .trim();
+  const decoded = decodeJsonLikeString(raw);
+  return decoded || undefined;
 }
 
 function cleanAnswerText(text: string): string {
@@ -1236,842 +660,1273 @@ function cleanAnswerText(text: string): string {
     .replace(/^```(?:json|markdown)?\s*/i, "")
     .replace(/```\s*$/i, "")
     .trim();
-
   if (!cleaned) return "";
 
   try {
     const parsed = JSON.parse(cleaned);
-    if (parsed && typeof parsed.answer === "string") {
-      return decodeJsonLikeString(parsed.answer);
-    }
+    if (parsed?.answer) return decodeJsonLikeString(String(parsed.answer));
   } catch {
-    // fall through
+    // ignore parse error
   }
 
-  const fullJsonMatch = cleaned.match(/\{[\s\S]*\}/);
-  if (fullJsonMatch) {
+  const m = cleaned.match(/\{[\s\S]*\}/);
+  if (m) {
     try {
-      const parsed = JSON.parse(fullJsonMatch[0]);
-      if (parsed && typeof parsed.answer === "string") {
-        return decodeJsonLikeString(parsed.answer);
-      }
+      const p = JSON.parse(m[0]);
+      if (p?.answer) return decodeJsonLikeString(String(p.answer));
     } catch {
-      // fall through
+      // ignore parse error
     }
+
+    const looseFromObject = extractLooseAnswerFromJsonish(m[0]);
+    if (looseFromObject) return looseFromObject;
   }
 
-  const strictAnswerMatch = cleaned.match(/"answer"\s*:\s*"([\s\S]*?)"\s*(,\s*"(?:marking_points|common_mistakes)"|\})/i);
-  if (strictAnswerMatch?.[1]) {
-    return decodeJsonLikeString(strictAnswerMatch[1]);
-  }
+  const loose = extractLooseAnswerFromJsonish(cleaned);
+  if (loose) return loose;
 
-  const looseAnswerMatch = cleaned.match(/"answer"\s*:\s*"([\s\S]*)$/i);
-  if (looseAnswerMatch?.[1]) {
-    return decodeJsonLikeString(
-      looseAnswerMatch[1]
-        .replace(/",?\s*$/, "")
-        .replace(/\}\s*$/, "")
-    );
-  }
-
-  if (cleaned.startsWith("{") || cleaned.includes('"answer"')) {
-    return "I can help with that. Please ask your question again in one sentence and I will give a clear exam-style answer.";
-  }
-
+  if (cleaned.startsWith("{") || cleaned.includes('"answer"')) return "";
   return cleaned;
 }
 
-function maybeStudentRetrievalDiagnostics(
-  ragResult: RagRetrievalResult | null,
+function escapeRegExp(input: string): string {
+  return input.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function stripRepeatedHeadingEcho(markdown: string): string {
+  const lines = markdown.split("\n");
+  for (let i = 0; i < lines.length - 1; i += 1) {
+    const heading = lines[i].match(/^##\s+(.+)$/);
+    if (!heading) continue;
+    const title = heading[1].trim();
+    if (!title) continue;
+    const pattern = new RegExp(`^${escapeRegExp(title)}\\s*[:.-]?\\s*`, "i");
+    if (pattern.test(lines[i + 1].trim())) {
+      lines[i + 1] = lines[i + 1].replace(pattern, "");
+    }
+  }
+  return lines.join("\n");
+}
+
+type HeadingProfile = "quantitative" | "comparison" | "definition" | "conceptual";
+
+function stripDefaultScaffoldHeadings(text: string): string {
+  return text
+    .replace(/^##\s*(Core Idea|Explanation|Key Points|Exam Tip|Quick Summary)\s*$/gim, "")
+    .replace(/^##\s*(Introduction|Final Answer|Comparison Focus|Key Differences|Definition|Given|Working)\s*$/gim, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function detectHeadingProfile(text: string): HeadingProfile {
+  const plain = text.toLowerCase();
+  if (/\b(compare|contrast|difference|distinguish|similarities|similarity)\b/.test(plain)) {
+    return "comparison";
+  }
+  if (/\b(define|definition|what is|state the meaning)\b/.test(plain)) {
+    return "definition";
+  }
+  if (
+    /\b(calculate|solve|find|equation|formula|discriminant|velocity|acceleration|ratio|probability|m\/s|cm|kg|mol|newton)\b/.test(
+      plain
+    ) ||
+    /[=<>]|\d/.test(plain)
+  ) {
+    return "quantitative";
+  }
+  return "conceptual";
+}
+
+function enforceMarkdownStructure(answer: string, style: AnswerStyle): string {
+  const cleaned = stripRepeatedHeadingEcho(
+    decodeJsonLikeString(answer || "").trim()
+  );
+  if (!cleaned) return buildFallbackAnswer(style);
+
+  if (style.responseShape === "directed_writing") {
+    const stripped = stripDefaultScaffoldHeadings(cleaned);
+    const normalized = stripped
+      .replace(/<\/?h[1-6][^>]*>/gi, "")
+      .replace(/<\/?p[^>]*>/gi, "")
+      .replace(/<br\s*\/?>/gi, "\n")
+      .replace(/<\/?(?:ul|ol|li)[^>]*>/gi, "")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
+    if (!normalized) return buildFallbackAnswer(style);
+
+    if (!style.requiresHeadline) return normalized;
+
+    const firstNonEmptyLine =
+      normalized.split("\n").find((line) => line.trim().length > 0)?.trim() || "";
+    const looksLikeHeadline =
+      firstNonEmptyLine.length > 0 &&
+      firstNonEmptyLine.length <= 90 &&
+      !/[.!?]$/.test(firstNonEmptyLine) &&
+      !/^[-*\d]+[.)\]]/.test(firstNonEmptyLine);
+
+    if (looksLikeHeadline) return normalized;
+
+    // If the model wrote headline + body in one line, split at the first sentence.
+    if (!normalized.includes("\n")) {
+      const sentenceBreak = normalized.indexOf(". ");
+      if (sentenceBreak > 8 && sentenceBreak < 90) {
+        const headline = normalized.slice(0, sentenceBreak + 1).trim();
+        const body = normalized.slice(sentenceBreak + 2).trim();
+        if (headline && body) return `${headline}\n\n${body}`;
+      }
+    }
+
+    return normalized;
+  }
+
+  const headingCount = (cleaned.match(/(^|\n)##\s+[^\n]+/g) || []).length;
+  if (headingCount >= 2) return cleaned;
+  if (style.detailLevel === "short" && cleaned.length <= 420) return cleaned;
+
+  const plain = cleaned.replace(/^\s*#{1,6}\s+/gm, "").trim();
+  if (!plain) return buildFallbackAnswer(style);
+
+  if (style.detailLevel === "short") return plain;
+
+  const sentences = (plain.replace(/\n+/g, " ").match(/[^.!?]+[.!?]?/g) || [plain])
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  const intro = sentences.slice(0, 2).join(" ") || plain;
+  const points = sentences.slice(2, 8);
+  const summary = sentences[sentences.length - 1] || intro;
+  const profile = detectHeadingProfile(plain);
+
+  if (profile === "quantitative") {
+    return `## Given
+${intro}
+
+## Working
+${points.length ? points.join("\n\n") : plain}
+
+## Final Answer
+${summary}`;
+  }
+
+  if (profile === "comparison") {
+    return `## Comparison Focus
+${intro}
+
+## Key Differences
+${(points.length ? points : [plain]).map((p) => `- ${p}`).join("\n")}
+
+## Exam Tip
+Use explicit comparison words such as "whereas", "however", and "in contrast".
+
+## Quick Summary
+${summary}`;
+  }
+
+  if (profile === "definition") {
+    return `## Definition
+${intro}
+
+## Explanation
+${points.length ? points.join("\n\n") : plain}
+
+## Exam Tip
+State the exact definition first, then add one clear supporting detail.
+
+## Quick Summary
+${summary}`;
+  }
+
+  return `## Core Idea
+${intro}
+
+## Explanation
+${points.length ? points.join("\n\n") : plain}
+
+## Key Points
+${(points.length ? points : [plain]).map((p) => `- ${p}`).join("\n")}
+
+## Exam Tip
+Use precise subject vocabulary and link each point to what examiners award marks for.
+
+## Quick Summary
+${summary}`;
+}
+
+function buildFallbackAnswer(style: AnswerStyle): string {
+  if (style.responseShape === "directed_writing") {
+    return style.requiresHeadline
+      ? "A Homecoming That Inspires\n\nMy cousin was one of the most successful students at our school, known for excellent grades, leadership in activities, and a positive attitude towards others. After school, my cousin moved abroad, studied and worked hard, and gained valuable international experience. Living in another country taught independence, discipline, and respect for different cultures.\n\nToday, my cousin is a role model for students because success was achieved through consistency, humility, and service. Instead of showing off, my cousin shares practical advice with younger students: set clear goals, manage time well, and keep learning from every challenge. This journey proves that with effort and character, students from our school can succeed anywhere in the world."
+      : "I could not generate the full response in the required writing format. Please ask again.";
+  }
+
+  return `## Introduction\nHere is a clear response to your question.\n\n## Key Points\n- Key idea 1.\n- Key idea 2.\n\n## Exam Tip\n${
+    style.detailLevel === "short"
+      ? "Keep answers concise and use key terms."
+      : "Use headings and support each point with evidence."
+  }\n\n## Quick Summary\nReview the key points above.`;
+}
+
+interface ContextChunkForPrompt {
+  subject: string;
+  year: number;
+  session: string;
+  paper: string;
+  variant: string;
+  similarity: number;
+  questionNumber?: string;
+  subQuestion?: string;
+  marks?: number;
+  topicGeneral?: string;
+  topicSyllabus?: string;
+  questionPart?: string;
+  markSchemePart?: string;
+  rawContent?: string;
+}
+
+function normalizeFingerprintPart(value: string | undefined): string {
+  return (value || "").toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+function extractHeaderQuestionLine(content: string): string | undefined {
+  const match = content.match(/(?:^|\n)\s*Question\s+(?!:)([^\n]+)/i);
+  return match?.[1]?.trim();
+}
+
+function extractTopicLine(content: string): string | undefined {
+  const match = content.match(/(?:^|\n)\s*Topic:\s*([^\n]+)/i);
+  return match?.[1]?.trim();
+}
+
+function extractTopicParts(content: string): {
+  topicGeneral?: string;
+  topicSyllabus?: string;
+} {
+  const raw = extractTopicLine(content);
+  if (!raw) return {};
+
+  const parts = raw
+    .split(">")
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+  if (parts.length >= 2) {
+    return {
+      topicGeneral: parts[0],
+      topicSyllabus: parts.slice(1).join(" > "),
+    };
+  }
+
+  return { topicGeneral: parts[0] };
+}
+
+function extractQuestionMeta(content: string): {
+  questionNumber?: string;
+  subQuestion?: string;
+  marks?: number;
+  topicGeneral?: string;
+  topicSyllabus?: string;
+} {
+  const header = extractHeaderQuestionLine(content);
+  const topic = extractTopicParts(content);
+
+  if (!header) {
+    return topic;
+  }
+
+  const marksMatch = header.match(/\[(\d+)\s*marks?\]/i);
+  const marksValue = marksMatch ? Number(marksMatch[1]) : undefined;
+
+  const headerWithoutMarks = header.replace(/\[[^\]]+\]/g, "").trim();
+  const idMatch = headerWithoutMarks.match(/^(\S+)(?:\s+(.+))?$/);
+
+  return {
+    ...topic,
+    questionNumber: idMatch?.[1]?.trim() || undefined,
+    subQuestion: idMatch?.[2]?.trim() || undefined,
+    marks: Number.isFinite(marksValue) ? marksValue : undefined,
+  };
+}
+
+function extractQuestionBody(content: string): string | undefined {
+  const match = content.match(
+    /(?:^|\n)\s*Question\s*:\s*([\s\S]*?)(?=(?:\n\s*Mark\s*Scheme\s*:)|$)/i
+  );
+  const text = match?.[1]?.trim();
+  return text || undefined;
+}
+
+function extractMarkSchemeBody(content: string): string | undefined {
+  const match = content.match(/(?:^|\n)\s*Mark\s*Scheme\s*:\s*([\s\S]*)$/i);
+  const text = match?.[1]?.trim();
+  return text || undefined;
+}
+
+function buildChunkFingerprint(chunk: PastPaperChunk): string | null {
+  const questionHeader = normalizeFingerprintPart(
+    extractHeaderQuestionLine(chunk.content)
+  );
+  if (!questionHeader) return null;
+
+  const topic = normalizeFingerprintPart(extractTopicLine(chunk.content));
+
+  return [
+    normalizeFingerprintPart(chunk.subject),
+    String(chunk.year),
+    normalizeFingerprintPart(chunk.session),
+    normalizeFingerprintPart(chunk.paper),
+    normalizeFingerprintPart(chunk.variant),
+    questionHeader,
+    topic,
+  ].join("|");
+}
+
+function toContextChunk(chunk: PastPaperChunk): ContextChunkForPrompt {
+  const meta = extractQuestionMeta(chunk.content);
+  return {
+    subject: chunk.subject,
+    year: chunk.year,
+    session: chunk.session,
+    paper: chunk.paper,
+    variant: chunk.variant,
+    similarity: chunk.similarity,
+    questionNumber: meta.questionNumber,
+    subQuestion: meta.subQuestion,
+    marks: meta.marks,
+    topicGeneral: meta.topicGeneral,
+    topicSyllabus: meta.topicSyllabus,
+    questionPart: extractQuestionBody(chunk.content),
+    markSchemePart: extractMarkSchemeBody(chunk.content),
+    rawContent: chunk.content,
+  };
+}
+
+function mergeSplitChunksForContext(
+  chunks: PastPaperChunk[],
+  contextLimit: number
+): ContextChunkForPrompt[] {
+  type MergeBucket = {
+    combined?: PastPaperChunk;
+    questionOnly?: PastPaperChunk;
+    markSchemeOnly?: PastPaperChunk;
+  };
+
+  const sorted = [...chunks].sort((a, b) => b.similarity - a.similarity);
+  const candidates = sorted.slice(0, Math.max(contextLimit * 3, contextLimit + 6));
+  const buckets = new Map<string, MergeBucket>();
+  const passthrough: PastPaperChunk[] = [];
+
+  for (const chunk of candidates) {
+    const questionPart = extractQuestionBody(chunk.content);
+    const markSchemePart = extractMarkSchemeBody(chunk.content);
+    const hasQuestion = Boolean(questionPart);
+    const hasMarkScheme = Boolean(markSchemePart);
+
+    if (!hasQuestion && !hasMarkScheme) {
+      passthrough.push(chunk);
+      continue;
+    }
+
+    const fingerprint = buildChunkFingerprint(chunk);
+    if (!fingerprint) {
+      // No reliable source signature -> do not attempt merge.
+      passthrough.push(chunk);
+      continue;
+    }
+
+    const bucket = buckets.get(fingerprint) || {};
+
+    if (hasQuestion && hasMarkScheme) {
+      if (!bucket.combined || chunk.similarity > bucket.combined.similarity) {
+        bucket.combined = chunk;
+      }
+    } else if (hasQuestion) {
+      if (!bucket.questionOnly || chunk.similarity > bucket.questionOnly.similarity) {
+        bucket.questionOnly = chunk;
+      }
+    } else if (hasMarkScheme) {
+      if (
+        !bucket.markSchemeOnly ||
+        chunk.similarity > bucket.markSchemeOnly.similarity
+      ) {
+        bucket.markSchemeOnly = chunk;
+      }
+    }
+
+    buckets.set(fingerprint, bucket);
+  }
+
+  const merged: ContextChunkForPrompt[] = [];
+  let mergedPairs = 0;
+
+  for (const bucket of buckets.values()) {
+    if (bucket.combined) {
+      merged.push(toContextChunk(bucket.combined));
+      continue;
+    }
+
+    if (bucket.questionOnly && bucket.markSchemeOnly) {
+      const sameSource =
+        bucket.questionOnly.subject === bucket.markSchemeOnly.subject &&
+        bucket.questionOnly.year === bucket.markSchemeOnly.year &&
+        bucket.questionOnly.session === bucket.markSchemeOnly.session &&
+        bucket.questionOnly.paper === bucket.markSchemeOnly.paper &&
+        bucket.questionOnly.variant === bucket.markSchemeOnly.variant;
+
+      const questionPart = extractQuestionBody(bucket.questionOnly.content);
+      const markSchemePart = extractMarkSchemeBody(bucket.markSchemeOnly.content);
+
+      if (sameSource && questionPart && markSchemePart) {
+        const meta = extractQuestionMeta(bucket.questionOnly.content);
+        mergedPairs += 1;
+        merged.push({
+          subject: bucket.questionOnly.subject,
+          year: bucket.questionOnly.year,
+          session: bucket.questionOnly.session,
+          paper: bucket.questionOnly.paper,
+          variant: bucket.questionOnly.variant,
+          similarity: Math.max(
+            bucket.questionOnly.similarity,
+            bucket.markSchemeOnly.similarity
+          ),
+          questionNumber: meta.questionNumber,
+          subQuestion: meta.subQuestion,
+          marks: meta.marks,
+          topicGeneral: meta.topicGeneral,
+          topicSyllabus: meta.topicSyllabus,
+          questionPart,
+          markSchemePart,
+        });
+        continue;
+      }
+    }
+
+    if (bucket.questionOnly) merged.push(toContextChunk(bucket.questionOnly));
+    if (bucket.markSchemeOnly) merged.push(toContextChunk(bucket.markSchemeOnly));
+  }
+
+  for (const chunk of passthrough) {
+    merged.push(toContextChunk(chunk));
+  }
+
+  const seen = new Set<string>();
+  const deduped: ContextChunkForPrompt[] = [];
+
+  for (const item of merged.sort((a, b) => b.similarity - a.similarity)) {
+    const key = [
+      normalizeFingerprintPart(item.subject),
+      String(item.year),
+      normalizeFingerprintPart(item.session),
+      normalizeFingerprintPart(item.paper),
+      normalizeFingerprintPart(item.variant),
+      normalizeFingerprintPart((item.questionPart || "").slice(0, 120)),
+      normalizeFingerprintPart((item.markSchemePart || "").slice(0, 120)),
+      normalizeFingerprintPart((item.rawContent || "").slice(0, 120)),
+    ].join("|");
+
+    if (seen.has(key)) continue;
+    seen.add(key);
+    deduped.push(item);
+
+    if (deduped.length >= contextLimit) break;
+  }
+
+  if (mergedPairs > 0) {
+    console.log(`[RAG] Merged ${mergedPairs} split question/mark-scheme pairs into unified context chunks`);
+  }
+
+  return deduped;
+}
+
+function buildFallbackMarkingPointsFromContext(
+  contextChunks: ContextChunkForPrompt[],
+  expectedMarks?: number,
+  style?: AnswerStyle
+): Array<{ point: string; marks: number }> {
+  const markSchemeCorpus = contextChunks
+    .map((chunk) => chunk.markSchemePart || "")
+    .filter((text) => text.trim().length > 0)
+    .slice(0, 4)
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!markSchemeCorpus) return [];
+
+  const clauseCandidates = markSchemeCorpus
+    .split(/(?:;|\.(?=\s+[A-Z]))/g)
+    .map((part) => part.replace(/\s+/g, " ").trim())
+    .filter((part) => part.length >= 24 && part.length <= 260);
+
+  const scoreRegex =
+    /(award|marks?|band|criterion|criteria|purpose|audience|text type|tone|register|required points|developed in detail|organisation|spelling|punctuation|grammar|vocabulary|observations?|equation|method|correct)/i;
+
+  const seen = new Set<string>();
+  const extracted: string[] = [];
+
+  for (const clause of clauseCandidates) {
+    if (!scoreRegex.test(clause)) continue;
+    const normalized = clause.toLowerCase();
+    if (seen.has(normalized)) continue;
+    seen.add(normalized);
+    extracted.push(clause.replace(/^award\s+\d+\s+mark\s+for\s+/i, "").trim());
+  }
+
+  if (style?.responseShape === "directed_writing") {
+    const rubricPoints = [
+      "Address purpose, situation, and audience clearly throughout the article.",
+      "Cover all required content points in detail with relevant development.",
+      "Use appropriate article format, tone, and register for a school magazine.",
+      "Organise ideas logically with clear paragraphing and coherent progression.",
+      "Use accurate spelling, punctuation, and grammar.",
+      "Use a suitable range of vocabulary to keep the writing informative and engaging.",
+    ];
+
+    for (const point of rubricPoints) {
+      if (!extracted.some((item) => item.toLowerCase().includes(point.toLowerCase().slice(0, 18)))) {
+        extracted.push(point);
+      }
+    }
+  }
+
+  const maxPoints =
+    style?.responseShape === "directed_writing" ||
+    (Number.isFinite(expectedMarks) && Number(expectedMarks) >= 20)
+      ? 8
+      : 5;
+
+  const selected = extracted.slice(0, maxPoints);
+  if (!selected.length) return [];
+
+  const perPointMarks = Number.isFinite(expectedMarks) && Number(expectedMarks) > 1
+    ? Math.max(1, Math.min(5, Math.floor(Number(expectedMarks) / Math.max(1, selected.length))))
+    : 1;
+
+  return selected.map((point) => ({ point, marks: perPointMarks }));
+}
+
+async function createStructuredCompletion(messages: any[], maxTokens: number): Promise<any> {
+  const baseRequest = {
+    messages,
+    model: GROQ_MODEL,
+    max_tokens: maxTokens,
+    temperature: 0.1,
+  };
+
+  try {
+    return await groq.chat.completions.create({
+      ...baseRequest,
+      response_format: { type: "json_object" },
+    } as any);
+  } catch (err: any) {
+    const message = String(err?.message || err || "");
+    if (!/(response_format|json_object|unsupported|schema)/i.test(message)) {
+      throw err;
+    }
+
+    console.warn("[RAG] JSON response_format unavailable; retrying without strict JSON mode");
+    return groq.chat.completions.create(baseRequest as any);
+  }
+}
+
+// -- LLM ANSWER WITH CONTEXT -------------------------------------------------
+async function generateExamAnswer(
+  question: string,
+  chunks: PastPaperChunk[],
+  history: HistoryMessage[],
+  style: AnswerStyle,
+  answerMode: AnswerMode = "full_answer"
+): Promise<{
+  answer: string;
+  markingPoints: Array<{ point: string; marks: number }>;
+  commonMistakes: string[];
+} | null> {
+  if (chunks.length === 0) return null;
+
+  const contextChunks = mergeSplitChunksForContext(chunks, 12);
+
+  const expectedMarks = contextChunks.find(
+    (chunk) => Number.isFinite(chunk.marks) && Number(chunk.marks) > 0
+  )?.marks;
+
+  const fallbackMarkingPoints = buildFallbackMarkingPointsFromContext(
+    contextChunks,
+    expectedMarks,
+    style
+  );
+
+  const markingPointGuidance =
+    expectedMarks === 1
+      ? "marking_points: exactly 1 specific criterion from the mark scheme, marks must be 1."
+      : style.responseShape === "directed_writing" ||
+          (Number.isFinite(expectedMarks) && Number(expectedMarks) >= 20)
+        ? "marking_points: 5-8 specific criteria covering both content/task fulfilment and language criteria from the mark scheme."
+        : "marking_points: 3-5 specific criteria extracted from the mark scheme. marks value 1-3 each.";
+
+  const contextParts = contextChunks.map((c) => {
+    const sourceLabel = `[${c.subject} | ${c.year} ${c.session} | ${c.paper} ${c.variant}]`;
+    const metadata = [
+      c.questionNumber ? `Question Number: ${c.questionNumber}` : undefined,
+      c.subQuestion ? `Sub Question: ${c.subQuestion}` : undefined,
+      Number.isFinite(c.marks) ? `Marks: ${c.marks}` : undefined,
+      c.topicGeneral ? `Topic (General): ${c.topicGeneral}` : undefined,
+      c.topicSyllabus ? `Topic (Syllabus): ${c.topicSyllabus}` : undefined,
+    ]
+      .filter(Boolean)
+      .join("\n");
+
+    const metadataBlock = metadata ? `METADATA:\n${metadata}\n` : "";
+
+    if (c.questionPart && c.markSchemePart) {
+      return `${sourceLabel}
+${metadataBlock}
+QUESTION: ${c.questionPart}
+MARK SCHEME: ${c.markSchemePart}`;
+    }
+
+    if (c.questionPart) {
+      return `${sourceLabel}
+${metadataBlock}
+QUESTION: ${c.questionPart}`;
+    }
+
+    if (c.markSchemePart) {
+      return `${sourceLabel}
+${metadataBlock}
+MARK SCHEME: ${c.markSchemePart}`;
+    }
+
+    return `${sourceLabel}
+${metadataBlock}
+${c.rawContent || ""}`;
+  });
+
+  const contextCharLimit = style.responseShape === "directed_writing" ? 12000 : 8000;
+  const context = contextParts.join("\n\n---\n\n").substring(0, contextCharLimit);
+
+  if (!context.trim()) return null;
+
+  const avgSim =
+    contextChunks.reduce((s, c) => s + c.similarity, 0) /
+    Math.max(contextChunks.length, 1);
+
+  const messages: any[] = [
+    {
+      role: "system",
+      content: `You are an expert O-Level Cambridge exam tutor. Answer ONLY using the provided past paper extracts.
+
+RULES:
+- Be accurate, exam-focused, and clear.
+- Do NOT mention paper codes or series numbers.
+- Use Cambridge mark-scheme language.
+- The context contains past paper questions AND their marking schemes. Extract the marking scheme points directly from the context - do NOT invent generic marking points.
+- Each marking point must be a real, specific criterion taken from the mark scheme in the context (e.g. "Award 1 mark for discriminant b^2-4ac > 0", not "Key concept from exam sources").
+- If multiple mark scheme entries exist in context, combine them intelligently.
+- Use metadata in context (marks, topic, question number/sub-question) to scope the answer precisely.
+- If marks are provided, calibrate depth to those marks.
+- If marks = 1, provide one direct valid point only (no multi-point over-answering).
+- Response mode: ${answerMode === "mark_scheme_only" ? "MARK_SCHEME_ONLY" : "FULL_ANSWER"}.
+
+FORMAT:
+${buildFormatInstruction(style, answerMode)}
+
+The "marking_points" array must contain SPECIFIC mark scheme criteria extracted from the context.
+Each "point" should be a real marking criterion like:
+  - "Setting up equation x^2 + 4k + 4 = 0"
+  - "Using discriminant b^2 - 4ac > 0"
+  - "Solving to get k < -1"
+NOT generic phrases like "Key concept" or "Refer to sources".
+
+The "common_mistakes" array should list real mistakes students make on THIS specific type of question.
+
+Respond ONLY with this JSON (no markdown fences, no extra text):
+{
+  "answer": "<full structured answer here>",
+  "marking_points": [
+    {"point": "Specific mark scheme criterion", "marks": 1}
+  ],
+  "common_mistakes": ["Specific mistake students make on this question type"]
+}
+${markingPointGuidance}
+common_mistakes: 2-3 specific items.`,
+    },
+    ...history.slice(-8).map((h) => ({ role: h.role, content: h.content })),
+    {
+      role: "user",
+      content: `Question: ${question}\n\nContext (avg relevance ${(avgSim * 100).toFixed(
+        0
+      )}%${expectedMarks ? `, expected marks ${expectedMarks}` : ""}):\n\n${context}`,
+    },
+  ];
+
+  try {
+    const completion = await createStructuredCompletion(
+      messages,
+      buildMaxTokens(style, true, answerMode)
+    );
+
+    return parseGroqResponse(completion.choices[0]?.message?.content || "", style, {
+      expectedMarks,
+      answerMode,
+      fallbackMarkingPoints,
+    });
+  } catch (err) {
+    console.error("generateExamAnswer error:", err);
+    return null;
+  }
+}
+
+// -- LLM ANSWER WITHOUT CONTEXT ----------------------------------------------
+async function generateDirectAnswer(
+  question: string,
+  history: HistoryMessage[],
+  style: AnswerStyle,
+  answerMode: AnswerMode = "full_answer"
+): Promise<{
+  answer: string;
+  markingPoints: Array<{ point: string; marks: number }>;
+  commonMistakes: string[];
+} | null> {
+  const messages: any[] = [
+    {
+      role: "system",
+      content: `You are an expert O-Level Cambridge exam tutor. Answer using your Cambridge O-Level curriculum knowledge.
+
+RULES:
+- Clear, accurate, exam-focused answer for O-Level students.
+- Use Cambridge mark-scheme language.
+- Do NOT mention paper codes.
+- Response mode: ${answerMode === "mark_scheme_only" ? "MARK_SCHEME_ONLY" : "FULL_ANSWER"}.
+
+FORMAT:
+${buildFormatInstruction(style, answerMode)}
+
+Respond ONLY with this JSON (no markdown fences):
+{
+  "answer": "<answer here>",
+  "marking_points": [{"point": "criterion", "marks": 1}],
+  "common_mistakes": ["mistake"]
+}`,
+    },
+    ...history.slice(-8).map((h) => ({ role: h.role, content: h.content })),
+    { role: "user", content: question },
+  ];
+
+  try {
+    const completion = await createStructuredCompletion(
+      messages,
+      buildMaxTokens(style, false, answerMode)
+    );
+
+    return parseGroqResponse(completion.choices[0]?.message?.content || "", style, {
+      answerMode,
+    });
+  } catch (err) {
+    console.error("generateDirectAnswer error:", err);
+    return null;
+  }
+}
+
+function parseGroqResponse(
+  responseText: string,
+  style: AnswerStyle,
+  options: {
+    expectedMarks?: number;
+    answerMode?: AnswerMode;
+    fallbackMarkingPoints?: Array<{ point: string; marks: number }>;
+  } = {}
+): {
+  answer: string;
+  markingPoints: Array<{ point: string; marks: number }>;
+  commonMistakes: string[];
+} {
+  const expectedMarks =
+    Number.isFinite(options.expectedMarks) && Number(options.expectedMarks) > 0
+      ? Math.floor(Number(options.expectedMarks))
+      : undefined;
+  const answerMode = options.answerMode || "full_answer";
+
+  let parsed: any = null;
+
+  try {
+    const cleaned = responseText
+      .replace(/^```(?:json)?\s*/i, "")
+      .replace(/```\s*$/, "")
+      .trim();
+    const m = cleaned.match(/\{[\s\S]*\}/);
+    parsed = m ? JSON.parse(m[0]) : null;
+  } catch {
+    parsed = null;
+  }
+
+  let finalAnswer =
+    typeof parsed?.answer === "string" ? decodeJsonLikeString(parsed.answer) : "";
+
+  if (!finalAnswer || isTemplateAnswer(finalAnswer)) {
+    const recovered = cleanAnswerText(responseText);
+    finalAnswer = !isTemplateAnswer(recovered)
+      ? recovered
+      : buildFallbackAnswer(style);
+  }
+
+  finalAnswer = enforceMarkdownStructure(finalAnswer, style);
+
+  let markingPoints: Array<{ point: string; marks: number }> = [];
+
+  if (Array.isArray(parsed?.marking_points) && parsed.marking_points.length > 0) {
+    const filtered = parsed.marking_points.filter((item: any) => {
+      const text = typeof item === "string" ? item : String(item?.point || "");
+      // Reject generic fallback phrases.
+      const isGeneric = /key concept|exam sources|refer to source|marking criterion/i.test(text);
+      return text.trim() && !isGeneric;
+    });
+
+    if (filtered.length > 0) {
+      markingPoints = filtered.map((item: any) =>
+        typeof item === "string"
+          ? { point: item, marks: 1 }
+          : {
+              point: String(item.point || item),
+              marks: Math.max(1, Math.min(3, Number(item.marks) || 1)),
+            }
+      );
+    }
+  }
+
+  if (markingPoints.length === 0 && options.fallbackMarkingPoints?.length) {
+    markingPoints = options.fallbackMarkingPoints
+      .map((item) => ({
+        point: String(item.point || "").trim(),
+        marks: Math.max(1, Math.min(5, Number(item.marks) || 1)),
+      }))
+      .filter((item) => item.point.length > 0);
+  }
+
+  if (expectedMarks) {
+    if (expectedMarks === 1) {
+      if (markingPoints.length === 0) {
+        markingPoints = [
+          { point: "Any one valid point from the mark scheme gains 1 mark.", marks: 1 },
+        ];
+      } else {
+        markingPoints = [{ point: markingPoints[0].point, marks: 1 }];
+      }
+    } else {
+      const cap =
+        style.responseShape === "directed_writing" || expectedMarks >= 20
+          ? 8
+          : expectedMarks >= 10
+            ? 6
+            : 5;
+
+      markingPoints = markingPoints.slice(0, cap).map((item) => ({
+        point: item.point,
+        marks: Math.max(1, Math.min(3, Number(item.marks) || 1)),
+      }));
+    }
+  }
+
+  if (answerMode === "mark_scheme_only" && expectedMarks === 1) {
+    markingPoints = markingPoints.slice(0, 1).map((item) => ({
+      point: item.point,
+      marks: 1,
+    }));
+  }
+
+  const commonMistakes: string[] = Array.isArray(parsed?.common_mistakes)
+    ? parsed.common_mistakes.filter(
+        (m: any) => typeof m === "string" && m.trim()
+      )
+    : [];
+
+  return { answer: finalAnswer, markingPoints, commonMistakes };
+}
+
+interface SourceSummary {
+  sourceType: SourceType;
+  sourceNote: string;
+}
+
+function humanizePaperToken(value?: string): string {
+  if (!value) return "?";
+  return value
+    .replace(/^paper[_\s-]*/i, "")
+    .replace(/^variant[_\s-]*/i, "")
+    .replace(/_/g, " ")
+    .trim();
+}
+
+function formatCitationReference(c: Citation): string {
+  const paper = humanizePaperToken(c.paper);
+  const variant = humanizePaperToken(c.variant);
+  return `${c.subject} (${c.year} ${c.session}) - Paper ${paper}, Variant ${variant}`;
+}
+
+function buildSourceSummary(
+  citations: Citation[],
+  nearbyReferences: Citation[] = [],
+  reason?: string
+): SourceSummary {
+  if (citations.length > 0) {
+    const primary = citations[0];
+    return {
+      sourceType: "past_paper",
+      sourceNote: `Primary source: ${formatCitationReference(primary)}.`,
+    };
+  }
+
+  if (nearbyReferences.length > 0) {
+    return {
+      sourceType: "nearby_only",
+      sourceNote:
+        "This did not come from an exact past-paper match. Related papers were found, but similarity was below the grounding threshold.",
+    };
+  }
+
+  return {
+    sourceType: "none",
+    sourceNote:
+      reason ||
+      "This did not come from any indexed past paper because no reliable match was found for the query.",
+  };
+}
+
+function buildMarkSchemeOnlyAnswer(
+  retrievalQuestion: string,
+  markingPoints: Array<{ point: string; marks: number }>
+): string {
+  if (!markingPoints.length) {
+    return `## Marking Scheme\nNo reliable mark-scheme points were found for this question in retrieved past-paper context.`;
+  }
+
+  const totalMarks = markingPoints.reduce(
+    (sum, item) => sum + Math.max(1, Number(item.marks) || 1),
+    0
+  );
+
+  return `## Marking Scheme
+Question focus: ${retrievalQuestion}
+
+${markingPoints
+  .map((item, idx) => `${idx + 1}. ${item.point} (${Math.max(1, Number(item.marks) || 1)} mark${Math.max(1, Number(item.marks) || 1) > 1 ? "s" : ""})`)
+  .join("\n")}
+
+Estimated total: ${totalMarks} mark${totalMarks > 1 ? "s" : ""}`;
+}
+
+// -- RETRIEVAL DIAGNOSTICS ---------------------------------------------------
+function buildDiagnostics(
+  result: RagRetrievalResult | null,
   mode: "grounded" | "nearby" | "general",
   subjectFilter?: string,
   reason?: string
 ): RetrievalDiagnostics | undefined {
   if (!INCLUDE_STUDENT_RETRIEVAL_DIAGNOSTICS) return undefined;
-  return buildRetrievalDiagnostics(ragResult, mode, subjectFilter, reason);
-}
-
-async function generateExamAnswer(
-  question: string,
-  ragResult: RagRetrievalResult,
-  history: HistoryMessage[] = [],
-  answerStyle: AnswerStyle = inferAnswerStyle(question, history)
-): Promise<ExamAnswer | null> {
-  if (!ragResult.success || ragResult.groupedResults.length === 0) return null;
-
-  try {
-    const filePriority: Record<string, number> = { MS: 3, QP: 2, ER: 1, GT: 0 };
-    const sortedGroups = [...ragResult.groupedResults].sort(
-      (a, b) => (filePriority[b.filetype] || 0) - (filePriority[a.filetype] || 0)
-    );
-
-    const contextChunks = sortedGroups
-      .flatMap((group) =>
-        group.chunks
-          .sort((a, b) => b.similarity - a.similarity)
-          .map(
-            (c) =>
-              `[${resolveSubjectName(group.subject)} ${group.year} ${group.session} ${group.paper} ${group.filetype}]\n${c.content}`
-          )
-      )
-      .join("\n\n---\n\n")
-      .substring(0, 6000);
-
-    if (!contextChunks.trim()) return null;
-
-    const avgSimilarity =
-      ragResult.rawSimilarityScores.length > 0
-        ? ragResult.rawSimilarityScores.reduce((a, b) => a + b, 0) / ragResult.rawSimilarityScores.length
-        : 0;
-
-    const recentHistory = history.slice(-8).map((h) => ({
-      role: h.role as "user" | "assistant",
-      content: h.content,
-    }));
-
-    const messages: any[] = [
-      {
-        role: "system",
-        content: `You are an expert O-Level Cambridge exam tutor. Answer the student's question based ONLY on the provided exam paper extracts.
-
-STRICT RULES:
-- Answer the question accurately in exam-focused language.
-- Do NOT mention or guess any paper codes, series numbers (e.g. "1123", "2058"), or exam codes in your answer. The citation system identifies sources automatically.
-- If the student asks "which paper is this from" or "what paper number", tell them to look at the source citations shown below your answer — do NOT guess codes yourself.
-- Use only context that clearly matches the student's question/topic; ignore unrelated extracts.
-- Be exam-focused, clear, and thorough.
-
-OUTPUT FORMAT RULES:
-${buildExamAnswerFormatInstruction(answerStyle)}
-${buildAnswerMarkdownHeadingInstruction(answerStyle)}
-
-Respond ONLY with this JSON (no markdown fences, no extra text):
-{
-  "answer": "<write the real answer here>",
-  "marking_points": [
-    {"point": "Key marking criterion as in a mark scheme", "marks": 1}
-  ],
-  "common_mistakes": ["A typical error O-Level students make"]
-}
-
-marking_points: 3-5 items, marks value 1-3 each.
-common_mistakes: 2-3 items.`,
-      },
-      ...recentHistory,
-      {
-        role: "user",
-        content: `Question: ${question}\n\nContext from past papers (avg relevance ${(avgSimilarity * 100).toFixed(0)}%):\n\n${contextChunks}`,
-      },
-    ];
-
-    const completion = await groq.chat.completions.create({
-      messages,
-      model: GROQ_MODEL,
-      max_tokens: buildMaxTokens(answerStyle, true),
-      temperature: 0.1,
-    });
-
-    const responseText = completion.choices[0]?.message?.content || "";
-
-    let parsed: any = null;
-    try {
-      const cleaned = responseText.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/, "").trim();
-      const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
-      parsed = jsonMatch ? JSON.parse(jsonMatch[0]) : null;
-    } catch { parsed = null; }
-
-    if (!parsed?.answer) {
-      parsed = {
-        answer: cleanAnswerText(responseText) || "Unable to generate a structured answer.",
-        marking_points: [{ point: "Refer to source documents", marks: 1 }],
-        common_mistakes: ["Review the exam context above"],
-      };
-    }
-
-    let finalAnswer = typeof parsed?.answer === "string"
-      ? decodeJsonLikeString(parsed.answer)
-      : "";
-    if (!finalAnswer || isTemplateAnswer(finalAnswer)) {
-      const recovered = cleanAnswerText(responseText);
-      finalAnswer = !isTemplateAnswer(recovered) ? recovered : "I can help with that. Please ask again and I will provide a full, structured answer.";
-    }
-    finalAnswer = enforceConsistentAnswerMarkdown(finalAnswer, answerStyle);
-
-    let markingPoints: Array<{ point: string; marks: number }> = [];
-    if (Array.isArray(parsed.marking_points) && parsed.marking_points.length > 0) {
-      markingPoints = parsed.marking_points.map((item: any) => {
-        if (typeof item === "string") return { point: item, marks: 1 };
-        return { point: String(item.point || item), marks: Math.max(1, Math.min(3, Number(item.marks) || 1)) };
-      });
-    } else {
-      markingPoints = [{ point: "Key concept from exam sources", marks: 1 }];
-    }
-
-    const commonMistakes: string[] = Array.isArray(parsed.common_mistakes)
-      ? parsed.common_mistakes.filter((m: any) => typeof m === "string" && m.trim())
-      : [];
-
-    let confidenceScore = Math.min(1, Math.max(0.1, avgSimilarity));
-    if (ragResult.groupedResults.length >= 3) confidenceScore = Math.min(1, confidenceScore * 1.15);
-
-    const citations: Citation[] = dedupeCitations(buildCitationsFromGroups(sortedGroups, "direct"));
-
-    // Find the best chunk that actually looks like an exam question
-    // Reject ER/mark-scheme content, require a "?" or question-style opening
-    function looksLikeExamQuestion(text: string): boolean {
-      const lower = text.toLowerCase();
-      // Reject examiner report / mark scheme prose
-      const isReportContent = /\b(candidates|principal examiner|examiner report|examiners|many candidates|few candidates|common errors|mark scheme|© 20\d{2}|cambridge ordinary level\s+\d{4})\b/.test(lower);
-      if (isReportContent) return false;
-      // Must contain a question mark OR start with a question action verb
-      const hasQuestion = text.includes("?");
-      const hasQuestionVerb = /^\s*(explain|describe|state|define|calculate|suggest|give|what|how|why|outline|compare|evaluate|discuss|draw|predict|deduce|justify|identify|name|list|show|determine|find|write|complete|use)/i.test(text);
-      return hasQuestion || hasQuestionVerb;
-    }
-
-    // Collect all chunks from QP groups first, then all groups, and find the best exam-like chunk
-    let relatedQuestion: RelatedQuestion | undefined;
-    const allCandidates = [
-      ...sortedGroups.filter((g) => g.filetype === "QP"),
-      ...sortedGroups.filter((g) => g.filetype !== "QP"),
-    ].flatMap((group) =>
-      group.chunks
-        .filter((c) => looksLikeExamQuestion(c.content))
-        .map((c) => ({ group, chunk: c }))
-    ).sort((a, b) => b.chunk.similarity - a.chunk.similarity);
-
-    const best = allCandidates[0];
-    if (best && best.chunk.similarity >= 0.55) {
-      relatedQuestion = {
-        type: best.chunk.similarity >= 0.75 ? "exact" : "similar",
-        text: best.chunk.content.trim(),
-        source: {
-          subject: resolveSubjectName(best.group.subject),
-          year: best.group.year,
-          session: best.group.session,
-          paper: best.group.paper,
-          file_type: best.group.filetype,
-          paper_file_id: best.group.paperFileId,
-          storage_path: best.group.storagePath,
-          paper_view_url: getPaperViewUrl(best.group.paperFileId, best.group.storagePath),
-        },
-        similarity: best.chunk.similarity,
-      };
-    }
-
-    return {
-      answer: finalAnswer,
-      markingPoints,
-      commonMistakes,
-      citations: citations.slice(0, 6),
-      confidenceScore,
-      coveragePercentage: Math.min(100, (ragResult.groupedResults.length / 8) * 100),
-      relatedQuestion,
-    };
-  } catch (err) {
-    console.error("Answer generation error:", err);
-    return null;
-  }
-}
-
-// ============================================================================
-// DIRECT LLM ANSWER (no RAG context — fallback when retrieval fails)
-// ============================================================================
-
-async function generateDirectAnswer(
-  question: string,
-  history: HistoryMessage[] = [],
-  answerStyle: AnswerStyle = inferAnswerStyle(question, history)
-): Promise<{ answer: string; markingPoints: Array<{ point: string; marks: number }>; commonMistakes: string[] } | null> {
-  try {
-    const recentHistory = history.slice(-8).map((h) => ({
-      role: h.role as "user" | "assistant",
-      content: h.content,
-    }));
-
-    const messages: any[] = [
-      {
-        role: "system",
-        content: `You are an expert O-Level Cambridge exam tutor with deep knowledge of the Cambridge syllabus for all O-Level subjects including Physics, Chemistry, Biology, Mathematics, English, Islamiyat, Pakistan Studies, Computer Science, Economics, Geography, History, and more.
-
-Answer the student's question using your Cambridge O-Level curriculum knowledge.
-
-RULES:
-- Give a clear, accurate, exam-focused answer suitable for O-Level students.
-- Use Cambridge mark-scheme language where possible.
-- Do NOT mention paper codes or series numbers.
-- Be clear, structured, and educational.
-
-OUTPUT FORMAT RULES:
-${buildExamAnswerFormatInstruction(answerStyle)}
-${buildAnswerMarkdownHeadingInstruction(answerStyle)}
-
-Respond ONLY with this JSON (no markdown fences, no extra text):
-{
-  "answer": "<write the real answer here>",
-  "marking_points": [
-    {"point": "Key marking criterion", "marks": 1}
-  ],
-  "common_mistakes": ["A typical error students make"]
-}
-
-marking_points: 3-5 items, marks value 1-3 each.
-common_mistakes: 2-3 items.`,
-      },
-      ...recentHistory,
-      { role: "user", content: question },
-    ];
-
-    const completion = await groq.chat.completions.create({
-      messages,
-      model: GROQ_MODEL,
-      max_tokens: buildMaxTokens(answerStyle, false),
-      temperature: 0.1,
-    });
-
-    const responseText = completion.choices[0]?.message?.content || "";
-
-    let parsed: any = null;
-    try {
-      const cleaned = responseText.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/, "").trim();
-      const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
-      parsed = jsonMatch ? JSON.parse(jsonMatch[0]) : null;
-    } catch { parsed = null; }
-
-    if (!parsed?.answer) {
-      parsed = {
-        answer: cleanAnswerText(responseText) || "Unable to generate an answer.",
-        marking_points: [],
-        common_mistakes: [],
-      };
-    }
-
-    let finalAnswer = typeof parsed?.answer === "string"
-      ? decodeJsonLikeString(parsed.answer)
-      : "";
-    if (!finalAnswer || isTemplateAnswer(finalAnswer)) {
-      const recovered = cleanAnswerText(responseText);
-      finalAnswer = !isTemplateAnswer(recovered) ? recovered : "I can help with that. Please ask again and I will provide a clear exam-style answer.";
-    }
-    finalAnswer = enforceConsistentAnswerMarkdown(finalAnswer, answerStyle);
-
-    let markingPoints: Array<{ point: string; marks: number }> = [];
-    if (Array.isArray(parsed.marking_points) && parsed.marking_points.length > 0) {
-      markingPoints = parsed.marking_points.map((item: any) => {
-        if (typeof item === "string") return { point: item, marks: 1 };
-        return { point: String(item.point || item), marks: Math.max(1, Math.min(3, Number(item.marks) || 1)) };
-      });
-    }
-
-    const commonMistakes: string[] = Array.isArray(parsed.common_mistakes)
-      ? parsed.common_mistakes.filter((m: any) => typeof m === "string" && m.trim())
-      : [];
-
-    return { answer: finalAnswer, markingPoints, commonMistakes };
-  } catch (err) {
-    console.error("Direct answer generation error:", err);
-    return null;
-  }
-}
-
-// ============================================================================
-// SMALLTALK
-// ============================================================================
-
-const smalltalkResponses = [
-  "Hi! Ask me any O-Level exam question — Chemistry, Physics, Biology, Maths, Islamiyat, and more. I'll answer using real past exam papers with marking points.",
-  "Hello! Try asking a topic question like \"explain osmosis\" or find papers like \"Chemistry 2023 QP\".",
-  "Hey! I can answer O-Level exam questions and help find past papers. What do you need?",
-  "Hi! Ask me anything about your O-Level subjects. I'll give you a mark-scheme style answer from past papers.",
-];
-
-function getSmallTalkResponse(): string {
-  return smalltalkResponses[Math.floor(Math.random() * smalltalkResponses.length)];
-}
-
-function buildRetrievalDiagnostics(
-  ragResult: RagRetrievalResult | null,
-  mode: "grounded" | "nearby" | "general",
-  subjectFilter?: string,
-  reason?: string
-): RetrievalDiagnostics {
-  const stats = ragResult?.stats;
   return {
     mode,
-    used_embeddings: Boolean(stats && stats.rpcMatchCount > 0),
     subject_filter: subjectFilter,
+    match_count: result?.chunks.length,
+    best_similarity: result?.bestSimilarity,
+    avg_top3: result?.avgTop3,
     reason,
-    match_count_requested: stats?.matchCountRequested,
-    rpc_match_count: stats?.rpcMatchCount,
-    threshold_match_count: stats?.thresholdMatchCount,
-    metadata_chunk_count: stats?.metadataChunkCount,
-    grouped_file_count: stats?.groupedFileCount,
-    best_similarity: stats?.bestSimilarity,
-    avg_top3_similarity: stats?.avgTop3Similarity,
+    requested_match_count: subjectFilter ? TOP_K_WITH_FILTERS : TOP_K,
+    similarity_threshold: SIMILARITY_THRESHOLD,
   };
 }
 
-function buildNearbyReferences(
-  ragResult: RagRetrievalResult,
-  subjectFilter?: string,
-  limit: number = NEARBY_REFERENCE_LIMIT
-): Citation[] {
-  if (!subjectFilter) return [];
-
-  const sourceGroups = ragResult.nearbyGroupedResults.length
-    ? ragResult.nearbyGroupedResults
-    : ragResult.groupedResults;
-
-  let candidates = buildCitationsFromGroups(sourceGroups, "nearby");
-
-  const subjectCandidates = candidates.filter((c) => String(c.subject) === String(subjectFilter));
-  if (subjectCandidates.length === 0) return [];
-  candidates = subjectCandidates;
-
-  return dedupeCitations(candidates).slice(0, limit);
-}
-
-async function streamPaperPdfFromStorage(
-  storagePath: string,
-  res: Response,
-  fallbackFileName?: string
-): Promise<boolean> {
-  const normalizedStoragePath = normalizeStoragePath(storagePath);
-  if (!normalizedStoragePath) return false;
-
-  const { data: pdfBlob, error: downloadError } = await supabase
-    .storage
-    .from(SUPABASE_STORAGE_BUCKET)
-    .download(normalizedStoragePath);
-
-  if (downloadError || !pdfBlob) {
-    return false;
-  }
-
-  const fileName = normalizedStoragePath.split("/").pop() || fallbackFileName || "paper.pdf";
-  const safeFileName = fileName.replace(/"/g, "");
-  const fileBuffer = Buffer.from(await pdfBlob.arrayBuffer());
-
-  res.setHeader("Content-Type", "application/pdf");
-  res.setHeader("Content-Disposition", `inline; filename="${safeFileName}"`);
-  res.send(fileBuffer);
-  return true;
-}
-
-// ============================================================================
-// GET /rag/paper-file/by-path/view — stream cited paper PDF via storage path
-// ============================================================================
-
-router.get("/paper-file/by-path/view", async (req: Request, res: Response) => {
-  try {
-    const storagePath = typeof req.query.storagePath === "string"
-      ? req.query.storagePath
-      : "";
-
-    const normalizedStoragePath = normalizeStoragePath(storagePath);
-    if (!normalizedStoragePath) {
-      return res.status(400).json({ error: "storagePath is required" });
-    }
-
-    const streamed = await streamPaperPdfFromStorage(normalizedStoragePath, res);
-    if (!streamed) {
-      return res.status(404).json({ error: "Unable to load paper file from storage" });
-    }
-
-    return;
-  } catch (error) {
-    console.error("Paper file by-path view error:", error);
-    return res.status(500).json({ error: "Failed to open paper file" });
-  }
-});
-
-// ============================================================================
-// GET /rag/paper-file/:paperFileId/view — stream cited paper PDF from Supabase
-// ============================================================================
-
-router.get("/paper-file/:paperFileId/view", async (req: Request, res: Response) => {
-  try {
-    const { paperFileId } = req.params;
-    const storagePathFromQuery = typeof req.query.storagePath === "string"
-      ? req.query.storagePath
-      : undefined;
-    const normalizedStoragePathFromQuery = normalizeStoragePath(storagePathFromQuery);
-
-    if (!isUsableId(paperFileId) && !normalizedStoragePathFromQuery) {
-      return res.status(400).json({ error: "paperFileId or storagePath is required" });
-    }
-
-    let resolvedStoragePath = normalizedStoragePathFromQuery;
-    if (isUsableId(paperFileId)) {
-      const { data: paperFile, error: paperFileError } = await supabase
-        .from("paper_files")
-        .select("id, storage_path")
-        .eq("id", paperFileId)
-        .single();
-
-      if (!paperFileError && paperFile?.storage_path) {
-        resolvedStoragePath = normalizeStoragePath(paperFile.storage_path) || resolvedStoragePath;
-      }
-    }
-
-    if (!resolvedStoragePath) {
-      return res.status(404).json({ error: "Paper file not found" });
-    }
-
-    const streamed = await streamPaperPdfFromStorage(
-      resolvedStoragePath,
-      res,
-      isUsableId(paperFileId) ? `${paperFileId}.pdf` : undefined
-    );
-
-    if (!streamed) {
-      return res.status(404).json({ error: "Unable to load paper file from storage" });
-    }
-
-    return;
-  } catch (error) {
-    console.error("Paper file view error:", error);
-    return res.status(500).json({ error: "Failed to open paper file" });
-  }
-});
-
-// ============================================================================
-// GET /rag/subjects — returns all subjects from DB with resolved names
-// ============================================================================
-
+// -- GET /rag/subjects -------------------------------------------------------
 router.get("/subjects", async (_req: Request, res: Response) => {
   try {
-    clearSubjectCache(); // Force fresh fetch
-    const subjects = await getSubjectCache();
-    res.json(subjects.map((s) => ({ code: s.code, name: s.name, level: s.level })));
-  } catch (err) {
-    res.status(500).json({ error: "Failed to fetch subjects" });
+    const { data, error } = await supabase
+      .from("past_paper_meta")
+      .select("subject")
+      .order("subject");
+
+    if (error) return res.status(500).json({ error: error.message });
+
+    const unique = [...new Set((data || []).map((r: any) => r.subject as string))];
+    return res.json(unique.map((s) => ({ name: s })));
+  } catch {
+    return res.status(500).json({ error: "Failed to fetch subjects" });
   }
 });
 
-// ============================================================================
-// POST /rag/query — main 3-stage RAG pipeline
-// ============================================================================
-
+// -- POST /rag/query ---------------------------------------------------------
 router.post("/query", async (req: Request, res: Response) => {
   try {
-    const { question, limit = 5, filters, history = [] } = req.body as RagQueryRequest;
+    const { question, filters, history = [] } = req.body as RagQueryRequest;
 
     if (!question?.trim()) {
       return res.status(400).json({ error: "Question is required" });
     }
 
-    // Warm up subject cache in background (don't await)
-    getSubjectCache().catch(() => {});
+    const normalizedQuestion = question.trim();
+    const resolved = resolveQuestionForAnswering(normalizedQuestion, history);
+    const retrievalQuestion = resolved.retrievalQuestion;
+    const style = inferAnswerStyle(normalizedQuestion, resolved.answerMode);
 
-    // STAGE A: INTENT
-    const classification = classifyIntent(question);
-
-    // CASE 1: SMALLTALK
-    if (classification.intent === "smalltalk") {
-      return res.json({ type: "smalltalk", answer: getSmallTalkResponse(), citations: [] } as RagQueryResponse);
-    }
-
-    // CASE 2: PAPER LOOKUP
-    if (classification.intent === "paper_lookup") {
-      const meta = classification.metadata;
-
-      // Try to find the subject in DB dynamically
-      let subjectId: string | null = null;
-      let resolvedSubjectName: string | null = null;
-
-      if (meta?.subjectKeyword) {
-        const matched = await findSubjectByName(meta.subjectKeyword);
-        if (matched) {
-          subjectId = matched.id;
-          resolvedSubjectName = matched.name;
-        }
-      }
-
-      let query = supabase.from("papers").select(`
-        id, year, session, paper, subject_id,
-        subjects(code, level),
-        paper_files(file_type, storage_path, id)
-      `);
-
-      if (subjectId) query = query.eq("subject_id", subjectId);
-      if (meta?.year) query = query.eq("year", meta.year);
-
-      const { data, error } = await query;
-      if (error) return res.status(500).json({ error: error.message });
-
-      let results = (data || []) as any[];
-
-      if (meta?.fileType) {
-        results = results.filter((p) =>
-          p.paper_files?.some((pf: any) => pf.file_type === meta.fileType)
-        );
-      }
-      if (meta?.paper) {
-        results = results.filter((p) => p.paper === meta.paper);
-      }
-
-      const grouped = results.reduce((acc: any, paper: any) => {
-        const key = `${paper.subjects?.code}-${paper.year}`;
-        if (!acc[key]) {
-          acc[key] = {
-            subject: paper.subjects?.code,
-            subjectName: resolveSubjectName(paper.subjects?.code),
-            year: paper.year,
-            level: paper.subjects?.level,
-            sessions: {},
-          };
-        }
-        if (!acc[key].sessions[paper.session]) {
-          acc[key].sessions[paper.session] = { session: paper.session, papers: {} };
-        }
-        if (!acc[key].sessions[paper.session].papers[paper.paper]) {
-          acc[key].sessions[paper.session].papers[paper.paper] = { paper: paper.paper, files: {} };
-        }
-        (paper.paper_files || []).forEach((pf: any) => {
-          acc[key].sessions[paper.session].papers[paper.paper].files[pf.file_type] = {
-            file_type: pf.file_type, storage_path: pf.storage_path, id: pf.id,
-          };
-        });
-        return acc;
-      }, {});
-
-      const groupedArr = Object.values(grouped) as any[];
-
-      // If we couldn't match the subject, include available subjects as hint
-      const subjects = await getSubjectCache();
-      const availableSubjects = subjects.map((s) => ({ code: s.code, name: s.name, level: s.level }));
-
-      let answerText = "";
-      if (groupedArr.length > 0) {
-        const subjectLabel = resolvedSubjectName || meta?.subjectKeyword || "your query";
-        answerText = `Found ${groupedArr.length} paper set(s) for ${subjectLabel}:`;
-      } else if (!subjectId && meta?.subjectKeyword) {
-        answerText = `Could not identify subject "${meta.subjectKeyword}" in the database. Available subjects are shown below — try using the subject selector or type the exact name.`;
-      } else {
-        answerText = "No papers found for your query.";
-      }
-
+    // STAGE A - INTENT
+    if (classifyIntent(normalizedQuestion) === "smalltalk") {
       return res.json({
-        type: "paper_lookup",
-        answer: answerText,
-        results: groupedArr,
+        type: "smalltalk",
+        answer: getSmallTalkResponse(),
         citations: [],
-        available_subjects: !subjectId ? availableSubjects : undefined,
       } as RagQueryResponse);
     }
 
-    // CASE 3: EXAM QUESTION
-    const answerStyle = inferAnswerStyle(question, history);
-    const effectiveFilters: RagQueryRequest["filters"] = { ...(filters || {}) };
-    let inferredSubjectKeywordMissing: string | null = null;
-    let skipRagForSubjectSafety = false;
-    let subjectSafetyReason = "";
-    const subjectInference = await inferSubjectFromQuestion(question);
+    // STAGE B - SUBJECT INFERENCE
+    const subjectKeyword =
+      inferSubjectFromQuestion(retrievalQuestion) ||
+      inferSubjectFromQuestion(normalizedQuestion);
+    const subjectFilter =
+      filters?.subject ||
+      (subjectKeyword ? resolveSubjectName(subjectKeyword) : undefined);
+    const yearFilter = filters?.year;
 
-    if (
-      effectiveFilters.subject &&
-      subjectInference?.matchedSubject &&
-      String(effectiveFilters.subject) !== String(subjectInference.matchedSubject.code)
-    ) {
-      const shouldOverrideProvidedFilter =
-        subjectInference.source === "explicit-keyword" ||
-        subjectInference.source === "topic-hint-strong";
+    // STAGE C - RAG RETRIEVAL
+    // Always run RAG - with subject filter when one is known, without when it
+    // isn't.  Embedding similarity is the authoritative signal; keyword-based
+    // subject inference is just an optimisation that widens the candidate pool.
+    if (subjectFilter) {
+      console.log(
+        `[RAG] Retrieving for subject="${subjectFilter}" year=${yearFilter || "any"} (mode=${resolved.answerMode})`
+      );
+    } else {
+      console.log(
+        `[RAG] No subject inferred - running unfiltered retrieval (mode=${resolved.answerMode})`
+      );
+    }
+    let ragResult = await ragRetrieval(
+      retrievalQuestion,
+      subjectFilter,
+      yearFilter
+    );
 
-      if (shouldOverrideProvidedFilter) {
-        console.log(
-          `[RAG] Overriding provided subject filter ${effectiveFilters.subject} -> ${subjectInference.matchedSubject.code} based on ${subjectInference.source} (${subjectInference.keyword}).`
-        );
-        effectiveFilters.subject = subjectInference.matchedSubject.code;
+    // When we retrieved without a filter we can still discover which subject
+    // the top chunks belong to and use that for logging / source attribution.
+    let effectiveSubjectFilter = subjectFilter;
+    if (!subjectFilter) {
+      const dominantFromGrounded = inferDominantSubject(ragResult.chunks, 8);
+      const dominantFromNearby = inferDominantSubject(ragResult.nearbyChunks, 8);
+      const inferredSubject = dominantFromGrounded || dominantFromNearby;
+
+      if (inferredSubject) {
+        effectiveSubjectFilter = inferredSubject;
+        console.log(`[RAG] Subject inferred from retrieval results: "${inferredSubject}"`);
+
+        // If first pass is weak, run one focused pass using the inferred subject.
+        if (!hasReliableContext(ragResult, false)) {
+          const focused = await ragRetrieval(
+            retrievalQuestion,
+            inferredSubject,
+            yearFilter
+          );
+
+          if (
+            focused.success &&
+            (hasReliableContext(focused, true) ||
+              focused.bestSimilarity > ragResult.bestSimilarity)
+          ) {
+            ragResult = focused;
+            console.log(
+              `[RAG] Focused second-pass retrieval improved context (best=${focused.bestSimilarity.toFixed(3)})`
+            );
+          }
+        }
       }
     }
 
-    if (!effectiveFilters.subject) {
-      if (subjectInference?.matchedSubject) {
-        effectiveFilters.subject = subjectInference.matchedSubject.code;
-        console.log(
-          `[RAG] Auto subject filter (${subjectInference.source}): "${subjectInference.keyword}" -> ${subjectInference.matchedSubject.code} (${subjectInference.matchedSubject.name})`
-        );
-      } else if (subjectInference?.keyword) {
-        inferredSubjectKeywordMissing = subjectInference.keyword;
-        skipRagForSubjectSafety = true;
-        subjectSafetyReason = `Subject inferred from question but not indexed: ${subjectInference.keyword}`;
-        console.log(
-          `[RAG] Subject hint (${subjectInference.source}) "${subjectInference.keyword}" detected but not found in indexed subjects. Skipping RAG retrieval.`
-        );
-      } else {
-        skipRagForSubjectSafety = true;
-        subjectSafetyReason = "No confident subject inferred from question; skipping cross-subject retrieval.";
-        console.log("[RAG] No confident subject inferred. Skipping unfiltered retrieval to avoid wrong-subject context.");
-      }
-    }
+    // Build nearby references regardless
+    const nearbyRefs: Citation[] =
+      ragResult.nearbyChunks.length > 0
+        ? buildCitations(
+            ragResult.nearbyChunks.slice(0, NEARBY_REFERENCE_LIMIT),
+            "nearby"
+          )
+        : [];
 
-    if (inferredSubjectKeywordMissing || skipRagForSubjectSafety) {
-      const directAnswer = await generateDirectAnswer(question, history, answerStyle);
-      if (directAnswer) {
-        return res.json({
-          type: "exam_question",
-          answer: directAnswer.answer,
-          marking_points: directAnswer.markingPoints,
-          common_mistakes: directAnswer.commonMistakes,
-          citations: [],
-          low_confidence: true,
-          retrieval: maybeStudentRetrievalDiagnostics(
-            null,
-            "general",
-            effectiveFilters.subject,
-            inferredSubjectKeywordMissing
-              ? `No indexed subject matched inferred topic: ${inferredSubjectKeywordMissing}`
-              : subjectSafetyReason
-          ),
-        } as RagQueryResponse);
-      }
-    }
-
-    const ragResult = await ragRetrieval(question, effectiveFilters);
-    const nearbyReferences = buildNearbyReferences(ragResult, effectiveFilters.subject);
-
-    if (!ragResult.success) {
-      if (ragResult.error?.includes("unavailable")) {
-        return res.json({
-          type: "exam_question",
-          answer: "The AI study assistant is temporarily unavailable. Please try again later.",
-          citations: [],
-          retrieval: maybeStudentRetrievalDiagnostics(
-            ragResult,
-            nearbyReferences.length > 0 ? "nearby" : "general",
-            effectiveFilters.subject,
-            ragResult.error
-          ),
-          nearby_references: nearbyReferences.length > 0 ? nearbyReferences : undefined,
-        } as RagQueryResponse);
-      }
-      // RAG found nothing — fall back to direct LLM answer
-      const directAnswer = await generateDirectAnswer(question, history, answerStyle);
-      if (directAnswer) {
-        const hasNearby = nearbyReferences.length > 0;
-        return res.json({
-          type: "exam_question",
-          answer: directAnswer.answer,
-          marking_points: directAnswer.markingPoints,
-          common_mistakes: directAnswer.commonMistakes,
-          citations: [],
-          low_confidence: true,
-          nearby_references: hasNearby ? nearbyReferences : undefined,
-          retrieval: maybeStudentRetrievalDiagnostics(
-            ragResult,
-            hasNearby ? "nearby" : "general",
-            effectiveFilters.subject,
-            ragResult.error || "No reliable grounded context"
-          ),
-        } as RagQueryResponse);
-      }
+    // Check if retrieval failed completely
+    if (/(unavailable|cohere)/i.test(ragResult.error || "")) {
+      const source = buildSourceSummary(
+        [],
+        nearbyRefs,
+        "This did not come from past papers because retrieval is temporarily unavailable."
+      );
       return res.json({
         type: "exam_question",
-        answer: "I couldn't generate an answer right now. Please try again.",
+        answer: "The AI study assistant is temporarily unavailable. Please try again later.",
         citations: [],
-        nearby_references: nearbyReferences.length > 0 ? nearbyReferences : undefined,
-        retrieval: maybeStudentRetrievalDiagnostics(
-          ragResult,
-          nearbyReferences.length > 0 ? "nearby" : "general",
-          effectiveFilters.subject,
-          ragResult.error || "Direct answer generation failed"
-        ),
+        source_note: source.sourceNote,
+        source_type: source.sourceType,
+        resolved_question: resolved.usedHistoryQuestion
+          ? retrievalQuestion
+          : undefined,
+        nearby_references: nearbyRefs.length > 0 ? nearbyRefs : undefined,
+        retrieval: buildDiagnostics(ragResult, "general", effectiveSubjectFilter, ragResult.error),
       } as RagQueryResponse);
     }
 
-    const reliableContext = hasReliableRagContext(ragResult, effectiveFilters.subject);
-    if (!reliableContext) {
-      const directAnswer = await generateDirectAnswer(question, history, answerStyle);
-      if (directAnswer) {
+    const reliable = hasReliableContext(ragResult, Boolean(effectiveSubjectFilter));
+
+    if (!reliable) {
+      if (resolved.answerMode === "mark_scheme_only") {
+        const source = buildSourceSummary(
+          [],
+          nearbyRefs,
+          "This did not come from any exact past paper because similarity was below the reliability threshold for marking-scheme extraction."
+        );
+
         return res.json({
           type: "exam_question",
-          answer: directAnswer.answer,
-          marking_points: directAnswer.markingPoints,
-          common_mistakes: directAnswer.commonMistakes,
+          answer:
+            "## Marking Scheme\nI could not find a reliable past-paper match for this question, so I cannot provide an exact marking scheme.",
+          marking_points: [
+            {
+              point:
+                "No reliable mark scheme found in retrieved past-paper context for this question.",
+              marks: 1,
+            },
+          ],
+          common_mistakes: [],
           citations: [],
           low_confidence: true,
-          nearby_references: nearbyReferences.length > 0 ? nearbyReferences : undefined,
-          retrieval: maybeStudentRetrievalDiagnostics(
+          nearby_references: nearbyRefs.length > 0 ? nearbyRefs : undefined,
+          source_note: source.sourceNote,
+          source_type: source.sourceType,
+          resolved_question: resolved.usedHistoryQuestion
+            ? retrievalQuestion
+            : undefined,
+          retrieval: buildDiagnostics(
             ragResult,
-            nearbyReferences.length > 0 ? "nearby" : "general",
-            effectiveFilters.subject,
-            "Embeddings retrieved but reliability thresholds were not met"
+            nearbyRefs.length > 0 ? "nearby" : "general",
+            effectiveSubjectFilter,
+            "Below reliability threshold"
           ),
         } as RagQueryResponse);
       }
-      return res.json({
-        type: "exam_question",
-        answer: "I couldn't find reliable past-paper context for this question right now. Please try again.",
-        citations: [],
-        low_confidence: true,
-        nearby_references: nearbyReferences.length > 0 ? nearbyReferences : undefined,
-        retrieval: maybeStudentRetrievalDiagnostics(
-          ragResult,
-          nearbyReferences.length > 0 ? "nearby" : "general",
-          effectiveFilters.subject,
-          "Embeddings retrieved but no reliable context"
-        ),
-      } as RagQueryResponse);
+
+      // Fall back to direct LLM
+      console.log(
+        `[RAG] Context not reliable (best=${ragResult.bestSimilarity.toFixed(3)}) - direct answer`
+      );
+      const direct = await generateDirectAnswer(
+        retrievalQuestion,
+        history,
+        style,
+        resolved.answerMode
+      );
+      if (direct) {
+        const source = buildSourceSummary([], nearbyRefs);
+        return res.json({
+          type: "exam_question",
+          answer: direct.answer,
+          marking_points: direct.markingPoints,
+          common_mistakes: direct.commonMistakes,
+          citations: [],
+          low_confidence: true,
+          nearby_references: nearbyRefs.length > 0 ? nearbyRefs : undefined,
+          source_note: source.sourceNote,
+          source_type: source.sourceType,
+          resolved_question: resolved.usedHistoryQuestion
+            ? retrievalQuestion
+            : undefined,
+          retrieval: buildDiagnostics(
+            ragResult,
+            nearbyRefs.length > 0 ? "nearby" : "general",
+            effectiveSubjectFilter,
+            "Below reliability threshold"
+          ),
+        } as RagQueryResponse);
+      }
+      return res.status(500).json({ error: "Failed to generate answer" });
     }
 
-    const examAnswer = await generateExamAnswer(question, ragResult, history, answerStyle);
+    // STAGE D - LLM WITH CONTEXT
+    const examAnswer = await generateExamAnswer(
+      retrievalQuestion,
+      ragResult.chunks,
+      history,
+      style,
+      resolved.answerMode
+    );
 
     if (!examAnswer) {
-      const directAnswer = await generateDirectAnswer(question, history, answerStyle);
-      if (directAnswer) {
+      const direct = await generateDirectAnswer(
+        retrievalQuestion,
+        history,
+        style,
+        resolved.answerMode
+      );
+      if (direct) {
+        if (resolved.answerMode === "mark_scheme_only") {
+          direct.answer = buildMarkSchemeOnlyAnswer(
+            retrievalQuestion,
+            direct.markingPoints
+          );
+          direct.commonMistakes = [];
+        }
+
+        const source = buildSourceSummary([], nearbyRefs);
+
         return res.json({
           type: "exam_question",
-          answer: directAnswer.answer,
-          marking_points: directAnswer.markingPoints,
-          common_mistakes: directAnswer.commonMistakes,
+          answer: direct.answer,
+          marking_points: direct.markingPoints,
+          common_mistakes: direct.commonMistakes,
           citations: [],
           low_confidence: true,
-          nearby_references: nearbyReferences.length > 0 ? nearbyReferences : undefined,
-          retrieval: maybeStudentRetrievalDiagnostics(
+          nearby_references: nearbyRefs.length > 0 ? nearbyRefs : undefined,
+          source_note: source.sourceNote,
+          source_type: source.sourceType,
+          resolved_question: resolved.usedHistoryQuestion
+            ? retrievalQuestion
+            : undefined,
+          retrieval: buildDiagnostics(
             ragResult,
-            nearbyReferences.length > 0 ? "nearby" : "general",
-            effectiveFilters.subject,
-            "Context found but answer synthesis failed"
+            "nearby",
+            effectiveSubjectFilter,
+            "Answer synthesis failed"
           ),
         } as RagQueryResponse);
       }
-
-      return res.json({
-        type: "exam_question",
-        answer: "I couldn't generate an answer right now. Please try again.",
-        citations: [],
-        nearby_references: nearbyReferences.length > 0 ? nearbyReferences : undefined,
-        retrieval: maybeStudentRetrievalDiagnostics(
-          ragResult,
-          nearbyReferences.length > 0 ? "nearby" : "general",
-          effectiveFilters.subject,
-          "Context answer generation failed"
-        ),
-      } as RagQueryResponse);
+      return res.status(500).json({ error: "Failed to generate answer" });
     }
+
+    const citations = buildCitations(ragResult.chunks).slice(0, 1);
+
+    if (resolved.answerMode === "mark_scheme_only") {
+      examAnswer.answer = buildMarkSchemeOnlyAnswer(
+        retrievalQuestion,
+        examAnswer.markingPoints
+      );
+      examAnswer.commonMistakes = [];
+    }
+
+    const source = buildSourceSummary(citations, nearbyRefs);
+
+    const avgSim =
+      ragResult.scores.reduce((s, v) => s + v, 0) / (ragResult.scores.length || 1);
 
     return res.json({
       type: "exam_question",
       answer: examAnswer.answer,
       marking_points: examAnswer.markingPoints,
       common_mistakes: examAnswer.commonMistakes,
-      citations: examAnswer.citations.slice(0, limit),
-      confidence_score: examAnswer.confidenceScore,
-      coverage_percentage: examAnswer.coveragePercentage,
-      low_confidence: examAnswer.confidenceScore < 0.4,
-      related_question: examAnswer.relatedQuestion,
-      retrieval: maybeStudentRetrievalDiagnostics(
-        ragResult,
-        "grounded",
-        effectiveFilters.subject,
-        "Embeddings grounded answer"
-      ),
+      citations,
+      confidence_score: Math.min(1, Math.max(0.1, avgSim)),
+      low_confidence: avgSim < 0.4,
+      nearby_references: nearbyRefs.length > 0 ? nearbyRefs : undefined,
+      source_note: source.sourceNote,
+      source_type: source.sourceType,
+      resolved_question: resolved.usedHistoryQuestion
+        ? retrievalQuestion
+        : undefined,
+      retrieval: buildDiagnostics(ragResult, "grounded", effectiveSubjectFilter, "Grounded answer"),
     } as RagQueryResponse);
-
   } catch (error) {
     console.error("RAG query error:", error);
-    return res.status(500).json({ error: error instanceof Error ? error.message : "Unknown error" });
+    return res
+      .status(500)
+      .json({ error: error instanceof Error ? error.message : "Unknown error" });
   }
 });
 
