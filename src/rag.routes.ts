@@ -152,6 +152,11 @@ interface Citation {
   variant: string;
   similarity: number;
   relation: "direct" | "nearby";
+  questionNumber?: string;
+  subQuestion?: string;
+  marks?: number;
+  topicGeneral?: string;
+  topicSyllabus?: string;
 }
 
 interface RetrievalDiagnostics {
@@ -163,6 +168,21 @@ interface RetrievalDiagnostics {
   reason?: string;
   requested_match_count?: number;
   similarity_threshold?: number;
+}
+
+interface DeveloperTrace {
+  intent: Intent;
+  answer_mode: AnswerMode;
+  should_search_rag: boolean;
+  followup_detected: boolean;
+  decision_reason: string;
+  history_turns: number;
+  retrieval_query?: string;
+  retrieval_query_rewritten?: boolean;
+  subject_keyword?: string;
+  subject_filter?: string;
+  inferred_subject_from_results?: string;
+  embedding_dimensions?: number;
 }
 
 interface HistoryMessage {
@@ -200,6 +220,7 @@ interface RagQueryResponse {
   source_note?: string;
   source_type?: SourceType;
   resolved_question?: string;
+  developer_trace?: DeveloperTrace;
 }
 
 // -- EMBEDDING ---------------------------------------------------------------
@@ -244,6 +265,7 @@ interface RagRetrievalResult {
   scores: number[];
   bestSimilarity: number;
   avgTop3: number;
+  embeddingDimensions?: number;
   error?: string;
 }
 
@@ -259,10 +281,12 @@ async function ragRetrieval(
     scores: [],
     bestSimilarity: 0,
     avgTop3: 0,
+    embeddingDimensions: undefined,
   };
 
   try {
     const embedding = await getEmbedding(question);
+    const embeddingDimensions = embedding.length;
     const matchCount = subjectFilter ? TOP_K_WITH_FILTERS : TOP_K;
 
     const { data, error } = await supabase.rpc("search_past_papers", {
@@ -305,6 +329,7 @@ async function ragRetrieval(
       scores: chunks.map((c) => c.similarity),
       bestSimilarity,
       avgTop3,
+      embeddingDimensions,
     };
   } catch (err: any) {
     return { ...empty, error: err.message };
@@ -335,6 +360,7 @@ function buildCitations(
       const key = `${c.subject}|${c.year}|${c.session}|${c.paper}|${c.variant}`;
       if (seen.has(key)) return null;
       seen.add(key);
+      const meta = extractQuestionMeta(c.content);
       return {
         subject: c.subject,
         year: c.year,
@@ -343,6 +369,11 @@ function buildCitations(
         variant: c.variant,
         similarity: c.similarity,
         relation,
+        questionNumber: meta.questionNumber,
+        subQuestion: meta.subQuestion,
+        marks: meta.marks,
+        topicGeneral: meta.topicGeneral,
+        topicSyllabus: meta.topicSyllabus,
       } as Citation;
     })
     .filter(Boolean) as Citation[];
@@ -372,10 +403,125 @@ function isMarkSchemeRequest(question: string): boolean {
   );
 }
 
-function looksLikeFollowUpReference(question: string): boolean {
-  return /\b(this|that|it|same|above|previous|last|earlier|that question|this question)\b/i.test(
+const FOLLOWUP_PHRASES = [
+  "tell me more",
+  "explain more",
+  "elaborate",
+  "expand on",
+  "what do you mean",
+  "can you explain",
+  "more about",
+  "continue",
+  "go on",
+  "and then",
+  "what about",
+  "why is that",
+  "how so",
+  "give me an example",
+  "more details",
+  "in detail",
+  "further",
+  "what else",
+  "anything else",
+  "keep going",
+  "also tell me",
+];
+
+const FOLLOWUP_ELABORATE_PHRASES = [
+  "tell me more",
+  "explain more",
+  "elaborate",
+  "expand",
+  "more details",
+  "in detail",
+  "further",
+  "continue",
+  "go on",
+  "what else",
+  "anything else",
+  "keep going",
+];
+
+const FOLLOWUP_EXAMPLE_PHRASES = [
+  "give me an example",
+  "for instance",
+  "such as",
+  "examples of",
+  "example",
+];
+
+function containsAnyPhrase(text: string, phrases: string[]): boolean {
+  const normalized = text.toLowerCase();
+  return phrases.some((phrase) => normalized.includes(phrase));
+}
+
+function hasExplicitTaskVerb(question: string): boolean {
+  return /\b(write|explain|define|describe|calculate|find|solve|work out|compare|contrast|list|state|name|give|summari[sz]e|draw|sketch|label|essay|speech|letter|report|article|summary|comprehension|diagram|mark(?:ing)?\s*scheme)\b/i.test(
     question
   );
+}
+
+function hasExplicitNewTopicCue(question: string): boolean {
+  return /\b(now|new topic|different topic|another topic|instead|switch to|change topic)\b/i.test(
+    question
+  );
+}
+
+function isWhatAboutNewTopic(question: string): boolean {
+  const normalized = question.toLowerCase().trim();
+  if (!normalized.startsWith("what about ")) return false;
+
+  const remainder = normalized.replace(/^what about\s+/, "").trim();
+  if (!remainder) return false;
+  return !/\b(it|this|that|same|above|previous|last|earlier|that question|this question)\b/i.test(
+    remainder
+  );
+}
+
+function looksLikeFollowUpReference(question: string): boolean {
+  const normalized = question.toLowerCase().trim();
+  if (!normalized) return false;
+
+  if (/\b(same|above|previous|last|earlier)\b/i.test(normalized)) {
+    return true;
+  }
+
+  if (
+    /\b(this|that)\s+(question|topic|answer|response|one|paper|context)\b/i.test(
+      normalized
+    )
+  ) {
+    return true;
+  }
+
+  if (/\b(about|on)\s+(this|that|it)\b/i.test(normalized)) {
+    return true;
+  }
+
+  const words = normalized.split(/\s+/).filter(Boolean);
+  if (words.length <= 8 && /\bit\b/i.test(normalized)) {
+    return true;
+  }
+
+  return false;
+}
+
+function isLikelyFollowUpQuestion(question: string): boolean {
+  if (isWhatAboutNewTopic(question)) return false;
+  return (
+    looksLikeFollowUpReference(question) ||
+    containsAnyPhrase(question, FOLLOWUP_PHRASES)
+  );
+}
+
+function isVagueSearchQuery(question: string): boolean {
+  const normalized = question.trim();
+  if (!normalized) return true;
+
+  const words = normalized.split(/\s+/).filter(Boolean);
+  if (words.length < 8 && !hasExplicitTaskVerb(normalized)) return true;
+
+  return isLikelyFollowUpQuestion(normalized);
 }
 
 function findLastExamUserQuestion(history: HistoryMessage[]): string | null {
@@ -391,6 +537,156 @@ function findLastExamUserQuestion(history: HistoryMessage[]): string | null {
     return content;
   }
   return null;
+}
+
+interface RagDecision {
+  shouldSearch: boolean;
+  followUpDetected: boolean;
+  reason: string;
+}
+
+function evaluateRagDecision(
+  userMessage: string,
+  history: HistoryMessage[],
+  answerMode: AnswerMode
+): RagDecision {
+  if (answerMode === "mark_scheme_only") {
+    return {
+      shouldSearch: true,
+      followUpDetected: false,
+      reason: "mark_scheme_mode_requires_retrieval",
+    };
+  }
+
+  const trimmed = userMessage.trim();
+  if (!trimmed) {
+    return {
+      shouldSearch: false,
+      followUpDetected: false,
+      reason: "empty_user_message",
+    };
+  }
+
+  if (history.length === 0) {
+    return {
+      shouldSearch: true,
+      followUpDetected: false,
+      reason: "no_history_new_turn",
+    };
+  }
+
+  if (isWhatAboutNewTopic(trimmed)) {
+    return {
+      shouldSearch: true,
+      followUpDetected: false,
+      reason: "explicit_new_topic_what_about",
+    };
+  }
+
+  const explicitTask = hasExplicitTaskVerb(trimmed);
+  const explicitNewTopic = hasExplicitNewTopicCue(trimmed);
+  const followUpLikely = isLikelyFollowUpQuestion(trimmed);
+  const hasReferencePronoun = looksLikeFollowUpReference(trimmed);
+  const wordCount = trimmed.split(/\s+/).filter(Boolean).length;
+
+  if (explicitTask && explicitNewTopic) {
+    return {
+      shouldSearch: true,
+      followUpDetected: false,
+      reason: "explicit_task_and_new_topic",
+    };
+  }
+
+  if (explicitTask && !followUpLikely) {
+    return {
+      shouldSearch: true,
+      followUpDetected: false,
+      reason: "explicit_task_without_followup_reference",
+    };
+  }
+
+  if (followUpLikely && explicitTask && !hasReferencePronoun && wordCount >= 6) {
+    return {
+      shouldSearch: true,
+      followUpDetected: false,
+      reason: "explicit_task_overrides_soft_followup_phrase",
+    };
+  }
+
+  if (followUpLikely) {
+    return {
+      shouldSearch: false,
+      followUpDetected: true,
+      reason: "followup_reference_detected",
+    };
+  }
+
+  if (wordCount < 6 && !explicitTask) {
+    return {
+      shouldSearch: false,
+      followUpDetected: true,
+      reason: "short_turn_assumed_followup",
+    };
+  }
+
+  return {
+    shouldSearch: true,
+    followUpDetected: false,
+    reason: "default_new_query",
+  };
+}
+
+function shouldSearchRag(
+  userMessage: string,
+  history: HistoryMessage[],
+  answerMode: AnswerMode
+): boolean {
+  return evaluateRagDecision(userMessage, history, answerMode).shouldSearch;
+}
+
+function rewriteQueryForRag(
+  retrievalQuestion: string,
+  userMessage: string,
+  history: HistoryMessage[]
+): { query: string; usedHistory: boolean } {
+  const normalizedRetrieval = retrievalQuestion.trim();
+  const normalizedUser = userMessage.trim();
+
+  if (!normalizedRetrieval) {
+    return { query: normalizedUser, usedHistory: false };
+  }
+
+  if (history.length === 0) {
+    return { query: normalizedRetrieval, usedHistory: false };
+  }
+
+  // If retrieval was already rewritten by explicit resolver logic, keep it stable.
+  if (normalizedRetrieval.toLowerCase() !== normalizedUser.toLowerCase()) {
+    return { query: normalizedRetrieval, usedHistory: false };
+  }
+
+  if (!isVagueSearchQuery(normalizedUser)) {
+    return { query: normalizedRetrieval, usedHistory: false };
+  }
+
+  const previousQuestion = findLastExamUserQuestion(history);
+  if (!previousQuestion) {
+    return { query: normalizedRetrieval, usedHistory: false };
+  }
+
+  const previousNormalized = previousQuestion.trim();
+  if (!previousNormalized) {
+    return { query: normalizedRetrieval, usedHistory: false };
+  }
+
+  if (previousNormalized.toLowerCase() === normalizedRetrieval.toLowerCase()) {
+    return { query: normalizedRetrieval, usedHistory: false };
+  }
+
+  return {
+    query: `${previousNormalized} ${normalizedRetrieval}`.trim(),
+    usedHistory: true,
+  };
 }
 
 function resolveQuestionForAnswering(
@@ -428,8 +724,16 @@ function resolveQuestionForAnswering(
 }
 
 // -- INTENT ------------------------------------------------------------------
+function normalizeIntentText(question: string): string {
+  return question
+    .toLowerCase()
+    .replace(/[^a-z0-9\s']/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function classifyIntent(question: string): Intent {
-  const q = question.toLowerCase().trim().replace(/\s+/g, " ");
+  const q = normalizeIntentText(question);
 
   const smalltalkExact = new Set([
     "hello",
@@ -468,12 +772,31 @@ function classifyIntent(question: string): Intent {
     "good morning",
     "good afternoon",
     "good evening",
+    "hello how are you",
+    "hey how are you",
+    "hi how are you",
   ]);
   if (smalltalkExact.has(q)) return "smalltalk";
 
   if (
-    q.split(" ").length <= 3 &&
-    /^(hi+|hey+|ok(ay)?|thanks?|cool|nice|great|good|bye)$/.test(q)
+    /\bhow\s+(are|r)\s+(you|u)\b/.test(q) &&
+    q.split(" ").length <= 8 &&
+    !hasExplicitTaskVerb(question)
+  ) {
+    return "smalltalk";
+  }
+
+  if (
+    /\b(hello|hi|hey)\b/.test(q) &&
+    q.split(" ").length <= 6 &&
+    !hasExplicitTaskVerb(question)
+  ) {
+    return "smalltalk";
+  }
+
+  if (
+    q.split(" ").length <= 4 &&
+    /^(hi+|hello+|hey+|ok(ay)?|thanks?|cool|nice|great|good|bye)$/.test(q)
   ) {
     return "smalltalk";
   }
@@ -495,6 +818,460 @@ interface AnswerStyle {
   detailLevel: "short" | "long";
   responseShape: "standard" | "directed_writing";
   requiresHeadline: boolean;
+}
+
+type QuestionType =
+  | "essay"
+  | "speech"
+  | "letter"
+  | "report"
+  | "article"
+  | "summary"
+  | "comprehension"
+  | "explanation"
+  | "example"
+  | "list"
+  | "comparison"
+  | "calculation"
+  | "definition"
+  | "diagram"
+  | "followup_elaborate"
+  | "followup_example";
+
+interface QuestionTypeDetection {
+  questionType: QuestionType;
+  marks?: number;
+}
+
+interface VisualNeeds {
+  table: boolean;
+  ascii: boolean;
+  graph: boolean;
+  timeline: boolean;
+  flowchart: boolean;
+}
+
+const QUESTION_TYPE_PATTERNS: Array<{ type: QuestionType; keywords: string[] }> = [
+  {
+    type: "essay",
+    keywords: [
+      "write an essay",
+      "write a composition",
+      "composition on",
+      "essay on",
+    ],
+  },
+  {
+    type: "speech",
+    keywords: [
+      "write a speech",
+      "speech about",
+      "speech on",
+      "give a speech",
+      "deliver a speech",
+    ],
+  },
+  {
+    type: "letter",
+    keywords: [
+      "write a letter",
+      "letter to",
+      "formal letter",
+      "informal letter",
+      "write to",
+    ],
+  },
+  {
+    type: "report",
+    keywords: ["write a report", "report on", "prepare a report"],
+  },
+  {
+    type: "article",
+    keywords: [
+      "write an article",
+      "article about",
+      "article on",
+      "newspaper article",
+      "magazine article",
+    ],
+  },
+  {
+    type: "summary",
+    keywords: [
+      "summarise",
+      "summarize",
+      "write a summary",
+      "summary of",
+      "in summary",
+    ],
+  },
+  {
+    type: "comprehension",
+    keywords: [
+      "according to the passage",
+      "from the passage",
+      "what does the writer",
+      "answer the question",
+    ],
+  },
+  {
+    type: "example",
+    keywords: ["give an example", "examples of", "for example"],
+  },
+  {
+    type: "list",
+    keywords: ["list", "mention", "name", "state", "types of"],
+  },
+  {
+    type: "comparison",
+    keywords: [
+      "compare",
+      "difference between",
+      "similarities",
+      "contrast",
+      "versus",
+      " vs ",
+    ],
+  },
+  {
+    type: "calculation",
+    keywords: [
+      "calculate",
+      "find the",
+      "solve",
+      "work out",
+      "value of",
+      "compute",
+    ],
+  },
+  {
+    type: "definition",
+    keywords: ["define", "what is meant by", "meaning of", "definition of"],
+  },
+  {
+    type: "diagram",
+    keywords: ["draw", "sketch", "label", "diagram"],
+  },
+  {
+    type: "explanation",
+    keywords: [
+      "explain",
+      "what is",
+      "what are",
+      "describe",
+      "tell me about",
+      "how does",
+      "why is",
+    ],
+  },
+];
+
+function detectQuestionType(
+  userMessage: string,
+  contextChunks: ContextChunkForPrompt[] = [],
+  history: HistoryMessage[] = []
+): QuestionTypeDetection {
+  const msgLower = userMessage.toLowerCase().trim();
+  const detected: QuestionType[] = [];
+
+  const marks = contextChunks.find(
+    (chunk) => Number.isFinite(chunk.marks) && Number(chunk.marks) > 0
+  )?.marks;
+
+  for (const pattern of QUESTION_TYPE_PATTERNS) {
+    if (containsAnyPhrase(msgLower, pattern.keywords)) {
+      detected.push(pattern.type);
+    }
+  }
+
+  const top = contextChunks[0];
+  const paperType = (top?.topicGeneral || "").toLowerCase();
+  const syllabusType = (top?.topicSyllabus || "").toLowerCase();
+
+  if (paperType.includes("creative writing")) detected.unshift("essay");
+  if (paperType.includes("directed writing")) detected.unshift("letter");
+  if (paperType.includes("summary")) detected.unshift("summary");
+  if (paperType.includes("comprehension")) detected.unshift("comprehension");
+
+  if (syllabusType.includes("letter")) detected.unshift("letter");
+  if (syllabusType.includes("report")) detected.unshift("report");
+  if (syllabusType.includes("article")) detected.unshift("article");
+  if (syllabusType.includes("narrative")) detected.unshift("essay");
+  if (syllabusType.includes("speech")) detected.unshift("speech");
+  if (syllabusType.includes("summary")) detected.unshift("summary");
+
+  if (history.length > 0) {
+    const followUpLikely = isLikelyFollowUpQuestion(userMessage);
+
+    if (
+      followUpLikely &&
+      containsAnyPhrase(msgLower, FOLLOWUP_EXAMPLE_PHRASES)
+    ) {
+      detected.unshift("followup_example");
+    } else if (
+      (followUpLikely && !hasExplicitTaskVerb(userMessage)) ||
+      (containsAnyPhrase(msgLower, FOLLOWUP_ELABORATE_PHRASES) &&
+        !hasExplicitTaskVerb(userMessage) &&
+        !isWhatAboutNewTopic(userMessage))
+    ) {
+      detected.unshift("followup_elaborate");
+    }
+  }
+
+  return {
+    questionType: detected[0] || "explanation",
+    marks,
+  };
+}
+
+function getWordGuideFromMarks(marks?: number): string {
+  if (!Number.isFinite(marks) || Number(marks) <= 0) return "";
+  const safeMarks = Math.floor(Number(marks));
+  if (safeMarks <= 2) return "Keep answer concise: 1-3 sentences.";
+  if (safeMarks <= 5) return "Write 1-2 short paragraphs (50-100 words).";
+  if (safeMarks <= 10) return "Write 2-3 paragraphs (100-200 words).";
+  if (safeMarks <= 20) return "Write 3-4 paragraphs (200-350 words).";
+  return "Write a full response (350-500 words).";
+}
+
+function getQuestionTypeFormatInstructions(
+  questionType: QuestionType,
+  marks?: number
+): string {
+  const wordGuide = getWordGuideFromMarks(marks);
+
+  const formatByType: Record<QuestionType, string> = {
+    essay: `FORMAT: Full Essay / Composition
+- Start with an engaging introduction paragraph.
+- Develop 2-3 clear body paragraphs.
+- End with a conclusion that ties ideas together.
+- Use varied vocabulary and sentence structures.
+- No bullet points; use flowing prose.`,
+    speech: `FORMAT: Formal Speech
+- Start with a greeting (for example: "Good morning, ladies and gentlemen,").
+- Use a clear opening statement to hook the audience.
+- Build 2-3 main points in separate paragraphs.
+- Use rhetorical devices naturally where suitable.
+- End with a strong close (for example: "Thank you.").
+- No bullet points; use spoken-flow prose.`,
+    letter: `FORMAT: Formal/Informal Letter
+- Use proper letter structure with address/date/salutation/body/closing/sign-off.
+- Match tone to audience (formal or informal).
+- Keep body in connected paragraphs, not bullets.`,
+    report: `FORMAT: Formal Report
+- Use sections: Introduction, Findings, Recommendations/Conclusion.
+- Keep formal, objective tone.
+- Use subheadings and numbered points where useful.`,
+    article: `FORMAT: Newspaper/Magazine Article
+- Include a strong headline and byline when suitable.
+- Start with a lead paragraph (who/what/where/when/why).
+- Expand with clear body paragraphs and a concise conclusion.`,
+    summary: `FORMAT: Summary Writing
+- Start with one sentence stating what is being summarized.
+- Use your own words and include only key points.
+- Keep a logical order and avoid unnecessary detail.
+- No bullet points unless the user explicitly requests list format.`,
+    comprehension: `FORMAT: Comprehension Answer
+- Answer directly and specifically.
+- Use evidence from the provided text where relevant.
+- Keep wording precise and aligned to marks.`,
+    explanation: `FORMAT: Clear Explanation
+- Start with a direct answer.
+- Follow with supporting reasoning.
+- Add one concrete example where helpful.
+- Keep each paragraph focused on one idea.`,
+    example: `FORMAT: Example Response
+- Give 1-3 concrete examples.
+- Briefly explain why each example is relevant.
+- Avoid repeating the same point with different wording.`,
+    list: `FORMAT: Listed Answer
+- Use numbered lists (1. 2. 3.) when sequence matters.
+- Use bullets when order does not matter.
+- Keep each point clear and self-contained.`,
+    comparison: `FORMAT: Comparison Answer
+- Compare point-by-point or in two clear blocks.
+- Use comparison language: whereas, however, similarly, in contrast.
+- Cover both similarities and differences if asked.`,
+    calculation: `FORMAT: Mathematical/Scientific Working
+- Show working step by step.
+- State formula first, then substitute values.
+- Keep units visible throughout.
+- State final answer clearly with correct units/significant figures.`,
+    definition: `FORMAT: Definition Answer
+- Start with a precise one-sentence definition.
+- Add a short elaboration only if marks require it.
+- Include one quick example when useful.`,
+    diagram: `FORMAT: Diagram Response
+- Provide clear labels and ordered steps for what to draw/annotate.
+- Emphasize key components and relationships.
+- Keep instructions concise and exam-focused.`,
+    followup_elaborate: `FORMAT: Follow-up Elaboration
+- Continue naturally from previous response.
+- Do not restart from scratch or repeat unchanged points.
+- Add deeper detail, clearer reasoning, or another perspective.`,
+    followup_example: `FORMAT: Follow-up Example
+- Continue from prior response.
+- Add concrete examples that clarify earlier points.
+- Keep examples specific and concise.`,
+  };
+
+  return [formatByType[questionType], wordGuide].filter(Boolean).join("\n");
+}
+
+function detectVisualNeeds(
+  userMessage: string,
+  contextChunks: ContextChunkForPrompt[] = []
+): VisualNeeds {
+  const lower = userMessage.toLowerCase();
+  const needs: VisualNeeds = {
+    table: false,
+    ascii: false,
+    graph: false,
+    timeline: false,
+    flowchart: false,
+  };
+
+  const tableKeywords = [
+    "compare",
+    "comparison",
+    "difference between",
+    "similarities",
+    "contrast",
+    "versus",
+    "pros and cons",
+    "advantages and disadvantages",
+    "types of",
+    "properties of",
+    "characteristics",
+    "summary table",
+    "tabulate",
+    "in a table",
+  ];
+
+  const asciiKeywords = [
+    "draw",
+    "diagram",
+    "sketch",
+    "label",
+    "structure of",
+    "illustrate",
+    "circuit",
+    "apparatus",
+    "food chain",
+    "food web",
+    "cycle",
+    "cross section",
+    "cross-section",
+    "anatomy",
+  ];
+
+  const graphKeywords = [
+    "graph",
+    "plot",
+    "chart",
+    "axes",
+    "x-axis",
+    "y-axis",
+    "distance time",
+    "speed time",
+    "velocity",
+  ];
+
+  const timelineKeywords = [
+    "timeline",
+    "chronological",
+    "sequence of events",
+    "history of",
+    "dates of",
+    "order of events",
+  ];
+
+  const flowchartKeywords = [
+    "flowchart",
+    "flow chart",
+    "steps to",
+    "process",
+    "procedure",
+    "algorithm",
+    "decision",
+  ];
+
+  if (tableKeywords.some((kw) => lower.includes(kw))) needs.table = true;
+  if (asciiKeywords.some((kw) => lower.includes(kw))) needs.ascii = true;
+  if (graphKeywords.some((kw) => lower.includes(kw))) needs.graph = true;
+  if (timelineKeywords.some((kw) => lower.includes(kw))) needs.timeline = true;
+  if (flowchartKeywords.some((kw) => lower.includes(kw))) needs.flowchart = true;
+
+  for (const chunk of contextChunks.slice(0, 2)) {
+    const syllabus = (chunk.topicSyllabus || "").toLowerCase();
+    const general = (chunk.topicGeneral || "").toLowerCase();
+    const contextText = `${syllabus} ${general}`;
+
+    if (
+      /\b(atomic|circuit|wave|force|cell|organ|reaction|structure|apparatus)\b/.test(
+        contextText
+      )
+    ) {
+      needs.ascii = true;
+    }
+
+    if (/\b(comparison|classification|properties)\b/.test(contextText)) {
+      needs.table = true;
+    }
+  }
+
+  return needs;
+}
+
+function listActiveVisualNeeds(needs: VisualNeeds): string[] {
+  return Object.entries(needs)
+    .filter(([, isActive]) => isActive)
+    .map(([type]) => type);
+}
+
+function getVisualFormatInstructions(needs: VisualNeeds): string {
+  const instructions: string[] = [];
+
+  if (needs.table) {
+    instructions.push(`TABLE FORMATTING RULES:
+- Use markdown pipe tables only.
+- Include a clear caption line above the table, for example: **Table: Key Comparison**.
+- Keep cells concise and aligned.
+- For comparisons, use first column as Feature.`);
+  }
+
+  if (needs.ascii) {
+    instructions.push(`ASCII DIAGRAM RULES:
+- Wrap every diagram in a fenced code block.
+- Keep diagram width within about 60 characters.
+- Label all parts clearly.
+- Add a caption below, for example: *Figure: Cell structure*.`);
+  }
+
+  if (needs.graph) {
+    instructions.push(`GRAPH RULES:
+- Draw graph as ASCII inside a fenced code block.
+- Label X and Y axes with units.
+- Mark important points clearly.
+- Add a caption below, for example: *Graph: Distance-time relationship*.`);
+  }
+
+  if (needs.timeline) {
+    instructions.push(`TIMELINE RULES:
+- Draw timeline in a fenced code block.
+- Keep event labels short and chronological.
+- Add a caption below, for example: *Timeline: Major events*.`);
+  }
+
+  if (needs.flowchart) {
+    instructions.push(`FLOWCHART RULES:
+- Draw flowchart in a fenced code block.
+- Use clear step boxes and arrows.
+- Include decision branches when needed.
+- Add a caption below, for example: *Flowchart: Process steps*.`);
+  }
+
+  return instructions.join("\n\n");
 }
 
 // Classic IGCSE/GCSE short-answer command words that expect 1-3 sentence replies
@@ -1137,6 +1914,59 @@ function mergeSplitChunksForContext(
   return deduped;
 }
 
+function truncateForPrompt(text: string | undefined, maxChars: number): string {
+  const normalized = (text || "").trim();
+  if (!normalized) return "";
+  if (normalized.length <= maxChars) return normalized;
+  return `${normalized.slice(0, maxChars).trim()}...`;
+}
+
+function formatSourceCitationFromContext(chunk: ContextChunkForPrompt): string {
+  return `${chunk.subject} | ${chunk.year} ${chunk.session} | Paper ${humanizePaperToken(
+    chunk.paper
+  )} | Variant ${humanizePaperToken(chunk.variant)}`;
+}
+
+function buildRagContextBlock(
+  contextChunks: ContextChunkForPrompt[],
+  maxSources: number = 3
+): string {
+  const selected = contextChunks.slice(0, Math.max(1, maxSources));
+  if (selected.length === 0) return "";
+
+  return selected
+    .map((chunk, index) => {
+      const topicPieces = [chunk.topicSyllabus, chunk.topicGeneral]
+        .filter((value): value is string => Boolean(value && value.trim()))
+        .join(" | ");
+      const marksText = Number.isFinite(chunk.marks)
+        ? String(Math.floor(Number(chunk.marks)))
+        : "N/A";
+      const questionText = truncateForPrompt(
+        chunk.questionPart || chunk.rawContent,
+        1200
+      );
+      const markSchemeText = truncateForPrompt(chunk.markSchemePart, 1400);
+
+      return [
+        `--- PAST PAPER SOURCE ${index + 1} ---`,
+        `Source: ${formatSourceCitationFromContext(chunk)}`,
+        topicPieces ? `Topic: ${topicPieces}` : undefined,
+        `Marks: ${marksText}`,
+        "",
+        "QUESTION:",
+        questionText || "(Question text unavailable in this chunk)",
+        "",
+        "MARKING SCHEME (what earns marks):",
+        markSchemeText || "(Mark scheme text unavailable in this chunk)",
+        "------------------------------",
+      ]
+        .filter((line): line is string => Boolean(line))
+        .join("\n");
+    })
+    .join("\n\n");
+}
+
 function buildFallbackMarkingPointsFromContext(
   contextChunks: ContextChunkForPrompt[],
   expectedMarks?: number,
@@ -1262,48 +2092,35 @@ async function generateExamAnswer(
         ? "marking_points: 5-8 specific criteria covering both content/task fulfilment and language criteria from the mark scheme."
         : "marking_points: 3-5 specific criteria extracted from the mark scheme. marks value 1-3 each.";
 
-  const contextParts = contextChunks.map((c) => {
-    const sourceLabel = `[${c.subject} | ${c.year} ${c.session} | ${c.paper} ${c.variant}]`;
-    const metadata = [
-      c.questionNumber ? `Question Number: ${c.questionNumber}` : undefined,
-      c.subQuestion ? `Sub Question: ${c.subQuestion}` : undefined,
-      Number.isFinite(c.marks) ? `Marks: ${c.marks}` : undefined,
-      c.topicGeneral ? `Topic (General): ${c.topicGeneral}` : undefined,
-      c.topicSyllabus ? `Topic (Syllabus): ${c.topicSyllabus}` : undefined,
-    ]
-      .filter(Boolean)
-      .join("\n");
+  const questionTypeInfo = detectQuestionType(question, contextChunks, history);
+  const dynamicFormatInstruction = getQuestionTypeFormatInstructions(
+    questionTypeInfo.questionType,
+    questionTypeInfo.marks || expectedMarks
+  );
+  const visualNeeds = detectVisualNeeds(question, contextChunks);
+  const visualInstructions = getVisualFormatInstructions(visualNeeds);
+  const activeVisuals = listActiveVisualNeeds(visualNeeds);
+  const baseFormatInstruction =
+    questionTypeInfo.questionType === "followup_elaborate" ||
+    questionTypeInfo.questionType === "followup_example"
+      ? "- Continue naturally from conversation context without repeating unchanged points."
+      : buildFormatInstruction(style, answerMode);
 
-    const metadataBlock = metadata ? `METADATA:\n${metadata}\n` : "";
+  const contextBlockLimit = style.responseShape === "directed_writing" ? 4 : 3;
+  const contextCharLimit = style.responseShape === "directed_writing" ? 14000 : 10000;
+  const ragContext = buildRagContextBlock(contextChunks, contextBlockLimit)
+    .slice(0, contextCharLimit)
+    .trim();
 
-    if (c.questionPart && c.markSchemePart) {
-      return `${sourceLabel}
-${metadataBlock}
-QUESTION: ${c.questionPart}
-MARK SCHEME: ${c.markSchemePart}`;
-    }
+  if (!ragContext) return null;
 
-    if (c.questionPart) {
-      return `${sourceLabel}
-${metadataBlock}
-QUESTION: ${c.questionPart}`;
-    }
-
-    if (c.markSchemePart) {
-      return `${sourceLabel}
-${metadataBlock}
-MARK SCHEME: ${c.markSchemePart}`;
-    }
-
-    return `${sourceLabel}
-${metadataBlock}
-${c.rawContent || ""}`;
-  });
-
-  const contextCharLimit = style.responseShape === "directed_writing" ? 12000 : 8000;
-  const context = contextParts.join("\n\n---\n\n").substring(0, contextCharLimit);
-
-  if (!context.trim()) return null;
+  const primarySource = contextChunks[0]
+    ? formatSourceCitationFromContext(contextChunks[0])
+    : "N/A";
+  const sourceLineRule =
+    style.responseShape === "directed_writing"
+      ? "- Keep the final writing piece clean; do not append citation lines inside the body."
+      : `- End with one short source line: "Based on: ${primarySource}".`;
 
   const avgSim =
     contextChunks.reduce((s, c) => s + c.similarity, 0) /
@@ -1312,31 +2129,40 @@ ${c.rawContent || ""}`;
   const messages: any[] = [
     {
       role: "system",
-      content: `You are an expert O-Level Cambridge exam tutor. Answer ONLY using the provided past paper extracts.
+      content: `You are an expert O-Level Cambridge exam tutor.
 
-RULES:
-- Be accurate, exam-focused, and clear.
-- Do NOT mention paper codes or series numbers.
-- Use Cambridge mark-scheme language.
-- The context contains past paper questions AND their marking schemes. Extract the marking scheme points directly from the context - do NOT invent generic marking points.
-- Each marking point must be a real, specific criterion taken from the mark scheme in the context (e.g. "Award 1 mark for discriminant b^2-4ac > 0", not "Key concept from exam sources").
-- If multiple mark scheme entries exist in context, combine them intelligently.
-- Use metadata in context (marks, topic, question number/sub-question) to scope the answer precisely.
-- If marks are provided, calibrate depth to those marks.
-- If marks = 1, provide one direct valid point only (no multi-point over-answering).
+You have been given real past paper question extracts and official marking schemes. Ground your answer in that material.
+
+QUESTION TYPE DETECTED: ${questionTypeInfo.questionType}
+
+QUESTION-TYPE FORMAT INSTRUCTIONS:
+${dynamicFormatInstruction}
+
+VISUAL NEEDS DETECTED: ${activeVisuals.length ? activeVisuals.join(", ") : "none"}
+
+VISUAL OUTPUT RULES:
+${
+  visualInstructions ||
+  "- Use normal prose unless the student explicitly asks for a table, diagram, graph, timeline, or flowchart."
+}
+
+BASE FORMAT:
+${baseFormatInstruction}
+
+GROUNDING RULES:
+- Treat retrieved context as the authoritative source for this answer.
+- Use marking scheme points as the backbone of the response.
+- Do not invent criteria that are not supported by retrieved mark schemes.
+- If multiple sources are relevant, synthesize them without contradiction.
+- If marks are provided, calibrate answer depth to those marks.
+- If marks = 1, provide one direct valid point only.
 - Response mode: ${answerMode === "mark_scheme_only" ? "MARK_SCHEME_ONLY" : "FULL_ANSWER"}.
+${sourceLineRule}
 
-FORMAT:
-${buildFormatInstruction(style, answerMode)}
+The "marking_points" array must contain SPECIFIC mark scheme criteria extracted from the retrieved context.
+Each "point" should be a real criterion (not generic phrases).
 
-The "marking_points" array must contain SPECIFIC mark scheme criteria extracted from the context.
-Each "point" should be a real marking criterion like:
-  - "Setting up equation x^2 + 4k + 4 = 0"
-  - "Using discriminant b^2 - 4ac > 0"
-  - "Solving to get k < -1"
-NOT generic phrases like "Key concept" or "Refer to sources".
-
-The "common_mistakes" array should list real mistakes students make on THIS specific type of question.
+The "common_mistakes" array should contain realistic mistakes students make on this specific question type.
 
 Respond ONLY with this JSON (no markdown fences, no extra text):
 {
@@ -1349,12 +2175,17 @@ Respond ONLY with this JSON (no markdown fences, no extra text):
 ${markingPointGuidance}
 common_mistakes: 2-3 specific items.`,
     },
-    ...history.slice(-8).map((h) => ({ role: h.role, content: h.content })),
+    ...history.slice(-10).map((h) => ({ role: h.role, content: h.content })),
     {
       role: "user",
-      content: `Question: ${question}\n\nContext (avg relevance ${(avgSim * 100).toFixed(
+      content: `Retrieved past paper context (avg relevance ${(avgSim * 100).toFixed(
         0
-      )}%${expectedMarks ? `, expected marks ${expectedMarks}` : ""}):\n\n${context}`,
+      )}%${expectedMarks ? `, expected marks ${expectedMarks}` : ""}):
+
+${ragContext}
+
+Now answer this student question using the above past paper content:
+${question}`,
     },
   ];
 
@@ -1386,19 +2217,52 @@ async function generateDirectAnswer(
   markingPoints: Array<{ point: string; marks: number }>;
   commonMistakes: string[];
 } | null> {
+  const questionTypeInfo = detectQuestionType(question, [], history);
+  const dynamicFormatInstruction = getQuestionTypeFormatInstructions(
+    questionTypeInfo.questionType,
+    questionTypeInfo.marks
+  );
+  const visualNeeds = detectVisualNeeds(question, []);
+  const visualInstructions = getVisualFormatInstructions(visualNeeds);
+  const activeVisuals = listActiveVisualNeeds(visualNeeds);
+  const followUpMode =
+    questionTypeInfo.questionType === "followup_elaborate" ||
+    questionTypeInfo.questionType === "followup_example";
+  const baseFormatInstruction = followUpMode
+    ? "- Continue naturally from the ongoing conversation and add new detail without repetition."
+    : buildFormatInstruction(style, answerMode);
+
   const messages: any[] = [
     {
       role: "system",
-      content: `You are an expert O-Level Cambridge exam tutor. Answer using your Cambridge O-Level curriculum knowledge.
+      content: `You are an expert O-Level Cambridge exam tutor. Answer using Cambridge O-Level curriculum knowledge.
+
+QUESTION TYPE DETECTED: ${questionTypeInfo.questionType}
 
 RULES:
 - Clear, accurate, exam-focused answer for O-Level students.
 - Use Cambridge mark-scheme language.
 - Do NOT mention paper codes.
 - Response mode: ${answerMode === "mark_scheme_only" ? "MARK_SCHEME_ONLY" : "FULL_ANSWER"}.
+${
+  followUpMode
+    ? "- This is a follow-up: continue from recent conversation context, do not restart from scratch, and avoid repeating unchanged points."
+    : ""
+}
+
+QUESTION-TYPE FORMAT INSTRUCTIONS:
+${dynamicFormatInstruction}
+
+VISUAL NEEDS DETECTED: ${activeVisuals.length ? activeVisuals.join(", ") : "none"}
+
+VISUAL OUTPUT RULES:
+${
+  visualInstructions ||
+  "- Use normal prose unless the student explicitly asks for a table, diagram, graph, timeline, or flowchart."
+}
 
 FORMAT:
-${buildFormatInstruction(style, answerMode)}
+${baseFormatInstruction}
 
 Respond ONLY with this JSON (no markdown fences):
 {
@@ -1407,7 +2271,7 @@ Respond ONLY with this JSON (no markdown fences):
   "common_mistakes": ["mistake"]
 }`,
     },
-    ...history.slice(-8).map((h) => ({ role: h.role, content: h.content })),
+    ...history.slice(-10).map((h) => ({ role: h.role, content: h.content })),
     { role: "user", content: question },
   ];
 
@@ -1555,10 +2419,29 @@ function humanizePaperToken(value?: string): string {
     .trim();
 }
 
+function humanizeSessionToken(session?: string): string {
+  if (!session) return "Session unknown";
+  return session
+    .replace(/_/g, "/")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function buildQuestionRef(citation: Citation): string {
+  const q = (citation.questionNumber || "").trim();
+  const sub = (citation.subQuestion || "").trim();
+  if (!q && !sub) return "";
+  if (q && sub) return `Question ${q} ${sub}`;
+  return q ? `Question ${q}` : `Question ${sub}`;
+}
+
 function formatCitationReference(c: Citation): string {
   const paper = humanizePaperToken(c.paper);
   const variant = humanizePaperToken(c.variant);
-  return `${c.subject} (${c.year} ${c.session}) - Paper ${paper}, Variant ${variant}`;
+  const session = humanizeSessionToken(c.session);
+  const questionRef = buildQuestionRef(c);
+  const questionSuffix = questionRef ? `, ${questionRef}` : "";
+  return `${c.subject}, ${c.year} ${session}, Paper ${paper}, Variant ${variant}${questionSuffix}`;
 }
 
 function buildSourceSummary(
@@ -1570,15 +2453,16 @@ function buildSourceSummary(
     const primary = citations[0];
     return {
       sourceType: "past_paper",
-      sourceNote: `Primary source: ${formatCitationReference(primary)}.`,
+      sourceNote: `A similar question appeared in ${formatCitationReference(primary)}.`,
     };
   }
 
   if (nearbyReferences.length > 0) {
+    const nearby = nearbyReferences[0];
     return {
       sourceType: "nearby_only",
       sourceNote:
-        "This did not come from an exact past-paper match. Related papers were found, but similarity was below the grounding threshold.",
+        `I found related past paper material (closest match: ${formatCitationReference(nearby)}), but it was not a strong enough exact match to treat as a direct source.`,
     };
   }
 
@@ -1586,7 +2470,7 @@ function buildSourceSummary(
     sourceType: "none",
     sourceNote:
       reason ||
-      "This did not come from any indexed past paper because no reliable match was found for the query.",
+      "I could not find a reliable past-paper match for this specific question.",
   };
 }
 
@@ -1633,6 +2517,10 @@ function buildDiagnostics(
   };
 }
 
+function logDeveloperTrace(trace: DeveloperTrace): void {
+  console.log(`[RAG_TRACE] ${JSON.stringify(trace)}`);
+}
+
 // -- GET /rag/subjects -------------------------------------------------------
 router.get("/subjects", async (_req: Request, res: Response) => {
   try {
@@ -1663,18 +2551,95 @@ router.post("/query", async (req: Request, res: Response) => {
     const resolved = resolveQuestionForAnswering(normalizedQuestion, history);
     const retrievalQuestion = resolved.retrievalQuestion;
     const style = inferAnswerStyle(normalizedQuestion, resolved.answerMode);
+    const intent = classifyIntent(normalizedQuestion);
+    let resolvedQuestionForClient: string | undefined = resolved.usedHistoryQuestion
+      ? retrievalQuestion
+      : undefined;
 
     // STAGE A - INTENT
-    if (classifyIntent(normalizedQuestion) === "smalltalk") {
+    if (intent === "smalltalk") {
+      const developerTrace: DeveloperTrace = {
+        intent,
+        answer_mode: resolved.answerMode,
+        should_search_rag: false,
+        followup_detected: false,
+        decision_reason: "smalltalk_intent_detected",
+        history_turns: history.length,
+      };
+      logDeveloperTrace(developerTrace);
+
       return res.json({
         type: "smalltalk",
         answer: getSmallTalkResponse(),
         citations: [],
+        developer_trace: developerTrace,
       } as RagQueryResponse);
     }
 
-    // STAGE B - SUBJECT INFERENCE
+    // STAGE B - RAG DECISION (conversation-aware)
+    const ragDecision = evaluateRagDecision(
+      normalizedQuestion,
+      history,
+      resolved.answerMode
+    );
+    const shouldRunRetrieval = ragDecision.shouldSearch;
+
+    if (!shouldRunRetrieval) {
+      console.log("[RAG] Follow-up detected; skipping retrieval and answering from conversation context");
+      const direct = await generateDirectAnswer(
+        normalizedQuestion,
+        history,
+        style,
+        resolved.answerMode
+      );
+
+      if (!direct) {
+        return res.status(500).json({ error: "Failed to generate follow-up answer" });
+      }
+
+      const developerTrace: DeveloperTrace = {
+        intent,
+        answer_mode: resolved.answerMode,
+        should_search_rag: false,
+        followup_detected: ragDecision.followUpDetected,
+        decision_reason: ragDecision.reason,
+        history_turns: history.length,
+      };
+      logDeveloperTrace(developerTrace);
+
+      return res.json({
+        type: "exam_question",
+        answer: direct.answer,
+        marking_points: direct.markingPoints,
+        common_mistakes: direct.commonMistakes,
+        citations: [],
+        source_type: "none",
+        resolved_question: resolvedQuestionForClient,
+        developer_trace: developerTrace,
+        retrieval: buildDiagnostics(
+          null,
+          "general",
+          undefined,
+          "Follow-up detected; retrieval skipped"
+        ),
+      } as RagQueryResponse);
+    }
+
+    const rewritten = rewriteQueryForRag(
+      retrievalQuestion,
+      normalizedQuestion,
+      history
+    );
+    const ragQuery = rewritten.query || retrievalQuestion;
+
+    if (rewritten.usedHistory) {
+      resolvedQuestionForClient = ragQuery;
+      console.log(`[RAG] Rewrote search query with history context: "${ragQuery}"`);
+    }
+
+    // STAGE C - SUBJECT INFERENCE
     const subjectKeyword =
+      inferSubjectFromQuestion(ragQuery) ||
       inferSubjectFromQuestion(retrievalQuestion) ||
       inferSubjectFromQuestion(normalizedQuestion);
     const subjectFilter =
@@ -1682,7 +2647,20 @@ router.post("/query", async (req: Request, res: Response) => {
       (subjectKeyword ? resolveSubjectName(subjectKeyword) : undefined);
     const yearFilter = filters?.year;
 
-    // STAGE C - RAG RETRIEVAL
+    const developerTrace: DeveloperTrace = {
+      intent,
+      answer_mode: resolved.answerMode,
+      should_search_rag: true,
+      followup_detected: ragDecision.followUpDetected,
+      decision_reason: ragDecision.reason,
+      history_turns: history.length,
+      retrieval_query: ragQuery,
+      retrieval_query_rewritten: rewritten.usedHistory,
+      subject_keyword: subjectKeyword || undefined,
+      subject_filter: subjectFilter,
+    };
+
+    // STAGE D - RAG RETRIEVAL
     // Always run RAG - with subject filter when one is known, without when it
     // isn't.  Embedding similarity is the authoritative signal; keyword-based
     // subject inference is just an optimisation that widens the candidate pool.
@@ -1696,14 +2674,16 @@ router.post("/query", async (req: Request, res: Response) => {
       );
     }
     let ragResult = await ragRetrieval(
-      retrievalQuestion,
+      ragQuery,
       subjectFilter,
       yearFilter
     );
+    developerTrace.embedding_dimensions = ragResult.embeddingDimensions;
 
     // When we retrieved without a filter we can still discover which subject
     // the top chunks belong to and use that for logging / source attribution.
     let effectiveSubjectFilter = subjectFilter;
+    let inferredSubjectFromResults: string | undefined;
     if (!subjectFilter) {
       const dominantFromGrounded = inferDominantSubject(ragResult.chunks, 8);
       const dominantFromNearby = inferDominantSubject(ragResult.nearbyChunks, 8);
@@ -1711,12 +2691,13 @@ router.post("/query", async (req: Request, res: Response) => {
 
       if (inferredSubject) {
         effectiveSubjectFilter = inferredSubject;
+        inferredSubjectFromResults = inferredSubject;
         console.log(`[RAG] Subject inferred from retrieval results: "${inferredSubject}"`);
 
         // If first pass is weak, run one focused pass using the inferred subject.
         if (!hasReliableContext(ragResult, false)) {
           const focused = await ragRetrieval(
-            retrievalQuestion,
+            ragQuery,
             inferredSubject,
             yearFilter
           );
@@ -1727,12 +2708,18 @@ router.post("/query", async (req: Request, res: Response) => {
               focused.bestSimilarity > ragResult.bestSimilarity)
           ) {
             ragResult = focused;
+            developerTrace.embedding_dimensions = ragResult.embeddingDimensions;
             console.log(
               `[RAG] Focused second-pass retrieval improved context (best=${focused.bestSimilarity.toFixed(3)})`
             );
           }
         }
       }
+    }
+
+    developerTrace.subject_filter = effectiveSubjectFilter;
+    if (inferredSubjectFromResults) {
+      developerTrace.inferred_subject_from_results = inferredSubjectFromResults;
     }
 
     // Build nearby references regardless
@@ -1751,15 +2738,15 @@ router.post("/query", async (req: Request, res: Response) => {
         nearbyRefs,
         "This did not come from past papers because retrieval is temporarily unavailable."
       );
+      logDeveloperTrace(developerTrace);
       return res.json({
         type: "exam_question",
         answer: "The AI study assistant is temporarily unavailable. Please try again later.",
         citations: [],
         source_note: source.sourceNote,
         source_type: source.sourceType,
-        resolved_question: resolved.usedHistoryQuestion
-          ? retrievalQuestion
-          : undefined,
+        resolved_question: resolvedQuestionForClient,
+        developer_trace: developerTrace,
         nearby_references: nearbyRefs.length > 0 ? nearbyRefs : undefined,
         retrieval: buildDiagnostics(ragResult, "general", effectiveSubjectFilter, ragResult.error),
       } as RagQueryResponse);
@@ -1775,6 +2762,7 @@ router.post("/query", async (req: Request, res: Response) => {
           "This did not come from any exact past paper because similarity was below the reliability threshold for marking-scheme extraction."
         );
 
+        logDeveloperTrace(developerTrace);
         return res.json({
           type: "exam_question",
           answer:
@@ -1792,9 +2780,8 @@ router.post("/query", async (req: Request, res: Response) => {
           nearby_references: nearbyRefs.length > 0 ? nearbyRefs : undefined,
           source_note: source.sourceNote,
           source_type: source.sourceType,
-          resolved_question: resolved.usedHistoryQuestion
-            ? retrievalQuestion
-            : undefined,
+          resolved_question: resolvedQuestionForClient,
+          developer_trace: developerTrace,
           retrieval: buildDiagnostics(
             ragResult,
             nearbyRefs.length > 0 ? "nearby" : "general",
@@ -1816,6 +2803,7 @@ router.post("/query", async (req: Request, res: Response) => {
       );
       if (direct) {
         const source = buildSourceSummary([], nearbyRefs);
+        logDeveloperTrace(developerTrace);
         return res.json({
           type: "exam_question",
           answer: direct.answer,
@@ -1826,9 +2814,8 @@ router.post("/query", async (req: Request, res: Response) => {
           nearby_references: nearbyRefs.length > 0 ? nearbyRefs : undefined,
           source_note: source.sourceNote,
           source_type: source.sourceType,
-          resolved_question: resolved.usedHistoryQuestion
-            ? retrievalQuestion
-            : undefined,
+          resolved_question: resolvedQuestionForClient,
+          developer_trace: developerTrace,
           retrieval: buildDiagnostics(
             ragResult,
             nearbyRefs.length > 0 ? "nearby" : "general",
@@ -1867,6 +2854,7 @@ router.post("/query", async (req: Request, res: Response) => {
 
         const source = buildSourceSummary([], nearbyRefs);
 
+        logDeveloperTrace(developerTrace);
         return res.json({
           type: "exam_question",
           answer: direct.answer,
@@ -1877,9 +2865,8 @@ router.post("/query", async (req: Request, res: Response) => {
           nearby_references: nearbyRefs.length > 0 ? nearbyRefs : undefined,
           source_note: source.sourceNote,
           source_type: source.sourceType,
-          resolved_question: resolved.usedHistoryQuestion
-            ? retrievalQuestion
-            : undefined,
+          resolved_question: resolvedQuestionForClient,
+          developer_trace: developerTrace,
           retrieval: buildDiagnostics(
             ragResult,
             "nearby",
@@ -1906,6 +2893,7 @@ router.post("/query", async (req: Request, res: Response) => {
     const avgSim =
       ragResult.scores.reduce((s, v) => s + v, 0) / (ragResult.scores.length || 1);
 
+    logDeveloperTrace(developerTrace);
     return res.json({
       type: "exam_question",
       answer: examAnswer.answer,
@@ -1917,9 +2905,8 @@ router.post("/query", async (req: Request, res: Response) => {
       nearby_references: nearbyRefs.length > 0 ? nearbyRefs : undefined,
       source_note: source.sourceNote,
       source_type: source.sourceType,
-      resolved_question: resolved.usedHistoryQuestion
-        ? retrievalQuestion
-        : undefined,
+      resolved_question: resolvedQuestionForClient,
+      developer_trace: developerTrace,
       retrieval: buildDiagnostics(ragResult, "grounded", effectiveSubjectFilter, "Grounded answer"),
     } as RagQueryResponse);
   } catch (error) {
