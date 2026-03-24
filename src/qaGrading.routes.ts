@@ -106,6 +106,7 @@ const groqApiKey = (process.env.GROQ_API_KEY || '').trim();
 const groqModel = process.env.GROQ_MODEL || 'llama-3.3-70b-versatile';
 const groq = groqApiKey ? new Groq({ apiKey: groqApiKey }) : null;
 const qaServiceUrl = (process.env.QA_GRADING_SERVICE_URL || 'http://127.0.0.1:8001').trim();
+const nodeEnv = (process.env.NODE_ENV || '').trim().toLowerCase();
 
 function serviceUrl(path: string): string {
   const base = qaServiceUrl.endsWith('/') ? qaServiceUrl.slice(0, -1) : qaServiceUrl;
@@ -116,6 +117,18 @@ function toServiceConnectionMessage(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
   const lowered = message.toLowerCase();
   if (lowered.includes('econnrefused') || lowered.includes('fetch failed')) {
+    const isLocalhostUrl =
+      qaServiceUrl.includes('127.0.0.1') ||
+      qaServiceUrl.includes('localhost');
+
+    if (nodeEnv === 'production' && isLocalhostUrl) {
+      return [
+        `Cannot connect to Q/A grading service at ${qaServiceUrl}.`,
+        'In production, localhost points to the same backend container only.',
+        'Set QA_GRADING_SERVICE_URL to a deployed Subject-Grading service URL, or deploy backend with an embedded sidecar process that is actually running on that port.',
+      ].join(' ');
+    }
+
     return `Cannot connect to Q/A grading service at ${qaServiceUrl}. Start it with: cd OA-backend ; npm run qa-grading:service`;
   }
   return message;
