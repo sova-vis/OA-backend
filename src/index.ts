@@ -17,9 +17,7 @@ const PORT = process.env.PORT || 3001;
 
 const qaServiceUrl = (process.env.QA_GRADING_SERVICE_URL || 'http://127.0.0.1:8001').trim();
 const autoStartQaServiceSetting = (process.env.AUTO_START_QA_GRADING_SERVICE || '').trim().toLowerCase();
-const shouldAutoStartQaService =
-  autoStartQaServiceSetting === 'true' ||
-  (process.env.NODE_ENV !== 'production' && autoStartQaServiceSetting !== 'false');
+const shouldAutoStartQaService = autoStartQaServiceSetting !== 'false';
 
 async function isQaServiceReachable(): Promise<boolean> {
   try {
@@ -36,6 +34,7 @@ async function isQaServiceReachable(): Promise<boolean> {
 
 async function ensureQaServiceSidecar(): Promise<void> {
   if (!shouldAutoStartQaService) {
+    console.log('ℹ️ Q/A grading sidecar auto-start is disabled by AUTO_START_QA_GRADING_SERVICE=false.');
     return;
   }
 
@@ -46,44 +45,47 @@ async function ensureQaServiceSidecar(): Promise<void> {
   }
 
   try {
-    const workspaceRoot = path.resolve(process.cwd(), '..');
-    const sidecarRoot = path.join(workspaceRoot, '_ext', 'Subject-Grading');
-    const venvPython = path.join(sidecarRoot, '.venv', 'Scripts', 'python.exe');
     const logDir = path.join(process.cwd(), 'logs');
     if (!fs.existsSync(logDir)) {
       fs.mkdirSync(logDir, { recursive: true });
     }
     const sidecarLogPath = path.join(logDir, 'qa-sidecar.log');
     const outFd = fs.openSync(sidecarLogPath, 'a');
+    const launcherScriptPath = path.join(process.cwd(), 'scripts', 'start-qa-grading-service.js');
 
-    if (fs.existsSync(sidecarRoot) && fs.existsSync(venvPython)) {
-      const child = spawn(
-        venvPython,
-        ['-m', 'uvicorn', 'oa_main_pipeline.api:create_app', '--factory', '--host', '0.0.0.0', '--port', '8001'],
-        {
-          cwd: sidecarRoot,
-          detached: true,
-          stdio: ['ignore', outFd, outFd],
-          windowsHide: true,
-        }
-      );
-
-      child.unref();
-      console.log(`🚀 Starting Q/A grading sidecar from venv Python at ${venvPython}`);
-      console.log(`📝 Sidecar logs: ${sidecarLogPath}`);
+    if (!fs.existsSync(launcherScriptPath)) {
+      console.log(`ℹ️ Q/A grading launcher script not found at ${launcherScriptPath}; skipping auto-start.`);
       return;
     }
 
-    const scriptPath = path.join(process.cwd(), 'scripts', 'start-qa-grading-service.ps1');
-    const fallback = spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', scriptPath], {
+    let sidecarPort = '8001';
+    try {
+      const normalized = qaServiceUrl.endsWith('/') ? qaServiceUrl.slice(0, -1) : qaServiceUrl;
+      const parsed = new URL(normalized);
+      if (parsed.port) {
+        sidecarPort = parsed.port;
+      }
+    } catch {
+      // Keep default port if QA_GRADING_SERVICE_URL is malformed.
+    }
+
+    const child = spawn(process.execPath, [launcherScriptPath], {
       cwd: process.cwd(),
       detached: true,
       stdio: ['ignore', outFd, outFd],
       windowsHide: true,
+      env: {
+        ...process.env,
+        QA_GRADING_SERVICE_PORT: sidecarPort,
+      },
     });
 
-    fallback.unref();
-    console.log(`🚀 Starting Q/A grading sidecar from script fallback: ${scriptPath}`);
+    child.on('error', (error) => {
+      console.warn('⚠️ Q/A grading sidecar launcher failed:', error);
+    });
+
+    child.unref();
+    console.log(`🚀 Starting Q/A grading sidecar from launcher: ${launcherScriptPath}`);
     console.log(`📝 Sidecar logs: ${sidecarLogPath}`);
   } catch (error) {
     console.warn('⚠️ Failed to auto-start Q/A grading sidecar:', error);
