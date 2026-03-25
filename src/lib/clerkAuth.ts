@@ -12,6 +12,15 @@ export interface AuthenticatedRequest extends Request {
 const issuer = process.env.CLERK_ISSUER?.replace(/\/$/, '');
 const audience = process.env.CLERK_AUDIENCE;
 let cachedJwks: ReturnType<(typeof import('jose'))['createRemoteJWKSet']> | null = null;
+let joseModulePromise: Promise<typeof import('jose')> | null = null;
+
+function loadJoseModule(): Promise<typeof import('jose')> {
+  if (!joseModulePromise) {
+    // Keep true dynamic ESM import at runtime in CJS builds.
+    joseModulePromise = Function('return import("jose")')() as Promise<typeof import('jose')>;
+  }
+  return joseModulePromise;
+}
 
 function getPublicKeyFromEnv() {
   const raw = process.env.CLERK_JWT_KEY;
@@ -44,7 +53,7 @@ function getBearerToken(authHeader?: string) {
 }
 
 async function verifyClerkJwt(token: string) {
-  const { createRemoteJWKSet, importSPKI, jwtVerify } = await import('jose');
+  const { createRemoteJWKSet, importSPKI, jwtVerify } = await loadJoseModule();
   const publicKey = getPublicKeyFromEnv();
 
   if (publicKey) {

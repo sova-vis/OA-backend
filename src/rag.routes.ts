@@ -1557,7 +1557,11 @@ function detectVisualNeeds(
       needs.ascii = true;
     }
 
-    if (/\b(comparison|classification|properties)\b/.test(contextText)) {
+    // Only suggest tables from context when the user is already asking for structured comparison/listing.
+    if (
+      /\b(comparison|classification|properties)\b/.test(contextText) &&
+      /\b(compare|difference|similarit|classify|types of|table|tabulate|list)\b/.test(lower)
+    ) {
       needs.table = true;
     }
   }
@@ -1898,6 +1902,21 @@ function detectHeadingProfile(text: string): HeadingProfile {
   return "conceptual";
 }
 
+function uniqueOrderedSentences(sentences: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+
+  for (const sentence of sentences) {
+    const normalized = sentence.toLowerCase().replace(/\s+/g, " ").trim();
+    if (!normalized) continue;
+    if (seen.has(normalized)) continue;
+    seen.add(normalized);
+    out.push(sentence);
+  }
+
+  return out;
+}
+
 function enforceMarkdownStructure(answer: string, style: AnswerStyle): string {
   const cleaned = stripRepeatedHeadingEcho(
     decodeJsonLikeString(answer || "").trim()
@@ -1958,10 +1977,16 @@ function enforceMarkdownStructure(answer: string, style: AnswerStyle): string {
     .map((s) => s.trim())
     .filter(Boolean);
 
-  const intro = sentences.slice(0, 2).join(" ") || plain;
-  const points = sentences.slice(2, 8);
-  const summary = sentences[sentences.length - 1] || intro;
+  const deduped = uniqueOrderedSentences(sentences);
+
+  const intro = deduped.slice(0, 2).join(" ") || plain;
+  const points = deduped.slice(2, 8);
+  const summary = deduped[deduped.length - 1] || intro;
   const profile = detectHeadingProfile(plain);
+
+  if (profile === "conceptual" && deduped.length <= 4) {
+    return deduped.join(" ");
+  }
 
   if (profile === "quantitative") {
     return `## Given
@@ -2486,16 +2511,22 @@ async function generateExamAnswer(
         : "marking_points: 3-5 specific criteria extracted from the mark scheme. marks value 1-3 each.";
 
   const questionTypeInfo = detectQuestionType(question, contextChunks, history);
+  const followUpMode =
+    questionTypeInfo.questionType === "followup_elaborate" ||
+    questionTypeInfo.questionType === "followup_example";
+  const suppressRubricArrays = followUpMode && answerMode !== "mark_scheme_only";
   const dynamicFormatInstruction = getQuestionTypeFormatInstructions(
     questionTypeInfo.questionType,
     questionTypeInfo.marks || expectedMarks
   );
   const visualNeeds = detectVisualNeeds(question, contextChunks);
+  if (questionTypeInfo.questionType === "comparison" || questionTypeInfo.questionType === "list") {
+    visualNeeds.table = true;
+  }
   const visualInstructions = getVisualFormatInstructions(visualNeeds);
   const activeVisuals = listActiveVisualNeeds(visualNeeds);
   const baseFormatInstruction =
-    questionTypeInfo.questionType === "followup_elaborate" ||
-    questionTypeInfo.questionType === "followup_example"
+    followUpMode
       ? "- Continue naturally from conversation context without repeating unchanged points."
       : buildFormatInstruction(style, answerMode);
 
@@ -2557,6 +2588,12 @@ Each "point" should be a real criterion (not generic phrases).
 
 The "common_mistakes" array should contain realistic mistakes students make on this specific question type.
 
+${
+  suppressRubricArrays
+    ? 'This is a FOLLOW-UP answer. Return "marking_points": [] and "common_mistakes": [] (must be empty arrays).'
+    : ""
+}
+
 Respond ONLY with this JSON (no markdown fences, no extra text):
 {
   "answer": "<full structured answer here>",
@@ -2592,6 +2629,8 @@ ${question}`,
       expectedMarks,
       answerMode,
       fallbackMarkingPoints,
+      includeMarkingPoints: !suppressRubricArrays,
+      includeCommonMistakes: !suppressRubricArrays,
     });
   } catch (err) {
     console.error("generateExamAnswer error:", err);
@@ -2616,11 +2655,15 @@ async function generateDirectAnswer(
     questionTypeInfo.marks
   );
   const visualNeeds = detectVisualNeeds(question, []);
+  if (questionTypeInfo.questionType === "comparison" || questionTypeInfo.questionType === "list") {
+    visualNeeds.table = true;
+  }
   const visualInstructions = getVisualFormatInstructions(visualNeeds);
   const activeVisuals = listActiveVisualNeeds(visualNeeds);
   const followUpMode =
     questionTypeInfo.questionType === "followup_elaborate" ||
     questionTypeInfo.questionType === "followup_example";
+  const suppressRubricArrays = followUpMode && answerMode !== "mark_scheme_only";
   const baseFormatInstruction = followUpMode
     ? "- Continue naturally from the ongoing conversation and add new detail without repetition."
     : buildFormatInstruction(style, answerMode);
@@ -2657,6 +2700,12 @@ ${
 FORMAT:
 ${baseFormatInstruction}
 
+${
+  suppressRubricArrays
+    ? '- For follow-up answers: return "marking_points": [] and "common_mistakes": [] (must be empty arrays).'
+    : ""
+}
+
 Respond ONLY with this JSON (no markdown fences):
 {
   "answer": "<answer here>",
@@ -2676,6 +2725,8 @@ Respond ONLY with this JSON (no markdown fences):
 
     return parseGroqResponse(completion.choices[0]?.message?.content || "", style, {
       answerMode,
+      includeMarkingPoints: !suppressRubricArrays,
+      includeCommonMistakes: !suppressRubricArrays,
     });
   } catch (err) {
     console.error("generateDirectAnswer error:", err);
@@ -2690,6 +2741,8 @@ function parseGroqResponse(
     expectedMarks?: number;
     answerMode?: AnswerMode;
     fallbackMarkingPoints?: Array<{ point: string; marks: number }>;
+    includeMarkingPoints?: boolean;
+    includeCommonMistakes?: boolean;
   } = {}
 ): {
   answer: string;
@@ -2701,6 +2754,8 @@ function parseGroqResponse(
       ? Math.floor(Number(options.expectedMarks))
       : undefined;
   const answerMode = options.answerMode || "full_answer";
+  const includeMarkingPoints = options.includeMarkingPoints ?? true;
+  const includeCommonMistakes = options.includeCommonMistakes ?? true;
 
   let parsed: any = null;
 
@@ -2789,11 +2844,19 @@ function parseGroqResponse(
     }));
   }
 
-  const commonMistakes: string[] = Array.isArray(parsed?.common_mistakes)
+  if (!includeMarkingPoints && answerMode !== "mark_scheme_only") {
+    markingPoints = [];
+  }
+
+  let commonMistakes: string[] = Array.isArray(parsed?.common_mistakes)
     ? parsed.common_mistakes.filter(
         (m: any) => typeof m === "string" && m.trim()
       )
     : [];
+
+  if (!includeCommonMistakes && answerMode !== "mark_scheme_only") {
+    commonMistakes = [];
+  }
 
   return { answer: finalAnswer, markingPoints, commonMistakes };
 }
