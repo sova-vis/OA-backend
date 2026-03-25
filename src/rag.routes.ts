@@ -1800,9 +1800,10 @@ function buildFormatInstruction(
   }
 
   return `- Write a complete, detailed answer in markdown.
-- Choose section headings intelligently based on the question type; do NOT force one fixed template every time.
-- For quantitative questions, use headings like: ## Given, ## Working, ## Final Answer.
-- For theory / process / explain questions, use headings like: ## Core Idea, ## Explanation, ## Key Points.
+- Choose section headings intelligently based on intent and content; do NOT reuse one fixed heading set across responses.
+- Use 2-4 headings only when they add clarity; otherwise keep concise paragraphs.
+- Prefer meaningful heading names derived from the question topic (for example: "Concept", "Reasoning", "Comparison", "Result").
+- Use tables only for comparison/classification/listing contexts.
 - Use bullets only where they improve clarity.
 - Write as much as the question genuinely needs — never pad sections with repeated content.`;
 }
@@ -2060,7 +2061,7 @@ function enforceMarkdownStructure(answer: string, style: AnswerStyle): string {
   const summary = deduped[deduped.length - 1] || intro;
   const profile = detectHeadingProfile(plain);
 
-  if (profile === "conceptual" && deduped.length <= 4) {
+  if (profile === "conceptual" && deduped.length <= 2) {
     return deduped.join(" ");
   }
 
@@ -2103,19 +2104,13 @@ State the exact definition first, then add one clear supporting detail.
 ${summary}`;
   }
 
-  return `## Core Idea
+  return `## Main Idea
 ${intro}
 
-## Explanation
+## Reasoning
 ${points.length ? points.join("\n\n") : plain}
 
-## Key Points
-${(points.length ? points : [plain]).map((p) => `- ${p}`).join("\n")}
-
-## Exam Tip
-Use precise subject vocabulary and link each point to what examiners award marks for.
-
-## Quick Summary
+## Takeaway
 ${summary}`;
 }
 
