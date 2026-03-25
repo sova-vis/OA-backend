@@ -1801,7 +1801,7 @@ function buildFormatInstruction(
 
   return `- Write a complete, detailed answer in markdown.
 - Choose section headings intelligently based on intent and content; do NOT reuse one fixed heading set across responses.
-- Use 2-4 headings only when they add clarity; otherwise keep concise paragraphs.
+- Use headings only when they add clarity; otherwise keep concise paragraphs.
 - Prefer meaningful heading names derived from the question topic (for example: "Concept", "Reasoning", "Comparison", "Result").
 - Use tables only for comparison/classification/listing contexts.
 - Use bullets only where they improve clarity.
@@ -2091,27 +2091,10 @@ ${summary}`;
   }
 
   if (profile === "definition") {
-    return `## Definition
-${intro}
-
-## Explanation
-${points.length ? points.join("\n\n") : plain}
-
-## Exam Tip
-State the exact definition first, then add one clear supporting detail.
-
-## Quick Summary
-${summary}`;
+    return `${intro}\n\n${points.length ? points.join("\n\n") : plain}\n\n${summary}`;
   }
 
-  return `## Main Idea
-${intro}
-
-## Reasoning
-${points.length ? points.join("\n\n") : plain}
-
-## Takeaway
-${summary}`;
+  return `${intro}\n\n${points.length ? points.join("\n\n") : plain}\n\n${summary}`;
 }
 
 function buildFallbackAnswer(style: AnswerStyle): string {
@@ -3143,8 +3126,8 @@ router.post("/query", async (req: Request, res: Response) => {
       return res.json({
         type: "exam_question",
         answer: direct.answer,
-        marking_points: direct.markingPoints,
-        common_mistakes: direct.commonMistakes,
+        marking_points: [],
+        common_mistakes: [],
         citations: [],
         source_type: "none",
         resolved_question: resolvedQuestionForClient,
@@ -3353,13 +3336,7 @@ router.post("/query", async (req: Request, res: Response) => {
           type: "exam_question",
           answer:
             "## Marking Scheme\nI could not find a reliable past-paper match for this question, so I cannot provide an exact marking scheme.",
-          marking_points: [
-            {
-              point:
-                "No reliable mark scheme found in retrieved past-paper context for this question.",
-              marks: 1,
-            },
-          ],
+          marking_points: [],
           common_mistakes: [],
           citations: [],
           low_confidence: true,
@@ -3393,8 +3370,8 @@ router.post("/query", async (req: Request, res: Response) => {
         return res.json({
           type: "exam_question",
           answer: direct.answer,
-          marking_points: direct.markingPoints,
-          common_mistakes: direct.commonMistakes,
+          marking_points: [],
+          common_mistakes: [],
           citations: [],
           low_confidence: true,
           nearby_references: nearbyRefs.length > 0 ? nearbyRefs : undefined,
@@ -3444,8 +3421,8 @@ router.post("/query", async (req: Request, res: Response) => {
         return res.json({
           type: "exam_question",
           answer: direct.answer,
-          marking_points: direct.markingPoints,
-          common_mistakes: direct.commonMistakes,
+          marking_points: [],
+          common_mistakes: [],
           citations: [],
           low_confidence: true,
           nearby_references: nearbyRefs.length > 0 ? nearbyRefs : undefined,
