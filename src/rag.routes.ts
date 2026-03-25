@@ -1,6 +1,8 @@
 import { Router, Request, Response } from "express";
 import { supabase } from "./lib/supabase";
 import Groq from "groq-sdk";
+import { promises as fs } from "fs";
+import path from "path";
 
 const router = Router();
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
@@ -23,7 +25,7 @@ const INCLUDE_STUDENT_RETRIEVAL_DIAGNOSTICS = parseBooleanEnv(
   process.env.INCLUDE_STUDENT_RETRIEVAL_DIAGNOSTICS,
   false
 );
-const SIMILARITY_THRESHOLD = 0.40;
+const SIMILARITY_THRESHOLD = 0.34;
 // Unfiltered (no subject) retrieval: fetch more candidates to compensate for
 // searching across all subjects at once.
 const TOP_K = 32;
@@ -40,19 +42,19 @@ const NEARBY_REFERENCE_LIMIT = Math.max(
 // ~0.48 across ALL subjects is still a strong topical match.
 const MIN_BEST_SIMILARITY = parseNumberEnv(
   process.env.MIN_BEST_SIMILARITY_FOR_CONTEXT,
-  0.48
+  0.43
 );
 const MIN_AVG_TOP3_SIMILARITY = parseNumberEnv(
   process.env.MIN_AVG_TOP3_SIMILARITY_FOR_CONTEXT,
-  0.42
+  0.36
 );
 const MIN_BEST_SIMILARITY_WITH_SUBJECT = parseNumberEnv(
   process.env.MIN_BEST_SIMILARITY_FOR_CONTEXT_WITH_SUBJECT,
-  0.40
+  0.36
 );
 const MIN_AVG_TOP3_WITH_SUBJECT = parseNumberEnv(
   process.env.MIN_AVG_TOP3_SIMILARITY_FOR_CONTEXT_WITH_SUBJECT,
-  0.34
+  0.30
 );
 
 // -- SUBJECT MAP -------------------------------------------------------------
@@ -269,6 +271,247 @@ interface RagRetrievalResult {
   error?: string;
 }
 
+interface LocalFallbackEntry {
+  subject: string;
+  year: number;
+  session: string;
+  paper: string;
+  variant: string;
+  questionNumber?: string;
+  subQuestion?: string;
+  marks?: number;
+  topicGeneral?: string;
+  topicSyllabus?: string;
+  questionText: string;
+  markingScheme: string;
+}
+
+let localFallbackCache: LocalFallbackEntry[] | null = null;
+
+function normalizeTokenList(text: string): string[] {
+  return (text || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .split(/\s+/)
+    .map((t) => t.trim())
+    .filter((t) => t.length >= 3);
+}
+
+function lexicalSimilarity(a: string, b: string): number {
+  const aTokens = Array.from(new Set(normalizeTokenList(a)));
+  const bTokens = new Set(normalizeTokenList(b));
+  if (!aTokens.length || !bTokens.size) return 0;
+
+  let common = 0;
+  for (const token of aTokens) {
+    if (bTokens.has(token)) common += 1;
+  }
+  return common / aTokens.length;
+}
+
+function buildSyntheticChunkContent(entry: LocalFallbackEntry): string {
+  const qRef = `${entry.questionNumber || ""}${entry.subQuestion ? ` ${entry.subQuestion}` : ""}`.trim();
+  return [
+    qRef ? `Question ${qRef}` : "Question",
+    entry.topicGeneral || entry.topicSyllabus
+      ? `Topic: ${entry.topicGeneral || "General"}${entry.topicSyllabus ? ` > ${entry.topicSyllabus}` : ""}`
+      : "",
+    Number.isFinite(entry.marks) ? `Marks: ${entry.marks}` : "",
+    `Question: ${entry.questionText}`,
+    `Mark Scheme: ${entry.markingScheme}`,
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+async function listJsonFilesRecursively(dir: string): Promise<string[]> {
+  const entries = await fs.readdir(dir, { withFileTypes: true });
+  const files: string[] = [];
+
+  for (const entry of entries) {
+    const fullPath = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      files.push(...(await listJsonFilesRecursively(fullPath)));
+      continue;
+    }
+    if (entry.isFile() && entry.name.toLowerCase().endsWith(".json")) {
+      files.push(fullPath);
+    }
+  }
+
+  return files;
+}
+
+function parseLocalPaperJson(raw: any, subjectName: string): LocalFallbackEntry[] {
+  const entries: LocalFallbackEntry[] = [];
+  if (!raw || typeof raw !== "object") return entries;
+
+  for (const [yearKey, sessions] of Object.entries(raw as Record<string, any>)) {
+    if (!sessions || typeof sessions !== "object") continue;
+    const yearNum = Number(yearKey);
+
+    for (const [sessionKey, papers] of Object.entries(sessions as Record<string, any>)) {
+      if (!papers || typeof papers !== "object") continue;
+
+      for (const [paperKey, variants] of Object.entries(papers as Record<string, any>)) {
+        if (!variants || typeof variants !== "object") continue;
+
+        for (const [variantKey, questions] of Object.entries(variants as Record<string, any>)) {
+          if (!Array.isArray(questions)) continue;
+
+          for (const q of questions) {
+            if (!q || typeof q !== "object") continue;
+            const questionText = String(q.question_text || "").trim();
+            const markingScheme = String(q.marking_scheme || "").trim();
+            if (!questionText) continue;
+
+            entries.push({
+              subject: subjectName,
+              year: Number.isFinite(yearNum) ? yearNum : 0,
+              session: String(sessionKey || "").trim(),
+              paper: String(paperKey || "").trim(),
+              variant: String(variantKey || "").trim(),
+              questionNumber:
+                q.question_number == null ? undefined : String(q.question_number).trim(),
+              subQuestion:
+                q.sub_question == null ? undefined : String(q.sub_question).trim(),
+              marks:
+                Number.isFinite(Number(q.marks)) && Number(q.marks) > 0
+                  ? Number(q.marks)
+                  : undefined,
+              topicGeneral:
+                q.topic_general == null ? undefined : String(q.topic_general).trim(),
+              topicSyllabus:
+                q.topic_syllabus == null ? undefined : String(q.topic_syllabus).trim(),
+              questionText,
+              markingScheme,
+            });
+          }
+        }
+      }
+    }
+  }
+
+  return entries;
+}
+
+async function loadLocalFallbackEntries(): Promise<LocalFallbackEntry[]> {
+  if (localFallbackCache) return localFallbackCache;
+
+  const configuredDir = (process.env.JSON_DIR || "").trim();
+  const candidates = [
+    configuredDir,
+    path.resolve(process.cwd(), "../_ext/Subject-Grading/O_LEVEL_MAIN_JSON"),
+    path.resolve(process.cwd(), "_ext/Subject-Grading/O_LEVEL_MAIN_JSON"),
+  ].filter(Boolean);
+
+  for (const root of candidates) {
+    try {
+      const stat = await fs.stat(root);
+      if (!stat.isDirectory()) continue;
+
+      const subjectDirs = await fs.readdir(root, { withFileTypes: true });
+      const allEntries: LocalFallbackEntry[] = [];
+
+      for (const dirent of subjectDirs) {
+        if (!dirent.isDirectory()) continue;
+        const subjectPath = path.join(root, dirent.name);
+        const jsonFiles = await listJsonFilesRecursively(subjectPath);
+
+        for (const filePath of jsonFiles) {
+          try {
+            const text = await fs.readFile(filePath, "utf8");
+            const parsed = JSON.parse(text);
+            allEntries.push(...parseLocalPaperJson(parsed, dirent.name));
+          } catch {
+            // Skip malformed file and continue.
+          }
+        }
+      }
+
+      if (allEntries.length > 0) {
+        console.log(`[RAG] Local fallback corpus loaded: ${allEntries.length} questions from ${root}`);
+        localFallbackCache = allEntries;
+        return allEntries;
+      }
+    } catch {
+      // Try next candidate path.
+    }
+  }
+
+  localFallbackCache = [];
+  return localFallbackCache;
+}
+
+async function localFallbackRetrieval(
+  question: string,
+  subjectFilter?: string,
+  yearFilter?: number,
+  limit: number = TOP_K
+): Promise<RagRetrievalResult | null> {
+  const corpus = await loadLocalFallbackEntries();
+  if (!corpus.length) return null;
+
+  const filtered = corpus.filter((entry) => {
+    const subjectOk = subjectFilter
+      ? entry.subject.toLowerCase() === subjectFilter.toLowerCase()
+      : true;
+    const yearOk = yearFilter ? entry.year === yearFilter : true;
+    return subjectOk && yearOk;
+  });
+
+  const pool = filtered.length > 0 ? filtered : corpus;
+
+  const ranked = pool
+    .map((entry) => {
+      const sourceText = `${entry.questionText}\n${entry.markingScheme}`;
+      const similarity = lexicalSimilarity(question, sourceText);
+      return { entry, similarity };
+    })
+    .sort((a, b) => b.similarity - a.similarity)
+    .slice(0, Math.max(limit, 24));
+
+  if (!ranked.length) return null;
+
+  const all: PastPaperChunk[] = ranked.map(({ entry, similarity }, idx) => ({
+    chunk_id: `local-${entry.subject}-${entry.year}-${entry.session}-${entry.paper}-${entry.variant}-${entry.questionNumber || idx}`,
+    content: buildSyntheticChunkContent(entry),
+    similarity,
+    subject: entry.subject,
+    year: entry.year,
+    session: entry.session,
+    paper: entry.paper,
+    variant: entry.variant,
+  }));
+
+  const scores = all.map((c) => c.similarity);
+  const sorted = [...scores].sort((a, b) => b - a);
+  const bestSimilarity = sorted[0] || 0;
+  const top3 = sorted.slice(0, 3);
+  const avgTop3 = top3.length
+    ? top3.reduce((s, v) => s + v, 0) / top3.length
+    : 0;
+
+  const aboveThreshold = all.filter((c) => c.similarity >= SIMILARITY_THRESHOLD);
+  const nearbyChunks = all.slice(0, Math.min(all.length, TOP_K));
+  const chunks = aboveThreshold.length > 0 ? aboveThreshold : nearbyChunks.slice(0, 6);
+
+  console.log(
+    `[RAG] Local fallback retrieval used; ${chunks.length} chunks selected (best=${bestSimilarity.toFixed(3)})`
+  );
+
+  return {
+    success: chunks.length > 0,
+    chunks,
+    nearbyChunks,
+    scores: chunks.map((c) => c.similarity),
+    bestSimilarity,
+    avgTop3,
+    embeddingDimensions: undefined,
+    error: "local_fallback_retrieval",
+  };
+}
+
 async function ragRetrieval(
   question: string,
   subjectFilter?: string,
@@ -285,7 +528,20 @@ async function ragRetrieval(
   };
 
   try {
-    const embedding = await getEmbedding(question);
+    let embedding: number[];
+    try {
+      embedding = await getEmbedding(question);
+    } catch (embeddingErr: any) {
+      const local = await localFallbackRetrieval(question, subjectFilter, yearFilter);
+      if (local) {
+        return {
+          ...local,
+          error: `embedding_unavailable:${String(embeddingErr?.message || embeddingErr || "unknown")}`,
+        };
+      }
+      throw embeddingErr;
+    }
+
     const embeddingDimensions = embedding.length;
     const matchCount = subjectFilter ? TOP_K_WITH_FILTERS : TOP_K;
 
@@ -297,12 +553,31 @@ async function ragRetrieval(
     });
 
     if (error || !data) {
+      const local = await localFallbackRetrieval(question, subjectFilter, yearFilter, matchCount);
+      if (local) {
+        return {
+          ...local,
+          embeddingDimensions,
+          error: `supabase_rpc_failed:${error?.message || "RPC failed"}`,
+        };
+      }
       return { ...empty, error: error?.message || "RPC failed" };
     }
 
     const all = (data as PastPaperChunk[]).sort(
       (a, b) => b.similarity - a.similarity
     );
+
+    if (!all.length || (all[0]?.similarity || 0) <= 0) {
+      const local = await localFallbackRetrieval(question, subjectFilter, yearFilter, matchCount);
+      if (local) {
+        return {
+          ...local,
+          embeddingDimensions,
+          error: "supabase_empty_or_zero_similarity_local_fallback",
+        };
+      }
+    }
 
     const scores = all.map((c) => c.similarity);
     const sorted = [...scores].sort((a, b) => b - a);
@@ -348,6 +623,40 @@ function hasReliableContext(
     ? MIN_AVG_TOP3_WITH_SUBJECT
     : MIN_AVG_TOP3_SIMILARITY;
   return result.bestSimilarity >= minBest && result.avgTop3 >= minAvg;
+}
+
+function tokenizeForOverlap(text: string): string[] {
+  return (text || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .split(/\s+/)
+    .map((t) => t.trim())
+    .filter((t) => t.length >= 3);
+}
+
+function lexicalOverlapScore(question: string, content: string): number {
+  const qTokens = Array.from(new Set(tokenizeForOverlap(question)));
+  if (!qTokens.length) return 0;
+
+  const cSet = new Set(tokenizeForOverlap(content));
+  let hit = 0;
+  for (const token of qTokens) {
+    if (cSet.has(token)) hit += 1;
+  }
+
+  return hit / qTokens.length;
+}
+
+function hasRecoverableContext(question: string, result: RagRetrievalResult): boolean {
+  const candidates = result.nearbyChunks.slice(0, 5);
+  if (!candidates.length) return false;
+
+  const bestOverlap = candidates.reduce((best, chunk) => {
+    const overlap = lexicalOverlapScore(question, chunk.content || "");
+    return Math.max(best, overlap);
+  }, 0);
+
+  return result.bestSimilarity >= 0.32 && bestOverlap >= 0.18;
 }
 
 function buildCitations(
@@ -524,6 +833,81 @@ function isVagueSearchQuery(question: string): boolean {
   return isLikelyFollowUpQuestion(normalized);
 }
 
+interface QueryIntentReadiness {
+  wordCount: number;
+  hasTaskVerb: boolean;
+  hasQuestionSyntax: boolean;
+  hasExamCue: boolean;
+  hasSubjectCue: boolean;
+  startsBroadConversation: boolean;
+  specificity: number;
+  retrievalScore: number;
+}
+
+function buildQueryIntentReadiness(question: string): QueryIntentReadiness {
+  const normalized = question.toLowerCase().trim();
+  const words = normalized.split(/\s+/).filter(Boolean);
+  const uniqueWordCount = new Set(words).size;
+  const specificity = words.length > 0 ? uniqueWordCount / words.length : 0;
+
+  const hasQuestionSyntax =
+    normalized.includes("?") ||
+    /^(what|why|how|when|where|which|who|can|could|would|should|is|are|do|does|did)\b/.test(
+      normalized
+    );
+
+  const hasExamCue =
+    /\b(question\s*\d+|q\.?\s*\d+|\d+\s*marks?|paper\s*\d+|variant\s*\d+|mark\s*scheme|past\s*paper)\b/i.test(
+      normalized
+    ) || /\b(o\s*-?level|igcse|gcse|cambridge|syllabus)\b/i.test(normalized);
+
+  const hasSubjectCue = /\b(chemistry|physics|mathematics|maths|english|islamiyat|pakistan\s+studies)\b/i.test(
+    normalized
+  );
+
+  const startsBroadConversation =
+    /^(let'?s|can\s+we|i\s+want\s+to|i\s+need\s+to|help\s+me|teach\s+me|start\s+with)\b/.test(
+      normalized
+    ) && !hasExplicitTaskVerb(normalized);
+
+  let retrievalScore = 0;
+  if (hasExplicitTaskVerb(normalized)) retrievalScore += 3;
+  if (hasQuestionSyntax) retrievalScore += 1;
+  if (hasExamCue) retrievalScore += 3;
+  if (hasSubjectCue) retrievalScore += 1;
+  if (words.length >= 7) retrievalScore += 1;
+  if (specificity >= 0.6) retrievalScore += 1;
+  if (startsBroadConversation) retrievalScore -= 2;
+  if (words.length <= 4 && !hasExamCue) retrievalScore -= 1;
+
+  return {
+    wordCount: words.length,
+    hasTaskVerb: hasExplicitTaskVerb(normalized),
+    hasQuestionSyntax,
+    hasExamCue,
+    hasSubjectCue,
+    startsBroadConversation,
+    specificity,
+    retrievalScore,
+  };
+}
+
+function isBroadConversationPrompt(question: string): boolean {
+  const info = buildQueryIntentReadiness(question);
+  return (
+    info.startsBroadConversation &&
+    !info.hasTaskVerb &&
+    !info.hasExamCue &&
+    info.retrievalScore <= 2
+  );
+}
+
+function looksLikeStandaloneExamQuestion(question: string): boolean {
+  const info = buildQueryIntentReadiness(question);
+  if (isBroadConversationPrompt(question)) return false;
+  return info.retrievalScore >= 4;
+}
+
 function findLastExamUserQuestion(history: HistoryMessage[]): string | null {
   for (let i = history.length - 1; i >= 0; i -= 1) {
     const h = history[i];
@@ -567,11 +951,35 @@ function evaluateRagDecision(
     };
   }
 
+  if (isBroadConversationPrompt(trimmed)) {
+    return {
+      shouldSearch: false,
+      followUpDetected: false,
+      reason: "broad_study_chat_prompt_no_retrieval",
+    };
+  }
+
   if (history.length === 0) {
+    if (looksLikeStandaloneExamQuestion(trimmed)) {
+      return {
+        shouldSearch: true,
+        followUpDetected: false,
+        reason: "no_history_exam_like_turn",
+      };
+    }
+
+    return {
+      shouldSearch: false,
+      followUpDetected: false,
+      reason: "no_history_general_turn_no_retrieval",
+    };
+  }
+
+  if (looksLikeStandaloneExamQuestion(trimmed)) {
     return {
       shouldSearch: true,
       followUpDetected: false,
-      reason: "no_history_new_turn",
+      reason: "standalone_exam_question_forces_retrieval",
     };
   }
 
@@ -588,6 +996,15 @@ function evaluateRagDecision(
   const followUpLikely = isLikelyFollowUpQuestion(trimmed);
   const hasReferencePronoun = looksLikeFollowUpReference(trimmed);
   const wordCount = trimmed.split(/\s+/).filter(Boolean).length;
+  const readiness = buildQueryIntentReadiness(trimmed);
+
+  if (!explicitTask && !readiness.hasExamCue && readiness.retrievalScore <= 2) {
+    return {
+      shouldSearch: false,
+      followUpDetected: false,
+      reason: "low_readiness_general_prompt_no_retrieval",
+    };
+  }
 
   if (explicitTask && explicitNewTopic) {
     return {
@@ -818,6 +1235,7 @@ interface AnswerStyle {
   detailLevel: "short" | "long";
   responseShape: "standard" | "directed_writing";
   requiresHeadline: boolean;
+  preferHeadings: boolean;
 }
 
 type QuestionType =
@@ -1215,7 +1633,11 @@ function detectVisualNeeds(
       needs.ascii = true;
     }
 
-    if (/\b(comparison|classification|properties)\b/.test(contextText)) {
+    // Only suggest tables from context when the user is already asking for structured comparison/listing.
+    if (
+      /\b(comparison|classification|properties)\b/.test(contextText) &&
+      /\b(compare|difference|similarit|classify|types of|table|tabulate|list)\b/.test(lower)
+    ) {
       needs.table = true;
     }
   }
@@ -1287,28 +1709,55 @@ function requiresHeadlineForTask(question: string): boolean {
   return /\bheadline\b|school\s+magazine|write\s+an\s+article/i.test(question);
 }
 
+function isLikelyExamPrompt(question: string): boolean {
+  return (
+    hasExplicitTaskVerb(question) ||
+    /\b(o\s*-?level|igcse|gcse|cambridge|past\s*paper|mark\s*scheme|marks?|question\s*\d+|paper\s*\d+|variant|syllabus|topic)\b/i.test(
+      question
+    ) ||
+    /\b(chemistry|physics|mathematics|maths|english|islamiyat|pakistan\s+studies)\b/i.test(
+      question
+    )
+  );
+}
+
+function isSimplePrompt(question: string): boolean {
+  const trimmed = question.trim();
+  const words = trimmed.split(/\s+/).filter(Boolean);
+  return words.length <= 10 && !isLikelyExamPrompt(trimmed);
+}
+
 function inferAnswerStyle(
   question: string,
   answerMode: AnswerMode = "full_answer"
 ): AnswerStyle {
   const directedWriting = isDirectedWritingTask(question);
   const requiresHeadline = requiresHeadlineForTask(question);
+  const likelyExamPrompt = isLikelyExamPrompt(question);
 
   if (answerMode === "mark_scheme_only") {
     return {
       detailLevel: "short",
       responseShape: directedWriting ? "directed_writing" : "standard",
       requiresHeadline,
+      preferHeadings: true,
     };
   }
 
   const wantsShort =
     /(short|briefly|in short|concise)/i.test(question) ||
     SHORT_COMMAND_RE.test(question);
+
+  const conversationalTone =
+    /\b(how\s+are\s+you|who\s+are\s+you|what\s+can\s+you\s+do|tell\s+me\s+about\s+yourself|thank\s+you|thanks)\b/i.test(
+      question
+    );
+
   return {
-    detailLevel: wantsShort ? "short" : "long",
+    detailLevel: wantsShort || conversationalTone || isSimplePrompt(question) ? "short" : "long",
     responseShape: directedWriting ? "directed_writing" : "standard",
     requiresHeadline,
+    preferHeadings: likelyExamPrompt,
   };
 }
 
@@ -1338,13 +1787,23 @@ function buildFormatInstruction(
   }
 
   if (style.detailLevel === "short") {
-    return "- Keep the answer concise (2-4 lines), exam-focused.";
+    return style.preferHeadings
+      ? "- Keep the answer concise (2-4 lines), exam-focused."
+      : "- Keep the answer concise (2-4 lines) and natural in tone.";
+  }
+
+  if (!style.preferHeadings) {
+    return `- Write a natural, direct response in plain markdown.
+- Use headings only when they clearly improve readability.
+- Do not force fixed templates and do not repeat the same sentence across sections.
+- Keep response length proportional to the question.`;
   }
 
   return `- Write a complete, detailed answer in markdown.
-- Choose section headings intelligently based on the question type; do NOT force one fixed template every time.
-- For quantitative questions, use headings like: ## Given, ## Working, ## Final Answer.
-- For theory / process / explain questions, use headings like: ## Core Idea, ## Explanation, ## Key Points.
+- Choose section headings intelligently based on intent and content; do NOT reuse one fixed heading set across responses.
+- Use headings only when they add clarity; otherwise keep concise paragraphs.
+- Prefer meaningful heading names derived from the question topic (for example: "Concept", "Reasoning", "Comparison", "Result").
+- Use tables only for comparison/classification/listing contexts.
 - Use bullets only where they improve clarity.
 - Write as much as the question genuinely needs — never pad sections with repeated content.`;
 }
@@ -1495,6 +1954,12 @@ function stripDefaultScaffoldHeadings(text: string): string {
     .trim();
 }
 
+function normalizePlainResponse(text: string): string {
+  return stripDefaultScaffoldHeadings(text)
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 function detectHeadingProfile(text: string): HeadingProfile {
   const plain = text.toLowerCase();
   if (/\b(compare|contrast|difference|distinguish|similarities|similarity)\b/.test(plain)) {
@@ -1512,6 +1977,21 @@ function detectHeadingProfile(text: string): HeadingProfile {
     return "quantitative";
   }
   return "conceptual";
+}
+
+function uniqueOrderedSentences(sentences: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+
+  for (const sentence of sentences) {
+    const normalized = sentence.toLowerCase().replace(/\s+/g, " ").trim();
+    if (!normalized) continue;
+    if (seen.has(normalized)) continue;
+    seen.add(normalized);
+    out.push(sentence);
+  }
+
+  return out;
 }
 
 function enforceMarkdownStructure(answer: string, style: AnswerStyle): string {
@@ -1556,6 +2036,11 @@ function enforceMarkdownStructure(answer: string, style: AnswerStyle): string {
     return normalized;
   }
 
+  if (!style.preferHeadings) {
+    const plain = normalizePlainResponse(cleaned);
+    return plain || buildFallbackAnswer(style);
+  }
+
   const headingCount = (cleaned.match(/(^|\n)##\s+[^\n]+/g) || []).length;
   if (headingCount >= 2) return cleaned;
   if (style.detailLevel === "short" && cleaned.length <= 420) return cleaned;
@@ -1569,10 +2054,16 @@ function enforceMarkdownStructure(answer: string, style: AnswerStyle): string {
     .map((s) => s.trim())
     .filter(Boolean);
 
-  const intro = sentences.slice(0, 2).join(" ") || plain;
-  const points = sentences.slice(2, 8);
-  const summary = sentences[sentences.length - 1] || intro;
+  const deduped = uniqueOrderedSentences(sentences);
+
+  const intro = deduped.slice(0, 2).join(" ") || plain;
+  const points = deduped.slice(2, 8);
+  const summary = deduped[deduped.length - 1] || intro;
   const profile = detectHeadingProfile(plain);
+
+  if (profile === "conceptual" && deduped.length <= 2) {
+    return deduped.join(" ");
+  }
 
   if (profile === "quantitative") {
     return `## Given
@@ -1600,33 +2091,10 @@ ${summary}`;
   }
 
   if (profile === "definition") {
-    return `## Definition
-${intro}
-
-## Explanation
-${points.length ? points.join("\n\n") : plain}
-
-## Exam Tip
-State the exact definition first, then add one clear supporting detail.
-
-## Quick Summary
-${summary}`;
+    return `${intro}\n\n${points.length ? points.join("\n\n") : plain}\n\n${summary}`;
   }
 
-  return `## Core Idea
-${intro}
-
-## Explanation
-${points.length ? points.join("\n\n") : plain}
-
-## Key Points
-${(points.length ? points : [plain]).map((p) => `- ${p}`).join("\n")}
-
-## Exam Tip
-Use precise subject vocabulary and link each point to what examiners award marks for.
-
-## Quick Summary
-${summary}`;
+  return `${intro}\n\n${points.length ? points.join("\n\n") : plain}\n\n${summary}`;
 }
 
 function buildFallbackAnswer(style: AnswerStyle): string {
@@ -1634,6 +2102,10 @@ function buildFallbackAnswer(style: AnswerStyle): string {
     return style.requiresHeadline
       ? "A Homecoming That Inspires\n\nMy cousin was one of the most successful students at our school, known for excellent grades, leadership in activities, and a positive attitude towards others. After school, my cousin moved abroad, studied and worked hard, and gained valuable international experience. Living in another country taught independence, discipline, and respect for different cultures.\n\nToday, my cousin is a role model for students because success was achieved through consistency, humility, and service. Instead of showing off, my cousin shares practical advice with younger students: set clear goals, manage time well, and keep learning from every challenge. This journey proves that with effort and character, students from our school can succeed anywhere in the world."
       : "I could not generate the full response in the required writing format. Please ask again.";
+  }
+
+  if (!style.preferHeadings) {
+    return "I can help with that. Share the exact topic or question and I will answer directly and clearly.";
   }
 
   return `## Introduction\nHere is a clear response to your question.\n\n## Key Points\n- Key idea 1.\n- Key idea 2.\n\n## Exam Tip\n${
@@ -2093,16 +2565,22 @@ async function generateExamAnswer(
         : "marking_points: 3-5 specific criteria extracted from the mark scheme. marks value 1-3 each.";
 
   const questionTypeInfo = detectQuestionType(question, contextChunks, history);
+  const followUpMode =
+    questionTypeInfo.questionType === "followup_elaborate" ||
+    questionTypeInfo.questionType === "followup_example";
+  const suppressRubricArrays = followUpMode && answerMode !== "mark_scheme_only";
   const dynamicFormatInstruction = getQuestionTypeFormatInstructions(
     questionTypeInfo.questionType,
     questionTypeInfo.marks || expectedMarks
   );
   const visualNeeds = detectVisualNeeds(question, contextChunks);
+  if (questionTypeInfo.questionType === "comparison" || questionTypeInfo.questionType === "list") {
+    visualNeeds.table = true;
+  }
   const visualInstructions = getVisualFormatInstructions(visualNeeds);
   const activeVisuals = listActiveVisualNeeds(visualNeeds);
   const baseFormatInstruction =
-    questionTypeInfo.questionType === "followup_elaborate" ||
-    questionTypeInfo.questionType === "followup_example"
+    followUpMode
       ? "- Continue naturally from conversation context without repeating unchanged points."
       : buildFormatInstruction(style, answerMode);
 
@@ -2164,6 +2642,12 @@ Each "point" should be a real criterion (not generic phrases).
 
 The "common_mistakes" array should contain realistic mistakes students make on this specific question type.
 
+${
+  suppressRubricArrays
+    ? 'This is a FOLLOW-UP answer. Return "marking_points": [] and "common_mistakes": [] (must be empty arrays).'
+    : ""
+}
+
 Respond ONLY with this JSON (no markdown fences, no extra text):
 {
   "answer": "<full structured answer here>",
@@ -2199,6 +2683,8 @@ ${question}`,
       expectedMarks,
       answerMode,
       fallbackMarkingPoints,
+      includeMarkingPoints: !suppressRubricArrays,
+      includeCommonMistakes: !suppressRubricArrays,
     });
   } catch (err) {
     console.error("generateExamAnswer error:", err);
@@ -2223,11 +2709,16 @@ async function generateDirectAnswer(
     questionTypeInfo.marks
   );
   const visualNeeds = detectVisualNeeds(question, []);
+  if (questionTypeInfo.questionType === "comparison" || questionTypeInfo.questionType === "list") {
+    visualNeeds.table = true;
+  }
   const visualInstructions = getVisualFormatInstructions(visualNeeds);
   const activeVisuals = listActiveVisualNeeds(visualNeeds);
   const followUpMode =
     questionTypeInfo.questionType === "followup_elaborate" ||
     questionTypeInfo.questionType === "followup_example";
+  const suppressRubricArrays = followUpMode && answerMode !== "mark_scheme_only";
+  const broadStudyPrompt = isBroadConversationPrompt(question);
   const baseFormatInstruction = followUpMode
     ? "- Continue naturally from the ongoing conversation and add new detail without repetition."
     : buildFormatInstruction(style, answerMode);
@@ -2244,6 +2735,11 @@ RULES:
 - Use Cambridge mark-scheme language.
 - Do NOT mention paper codes.
 - Response mode: ${answerMode === "mark_scheme_only" ? "MARK_SCHEME_ONLY" : "FULL_ANSWER"}.
+${
+  broadStudyPrompt
+    ? "- The user gave a broad study-chat opener, not a concrete question. Respond naturally and ask one concise clarifying question (topic/chapter/goal) before giving long content."
+    : ""
+}
 ${
   followUpMode
     ? "- This is a follow-up: continue from recent conversation context, do not restart from scratch, and avoid repeating unchanged points."
@@ -2264,6 +2760,12 @@ ${
 FORMAT:
 ${baseFormatInstruction}
 
+${
+  suppressRubricArrays
+    ? '- For follow-up answers: return "marking_points": [] and "common_mistakes": [] (must be empty arrays).'
+    : ""
+}
+
 Respond ONLY with this JSON (no markdown fences):
 {
   "answer": "<answer here>",
@@ -2283,6 +2785,8 @@ Respond ONLY with this JSON (no markdown fences):
 
     return parseGroqResponse(completion.choices[0]?.message?.content || "", style, {
       answerMode,
+      includeMarkingPoints: !suppressRubricArrays,
+      includeCommonMistakes: !suppressRubricArrays,
     });
   } catch (err) {
     console.error("generateDirectAnswer error:", err);
@@ -2297,6 +2801,8 @@ function parseGroqResponse(
     expectedMarks?: number;
     answerMode?: AnswerMode;
     fallbackMarkingPoints?: Array<{ point: string; marks: number }>;
+    includeMarkingPoints?: boolean;
+    includeCommonMistakes?: boolean;
   } = {}
 ): {
   answer: string;
@@ -2308,6 +2814,8 @@ function parseGroqResponse(
       ? Math.floor(Number(options.expectedMarks))
       : undefined;
   const answerMode = options.answerMode || "full_answer";
+  const includeMarkingPoints = options.includeMarkingPoints ?? true;
+  const includeCommonMistakes = options.includeCommonMistakes ?? true;
 
   let parsed: any = null;
 
@@ -2396,11 +2904,19 @@ function parseGroqResponse(
     }));
   }
 
-  const commonMistakes: string[] = Array.isArray(parsed?.common_mistakes)
+  if (!includeMarkingPoints && answerMode !== "mark_scheme_only") {
+    markingPoints = [];
+  }
+
+  let commonMistakes: string[] = Array.isArray(parsed?.common_mistakes)
     ? parsed.common_mistakes.filter(
         (m: any) => typeof m === "string" && m.trim()
       )
     : [];
+
+  if (!includeCommonMistakes && answerMode !== "mark_scheme_only") {
+    commonMistakes = [];
+  }
 
   return { answer: finalAnswer, markingPoints, commonMistakes };
 }
@@ -2610,8 +3126,8 @@ router.post("/query", async (req: Request, res: Response) => {
       return res.json({
         type: "exam_question",
         answer: direct.answer,
-        marking_points: direct.markingPoints,
-        common_mistakes: direct.commonMistakes,
+        marking_points: [],
+        common_mistakes: [],
         citations: [],
         source_type: "none",
         resolved_question: resolvedQuestionForClient,
@@ -2753,6 +3269,59 @@ router.post("/query", async (req: Request, res: Response) => {
     }
 
     const reliable = hasReliableContext(ragResult, Boolean(effectiveSubjectFilter));
+    const recoverable =
+      !reliable &&
+      resolved.answerMode !== "mark_scheme_only" &&
+      hasRecoverableContext(retrievalQuestion, ragResult);
+
+    if (recoverable) {
+      const rescueChunks =
+        ragResult.chunks.length > 0
+          ? ragResult.chunks
+          : ragResult.nearbyChunks.slice(0, Math.min(8, ragResult.nearbyChunks.length));
+
+      console.log(
+        `[RAG] Recovery path: using nearby context (best=${ragResult.bestSimilarity.toFixed(3)})`
+      );
+
+      const rescued = await generateExamAnswer(
+        retrievalQuestion,
+        rescueChunks,
+        history,
+        style,
+        resolved.answerMode
+      );
+
+      if (rescued) {
+        const rescueCitations = buildCitations(rescueChunks).slice(0, 1);
+        const source = buildSourceSummary(
+          rescueCitations,
+          nearbyRefs,
+          "Answer grounded using nearby past-paper context."
+        );
+
+        logDeveloperTrace(developerTrace);
+        return res.json({
+          type: "exam_question",
+          answer: rescued.answer,
+          marking_points: rescued.markingPoints,
+          common_mistakes: rescued.commonMistakes,
+          citations: rescueCitations,
+          low_confidence: true,
+          nearby_references: nearbyRefs.length > 0 ? nearbyRefs : undefined,
+          source_note: source.sourceNote,
+          source_type: source.sourceType,
+          resolved_question: resolvedQuestionForClient,
+          developer_trace: developerTrace,
+          retrieval: buildDiagnostics(
+            ragResult,
+            "nearby",
+            effectiveSubjectFilter,
+            "Recovered using nearby context"
+          ),
+        } as RagQueryResponse);
+      }
+    }
 
     if (!reliable) {
       if (resolved.answerMode === "mark_scheme_only") {
@@ -2767,13 +3336,7 @@ router.post("/query", async (req: Request, res: Response) => {
           type: "exam_question",
           answer:
             "## Marking Scheme\nI could not find a reliable past-paper match for this question, so I cannot provide an exact marking scheme.",
-          marking_points: [
-            {
-              point:
-                "No reliable mark scheme found in retrieved past-paper context for this question.",
-              marks: 1,
-            },
-          ],
+          marking_points: [],
           common_mistakes: [],
           citations: [],
           low_confidence: true,
@@ -2807,8 +3370,8 @@ router.post("/query", async (req: Request, res: Response) => {
         return res.json({
           type: "exam_question",
           answer: direct.answer,
-          marking_points: direct.markingPoints,
-          common_mistakes: direct.commonMistakes,
+          marking_points: [],
+          common_mistakes: [],
           citations: [],
           low_confidence: true,
           nearby_references: nearbyRefs.length > 0 ? nearbyRefs : undefined,
@@ -2858,8 +3421,8 @@ router.post("/query", async (req: Request, res: Response) => {
         return res.json({
           type: "exam_question",
           answer: direct.answer,
-          marking_points: direct.markingPoints,
-          common_mistakes: direct.commonMistakes,
+          marking_points: [],
+          common_mistakes: [],
           citations: [],
           low_confidence: true,
           nearby_references: nearbyRefs.length > 0 ? nearbyRefs : undefined,
