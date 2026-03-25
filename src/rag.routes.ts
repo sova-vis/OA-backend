@@ -833,28 +833,79 @@ function isVagueSearchQuery(question: string): boolean {
   return isLikelyFollowUpQuestion(normalized);
 }
 
+interface QueryIntentReadiness {
+  wordCount: number;
+  hasTaskVerb: boolean;
+  hasQuestionSyntax: boolean;
+  hasExamCue: boolean;
+  hasSubjectCue: boolean;
+  startsBroadConversation: boolean;
+  specificity: number;
+  retrievalScore: number;
+}
+
+function buildQueryIntentReadiness(question: string): QueryIntentReadiness {
+  const normalized = question.toLowerCase().trim();
+  const words = normalized.split(/\s+/).filter(Boolean);
+  const uniqueWordCount = new Set(words).size;
+  const specificity = words.length > 0 ? uniqueWordCount / words.length : 0;
+
+  const hasQuestionSyntax =
+    normalized.includes("?") ||
+    /^(what|why|how|when|where|which|who|can|could|would|should|is|are|do|does|did)\b/.test(
+      normalized
+    );
+
+  const hasExamCue =
+    /\b(question\s*\d+|q\.?\s*\d+|\d+\s*marks?|paper\s*\d+|variant\s*\d+|mark\s*scheme|past\s*paper)\b/i.test(
+      normalized
+    ) || /\b(o\s*-?level|igcse|gcse|cambridge|syllabus)\b/i.test(normalized);
+
+  const hasSubjectCue = /\b(chemistry|physics|mathematics|maths|english|islamiyat|pakistan\s+studies)\b/i.test(
+    normalized
+  );
+
+  const startsBroadConversation =
+    /^(let'?s|can\s+we|i\s+want\s+to|i\s+need\s+to|help\s+me|teach\s+me|start\s+with)\b/.test(
+      normalized
+    ) && !hasExplicitTaskVerb(normalized);
+
+  let retrievalScore = 0;
+  if (hasExplicitTaskVerb(normalized)) retrievalScore += 3;
+  if (hasQuestionSyntax) retrievalScore += 1;
+  if (hasExamCue) retrievalScore += 3;
+  if (hasSubjectCue) retrievalScore += 1;
+  if (words.length >= 7) retrievalScore += 1;
+  if (specificity >= 0.6) retrievalScore += 1;
+  if (startsBroadConversation) retrievalScore -= 2;
+  if (words.length <= 4 && !hasExamCue) retrievalScore -= 1;
+
+  return {
+    wordCount: words.length,
+    hasTaskVerb: hasExplicitTaskVerb(normalized),
+    hasQuestionSyntax,
+    hasExamCue,
+    hasSubjectCue,
+    startsBroadConversation,
+    specificity,
+    retrievalScore,
+  };
+}
+
+function isBroadConversationPrompt(question: string): boolean {
+  const info = buildQueryIntentReadiness(question);
+  return (
+    info.startsBroadConversation &&
+    !info.hasTaskVerb &&
+    !info.hasExamCue &&
+    info.retrievalScore <= 2
+  );
+}
+
 function looksLikeStandaloneExamQuestion(question: string): boolean {
-  const normalized = question.trim();
-  if (!normalized) return false;
-
-  const hasExamTokens =
-    /\b(question\s*\d+|q\.?\s*\d+|\d+\s*marks?|paper\s*\d+|variant\s*\d+|mark\s*scheme|o\s*-?level|igcse|gcse|cambridge)\b/i.test(
-      normalized
-    ) ||
-    /\b(chemistry|physics|mathematics|maths|english|islamiyat|pakistan\s+studies)\b/i.test(
-      normalized
-    );
-
-  const hasCommandWords =
-    hasExplicitTaskVerb(normalized) ||
-    SHORT_COMMAND_RE.test(normalized) ||
-    /\b(explain|define|calculate|compare|contrast|state|list|describe|evaluate|discuss|justify)\b/i.test(
-      normalized
-    );
-
-  const hasReasonableLength = normalized.split(/\s+/).filter(Boolean).length >= 7;
-
-  return hasExamTokens || (hasCommandWords && hasReasonableLength);
+  const info = buildQueryIntentReadiness(question);
+  if (isBroadConversationPrompt(question)) return false;
+  return info.retrievalScore >= 4;
 }
 
 function findLastExamUserQuestion(history: HistoryMessage[]): string | null {
@@ -900,11 +951,27 @@ function evaluateRagDecision(
     };
   }
 
-  if (history.length === 0) {
+  if (isBroadConversationPrompt(trimmed)) {
     return {
-      shouldSearch: true,
+      shouldSearch: false,
       followUpDetected: false,
-      reason: "no_history_new_turn",
+      reason: "broad_study_chat_prompt_no_retrieval",
+    };
+  }
+
+  if (history.length === 0) {
+    if (looksLikeStandaloneExamQuestion(trimmed)) {
+      return {
+        shouldSearch: true,
+        followUpDetected: false,
+        reason: "no_history_exam_like_turn",
+      };
+    }
+
+    return {
+      shouldSearch: false,
+      followUpDetected: false,
+      reason: "no_history_general_turn_no_retrieval",
     };
   }
 
@@ -929,6 +996,15 @@ function evaluateRagDecision(
   const followUpLikely = isLikelyFollowUpQuestion(trimmed);
   const hasReferencePronoun = looksLikeFollowUpReference(trimmed);
   const wordCount = trimmed.split(/\s+/).filter(Boolean).length;
+  const readiness = buildQueryIntentReadiness(trimmed);
+
+  if (!explicitTask && !readiness.hasExamCue && readiness.retrievalScore <= 2) {
+    return {
+      shouldSearch: false,
+      followUpDetected: false,
+      reason: "low_readiness_general_prompt_no_retrieval",
+    };
+  }
 
   if (explicitTask && explicitNewTopic) {
     return {
@@ -2664,6 +2740,7 @@ async function generateDirectAnswer(
     questionTypeInfo.questionType === "followup_elaborate" ||
     questionTypeInfo.questionType === "followup_example";
   const suppressRubricArrays = followUpMode && answerMode !== "mark_scheme_only";
+  const broadStudyPrompt = isBroadConversationPrompt(question);
   const baseFormatInstruction = followUpMode
     ? "- Continue naturally from the ongoing conversation and add new detail without repetition."
     : buildFormatInstruction(style, answerMode);
@@ -2680,6 +2757,11 @@ RULES:
 - Use Cambridge mark-scheme language.
 - Do NOT mention paper codes.
 - Response mode: ${answerMode === "mark_scheme_only" ? "MARK_SCHEME_ONLY" : "FULL_ANSWER"}.
+${
+  broadStudyPrompt
+    ? "- The user gave a broad study-chat opener, not a concrete question. Respond naturally and ask one concise clarifying question (topic/chapter/goal) before giving long content."
+    : ""
+}
 ${
   followUpMode
     ? "- This is a follow-up: continue from recent conversation context, do not restart from scratch, and avoid repeating unchanged points."
