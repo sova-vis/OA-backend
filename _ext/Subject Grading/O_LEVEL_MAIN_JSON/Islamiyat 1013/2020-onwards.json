@@ -1,0 +1,883 @@
+{
+  "2020": {
+    "Oct_Nov": {
+      "Paper_1": {
+        "Variant_1": [
+          {
+            "question_number": "1",
+            "sub_question": "(a)",
+            "question_text": "briefly describe the main theme(s) in each passage",
+            "marking_scheme": "Mark according to the following levels for AO1 (Knowledge): Level 4 (4 marks): Very Good/Excellent. A thorough, well-developed and substantial response demonstrating extensive, relevant and highly accurate knowledge of the subject in considerable detail, likely quoting Qur’an verses to support and illustrate points made. Level 3 (3 marks): Good. Addresses the question confidently and coherently, demonstrating sound, detailed and generally relevant and accurate knowledge, covering the main points, and may quote Qur’an verses and Hadiths to support points made. Level 2 (2 marks): Satisfactory. A fair, mainly relevant but generally undeveloped response demonstrating some factual knowledge which is fairly accurate, with some of the main points covered but lacking substance. Level 1 (1 mark): Basic. An attempt to answer the question that is limited and unfinished, with very limited knowledge including only a small amount of relevant material, facts reported in basic outline only, often inaccurately, though some credible points are made. Level 0 (0 marks): Irrelevant. No apparent attempt to answer the question set, or a wholly irrelevant response.",
+            "marks": 4,
+            "topic_syllabus": "Quran",
+            "topic_general": "Beliefs"
+          },
+          {
+            "question_number": "1",
+            "sub_question": "(b)",
+            "question_text": "briefly explain the importance of these themes in a Muslim’s life today",
+            "marking_scheme": "Mark according to the following levels for AO2 (Understanding): Level 4 (4 marks): Very Good/Excellent. Demonstrates a wide and thorough understanding of the question, fully recognising and explaining the significance of the material used, with the ability to reason, evaluate and discuss in a thoughtful, mature manner. Level 3 (3 marks): Good. Understands the significance of the question and seeks to move beyond a purely descriptive approach, demonstrating touches of maturity and a willingness to engage with and discuss the material. Level 2 (2 marks): Satisfactory. The response is descriptive but makes some effort to offer evaluation, attempting, though with limited success, to move beyond a purely factual approach with some limited discussion. Level 1 (1 mark): Basic. Limited understanding of the subject, with a descriptive and immature response and no attempt to discuss or evaluate the material. Level 0 (0 marks): Irrelevant. No response submitted, or clearly lacks any understanding of the subject matter.",
+            "marks": 4,
+            "topic_syllabus": "Quran",
+            "topic_general": "Beliefs"
+          }
+        ],
+        "Variant_2": [
+          {
+            "question_number": "1",
+            "sub_question": "(a)",
+            "question_text": "Choose any two of the following passages from the Qur’an and briefly describe the main theme(s) in each passage",
+            "marking_scheme": "Award marks based on the level descriptors for AO1 (Knowledge). Candidates must describe the main themes of two chosen passages from the Qur’an. Level 4 (4 marks): Very Good/Excellent. A thorough, well-developed and substantial response. Demonstrates extensive, relevant and highly accurate knowledge of the subject in considerable detail and with evident expertise. Likely to quote Qur’an verses and Hadiths to support and illustrate points made. Comprehensive and thoughtful. Level 3 (3 marks): Good. Addresses the question confidently and coherently. Demonstrates sound, detailed and generally relevant and accurate knowledge of the subject matter in great detail. Covers the main points. May quote Qur’an verses and Hadiths to support points made. Level 2 (2 marks): Satisfactory. A fair, mainly relevant but generally undeveloped response. The candidate demonstrates some factual knowledge, which is fairly accurate and slightly wider than at basic level. Some of the main points are covered but lack substance. Level 1 (1 mark): Basic. An attempt to answer the question, but lacks potential and/or is unfinished. Very limited knowledge of the subject. Response includes only a small amount of relevant material, or mainly irrelevant points. Facts are reported in basic outline only, often inaccurately, though some credible points are made. Level 0 (0 marks): Irrelevant. No apparent attempt to answer the question set, or a wholly irrelevant response. Totally illegible.",
+            "marks": 4,
+            "topic_syllabus": "Quran",
+            "topic_general": "Beliefs"
+          },
+          {
+            "question_number": "1",
+            "sub_question": "(b)",
+            "question_text": "Briefly explain the importance of these themes in a Muslim’s life today",
+            "marking_scheme": "Award marks based on the level descriptors for AO2 (Understanding). Candidates must explain the importance of the themes from the two chosen passages in a Muslim’s life today. Level 4 (4 marks): Very Good/Excellent. Demonstrates a wide and thorough understanding of what the question asks. Recognises fully and can explain the significance of material used in answer. Can reason, evaluate and discuss in a thoughtful, mature manner. Level 3 (3 marks): Good. Understands the significance of the question. Seeks to move clearly beyond a purely descriptive approach, demonstrating touches of maturity and a willingness to engage with and discuss the material. Level 2 (2 marks): Satisfactory. Response is descriptive but makes some effort to offer evaluation. The candidate attempts, though with limited success, to move beyond a purely factual approach, with some limited discussion of the material. Level 1 (1 mark): Basic. Limited understanding of the subject. The candidate’s response is descriptive and immature, with no attempt to discuss or evaluate the material. Level 0 (0 marks): Irrelevant. No response submitted, or clearly lacks any understanding of the subject matter.",
+            "marks": 4,
+            "topic_syllabus": "Quran",
+            "topic_general": "Beliefs"
+          }
+        ]
+      },
+      "Paper_2": {
+        "Variant_1": [
+          {
+            "question_number": "1",
+            "sub_question": "(a)",
+            "question_text": "Choose any two of the following Hadiths, and describe their teachings about what Muslims believe",
+            "marking_scheme": "Award marks according to the AO1 level descriptors for knowledge. Level 4 (4 marks): Very Good/Excellent. A thorough, well-developed and substantial response that demonstrates extensive, relevant and highly accurate knowledge of the subject in considerable detail, likely quoting Qur’an verses and Hadiths to support and illustrate points made, and is comprehensive and thoughtful. Level 3 (3 marks): Good. Addresses the question confidently and coherently, demonstrating sound, detailed and generally relevant and accurate knowledge, covering the main points, and may quote Qur’an verses and Hadiths to support points made. Level 2 (2 marks): Satisfactory. A fair, mainly relevant but generally undeveloped response that demonstrates some factual knowledge which is fairly accurate, covering some of the main points but lacking substance. Level 1 (1 mark): Basic. An attempt to answer the question that is limited and unfinished, with very limited knowledge of the subject, including only a small amount of relevant material, and facts reported in basic outline only, often inaccurately, though some credible points are made. Level 0 (0 marks): Irrelevant. No apparent attempt to answer the question set, or a wholly irrelevant response. For this part, read both answers for the chosen Hadiths together and give a global mark based on the overall quality.",
+            "marks": 4,
+            "topic_syllabus": "Hadith",
+            "topic_general": "Islamic Beliefs and Practices"
+          },
+          {
+            "question_number": "1",
+            "sub_question": "(b)",
+            "question_text": "Choose any two of the following Hadiths, and explain how Muslims can put these teachings into action",
+            "marking_scheme": "Award marks according to the AO2 level descriptors for understanding. Level 4 (4 marks): Very Good/Excellent. Demonstrates a wide and thorough understanding of what the question asks, fully recognising and explaining the significance of material used, and can reason, evaluate and discuss in a thoughtful, mature manner. Level 3 (3 marks): Good. Understands the significance of the question, seeking to move clearly beyond a purely descriptive approach, with touches of maturity and a willingness to engage with and discuss the material. Level 2 (2 marks): Satisfactory. The response is descriptive but makes some effort to offer evaluation, attempting, though with limited success, to move beyond a purely factual approach with some limited discussion. Level 1 (1 mark): Basic. Limited understanding of the subject, with a descriptive and immature response that includes no attempt to discuss or evaluate the material. Level 0 (0 marks): Irrelevant. No response submitted, or clearly lacks any understanding of the subject matter. For this part, read both answers for the chosen Hadiths together and give a global mark based on the overall quality.",
+            "marks": 4,
+            "topic_syllabus": "Hadith",
+            "topic_general": "Islamic Beliefs and Practices"
+          }
+        ],
+        "Variant_2": [
+          {
+            "question_number": "1",
+            "sub_question": "(a)",
+            "question_text": "Choose any two of the following Hadiths, and describe their teachings about what Muslims believe",
+            "marking_scheme": "Marks are awarded based on the level descriptors for AO1 (Knowledge). Level 4 (4 marks): Very Good/Excellent. A thorough, well-developed and substantial response that demonstrates extensive, relevant and highly accurate knowledge of the subject in considerable detail and with evident expertise. It is likely to quote Qur’an verses and Hadiths to support and illustrate points made, and is comprehensive and thoughtful. Level 3 (3 marks): Good. Addresses the question confidently and coherently, demonstrating sound, detailed and generally relevant and accurate knowledge of the subject matter in great detail. It covers the main points and may quote Qur’an verses and Hadiths to support points made. Level 2 (2 marks): Satisfactory. A fair, mainly relevant but generally undeveloped response that demonstrates some factual knowledge, which is fairly accurate and slightly wider than at basic level. Some of the main points are covered but lack substance. Level 1 (1 mark): Basic. An attempt to answer the question, but it lacks potential and/or is unfinished. Very limited knowledge of the subject is shown, with the response including only a small amount of relevant material, or mainly irrelevant points. Facts are reported in basic outline only, often inaccurately, though some credible points are made. Level 0 (0 marks): Irrelevant. No apparent attempt to answer the question set, or a wholly irrelevant response. Totally illegible. For this question, candidates should describe the teachings of any two chosen Hadiths about what Muslims believe, ensuring responses are accurate and valid.",
+            "marks": 4,
+            "topic_syllabus": "Hadith",
+            "topic_general": "Beliefs"
+          },
+          {
+            "question_number": "1",
+            "sub_question": "(b)",
+            "question_text": "Explain how Muslims can put these teachings into action",
+            "marking_scheme": "Marks are awarded based on the level descriptors for AO2 (Understanding). Level 4 (4 marks): Very Good/Excellent. Demonstrates a wide and thorough understanding of what the question asks, fully recognising and explaining the significance of material used in the answer. It can reason, evaluate and discuss in a thoughtful, mature manner. Level 3 (3 marks): Good. Understands the significance of the question and seeks to move clearly beyond a purely descriptive approach, demonstrating touches of maturity and a willingness to engage with and discuss the material. Level 2 (2 marks): Satisfactory. The response is descriptive but makes some effort to offer evaluation, attempting, though with limited success, to move beyond a purely factual approach, with some limited discussion of the material. Level 1 (1 mark): Basic. Limited understanding of the subject, with the response being descriptive and immature, and no attempt to discuss or evaluate the material. Level 0 (0 marks): Irrelevant. No response submitted, or clearly lacks any understanding of the subject matter. For this question, candidates should explain how Muslims can apply the teachings of the two chosen Hadiths in practice, ensuring responses are accurate and valid.",
+            "marks": 4,
+            "topic_syllabus": "Hadith",
+            "topic_general": "Practices"
+          }
+        ]
+      }
+    }
+  },
+  "2021": {
+    "May_June": {
+      "Paper_1": {
+        "Variant_1": [
+          {
+            "question_number": "1",
+            "sub_question": "(a)",
+            "question_text": "Choose any two of the following passages from the Qur’an and briefly describe the main theme(s) in each passage",
+            "marking_scheme": "Award marks according to AO1 levels of response for recalling, selecting and presenting relevant facts from the Qur’an. For 3–4 marks: The candidate provides a detailed and accurate description of the main themes in two passages, showing excellent knowledge and understanding of the content. For 2 marks: The candidate provides some accurate description of the main themes in two passages, with reasonable knowledge. For 1 mark: The candidate provides limited or partially accurate description of the main themes in one or two passages. For 0 marks: No relevant description or completely inaccurate response. Acceptable answers include: For Sura 41:37, main themes are the signs of Allah in creation (night, day, sun, moon) and the command to worship Allah alone, rejecting idol worship. For Sura 42:4–5, main themes are Allah’s sovereignty over all creation and His attributes of forgiveness and mercy, with angels praising Him. For Sura 2:21–22, main themes are the call to worship the one Creator, His provision of sustenance through nature, and the warning against associating partners with Allah. Award up to 2 marks per passage for accurate themes described.",
+            "marks": 4,
+            "topic_syllabus": "Quran",
+            "topic_general": "Beliefs"
+          },
+          {
+            "question_number": "1",
+            "sub_question": "(b)",
+            "question_text": "briefly explain the importance of these themes in a Muslim’s life today",
+            "marking_scheme": "Award marks according to AO2 levels of response for demonstrating understanding of the significance of the themes in the teachings of Islam and in the lives of Muslims. For 3–4 marks: The candidate provides a detailed explanation of the importance of the themes from the two passages in a Muslim’s life today, showing excellent understanding and evaluation. For 2 marks: The candidate provides some explanation of the importance, with reasonable understanding. For 1 mark: The candidate provides limited or superficial explanation. For 0 marks: No relevant explanation or completely inaccurate response. Acceptable answers include: The themes emphasize monotheism (Tawhid), encouraging Muslims to worship only Allah and avoid idolatry, which is important for maintaining faith and moral integrity in daily life. The signs in creation promote gratitude and reflection on Allah’s power, helping Muslims in spiritual growth and environmental stewardship. The emphasis on Allah’s forgiveness and mercy encourages repentance and ethical behavior, fostering a compassionate society. In a Muslim’s life today, these themes guide practices like prayer, discourage materialism, and promote social justice and thankfulness.",
+            "marks": 4,
+            "topic_syllabus": "Quran",
+            "topic_general": "Beliefs"
+          }
+        ],
+        "Variant_2": [
+          {
+            "question_number": "1",
+            "sub_question": "(a)",
+            "question_text": "briefly describe the main theme(s) in each passage",
+            "marking_scheme": "Candidates are required to briefly describe the main themes in each of the two chosen passages from the Qur’an. Marks are awarded based on AO1: To recall, select and present relevant facts from the main elements of the faith and history of Islam. Award up to 4 marks according to the levels of response: Level 4 (4 marks) for a detailed and accurate description of the themes; Level 3 (3 marks) for a good description with some accuracy; Level 2 (2 marks) for a basic description with limited accuracy; Level 1 (1 mark) for a superficial or incomplete description; Level 0 (0 marks) for no relevant description.",
+            "marks": 4,
+            "topic_syllabus": "Quran",
+            "topic_general": "Beliefs"
+          },
+          {
+            "question_number": "1",
+            "sub_question": "(b)",
+            "question_text": "briefly explain the importance of these themes in a Muslim’s life today",
+            "marking_scheme": "Candidates are required to briefly explain the importance of the themes described in part (a) in a Muslim’s life today. Marks are awarded based on AO2: To demonstrate understanding of the significance of the selected information in the teachings of Islam and in the lives of Muslims. Award up to 4 marks according to the levels of response: Level 4 (4 marks) for a detailed and accurate explanation showing clear understanding; Level 3 (3 marks) for a good explanation with some understanding; Level 2 (2 marks) for a basic explanation with limited understanding; Level 1 (1 mark) for a superficial or incomplete explanation; Level 0 (0 marks) for no relevant explanation.",
+            "marks": 4,
+            "topic_syllabus": "Quran",
+            "topic_general": "Beliefs"
+          }
+        ]
+      },
+      "Paper_2": {
+        "Variant_1": [
+          {
+            "question_number": "1",
+            "sub_question": "(a)",
+            "question_text": "Choose any two of the following Hadiths and describe their teaching about what Muslims believe.",
+            "marking_scheme": "Award up to 4 marks for describing the teachings of the two chosen Hadiths about what Muslims believe, based on Assessment Objective 1 (AO1): recalling, selecting, and presenting relevant facts from the main elements of the faith of Islam. Acceptable answers include accurate descriptions of the beliefs in the Hadiths. For example: For Hadith (i): It teaches that performing obligatory prayers, fasting in Ramadan, and adhering to what is lawful and forbidden is sufficient for entering paradise, emphasizing the importance of basic Islamic obligations for salvation. For Hadith (ii): It teaches that every person must perform charity daily with every joint, such as acting justly between people, helping with mounts or belongings, saying good words, taking steps to prayers, or removing harmful things from the road, promoting the idea that charity is an everyday duty. For Hadith (iii): It teaches that martyrs include those killed, dying naturally, or dying from plagues or cholera in the way of Allah, indicating that martyrdom encompasses various forms of sacrifice for Allah's cause. For Hadith (iv): It teaches that modesty produces only good, highlighting modesty as a virtuous quality that leads to positive outcomes. Use the following levels of response: 3–4 marks for a comprehensive and accurate description covering both chosen Hadiths; 1–2 marks for a partial description, such as covering only one Hadith or key points inaccurately; 0 marks for no relevant content. Award marks positively for correct elements without deducting for errors or omissions.",
+            "marks": 4,
+            "topic_syllabus": "Hadith",
+            "topic_general": "Islamic Teachings"
+          },
+          {
+            "question_number": "1",
+            "sub_question": "(b)",
+            "question_text": "Explain how Muslims can put these teachings into action.",
+            "marking_scheme": "Award up to 4 marks for explaining how Muslims can put the teachings of the two chosen Hadiths into action, based on Assessment Objective 2 (AO2): demonstrating understanding of the significance of the teachings in the lives of Muslims. Acceptable answers include practical ways to apply the teachings. For example: For Hadith (i): Muslims can perform the five daily prayers, fast during Ramadan, avoid forbidden actions like gambling or consuming alcohol, and focus on these basics as a path to paradise. For Hadith (ii): Muslims can perform daily charities by acting justly in disputes, helping others with their loads, speaking kindly, walking to the mosque for prayers, or clearing obstacles from paths. For Hadith (iii): Muslims can strive in the way of Allah through jihad, accept death in His cause with patience, or view deaths from natural causes or diseases as potential martyrdom if in service to Islam. For Hadith (iv): Muslims can practice modesty by dressing modestly, behaving humbly in interactions, and avoiding boastfulness or immodest actions. Use the following levels of response: 3–4 marks for a detailed and insightful explanation showing clear understanding of how the teachings apply to Muslim lives; 1–2 marks for a basic explanation with limited detail; 0 marks for no relevant content. Award marks positively for valid points without deducting for errors or omissions.",
+            "marks": 4,
+            "topic_syllabus": "Hadith",
+            "topic_general": "Islamic Practices"
+          }
+        ],
+        "Variant_2": [
+          {
+            "question_number": "1",
+            "sub_question": "(a)",
+            "question_text": "Describe their teaching about what Muslims believe",
+            "marking_scheme": "Award up to 4 marks for AO1: recalling, selecting and presenting relevant facts from the Hadiths about Muslim beliefs. Levels of response: Level 4 (3-4 marks): Excellent recall with detailed and accurate description of the teachings from the two selected Hadiths; Level 3 (2 marks): Good recall with some accurate description; Level 2 (1 mark): Basic recall with limited relevant facts; Level 1 (0 marks): No relevant knowledge or completely inaccurate response. Acceptable answers include descriptions based on the chosen Hadiths, such as for Hadith (i): being gentle, not hard, causing rejoicing and not alienating in governance; for Hadith (ii): kindness in transactions; for Hadith (iii): sincerity to Allah, His Book, His Messenger, Muslim leaders and common people; for Hadith (iv): changing evil with hand, tongue or heart.",
+            "marks": 4,
+            "topic_syllabus": "Hadith",
+            "topic_general": "Islamic Beliefs and Practices"
+          },
+          {
+            "question_number": "1",
+            "sub_question": "(b)",
+            "question_text": "Explain how Muslims can put these teachings into action",
+            "marking_scheme": "Award up to 4 marks for AO2: demonstrating understanding of the significance of the teachings in the lives of Muslims. Levels of response: Level 4 (3-4 marks): Excellent understanding with clear explanation of how to apply the teachings practically; Level 3 (2 marks): Good understanding with some explanation; Level 2 (1 mark): Basic understanding with limited explanation; Level 1 (0 marks): No understanding or irrelevant response. For the selected Hadiths, acceptable answers include: for Hadith (i): Muslims can be gentle in leadership roles, avoid harshness in daily interactions, promote joy in communities; for Hadith (ii): show mercy in business dealings, be kind when selling, buying or collecting debts; for Hadith (iii): demonstrate sincerity by being truthful to God, respecting the Quran, following the Prophet, supporting Muslim leaders and caring for the community; for Hadith (iv): actively stop wrongdoing by physical action if possible, or by speaking out, or at least disapproving in the heart.",
+            "marks": 4,
+            "topic_syllabus": "Hadith",
+            "topic_general": "Islamic Beliefs and Practices"
+          }
+        ]
+      }
+    },
+    "Oct_Nov": {
+      "Paper_1": {
+        "Variant_1": [
+          {
+            "question_number": "1",
+            "sub_question": "(a)",
+            "question_text": "Choose any two of the following passages from the Qur’an, and briefly describe the main theme(s) in each passage",
+            "marking_scheme": "Award up to 4 marks for recalling and selecting relevant facts to describe the main themes in each of the two chosen passages. Marks are awarded based on the levels of response for AO1 (knowledge): Level 4 (3–4 marks): Detailed and accurate description of the main themes for both passages, showing comprehensive understanding; Level 3 (2 marks): Good description of the main themes for both passages with some accuracy and relevant details; Level 2 (1 mark): Basic description of the main themes for at least one passage, with limited accuracy; Level 1 (0 marks): No relevant content or incorrect description. For example, for Sura 112, acceptable answers include: The main theme is the oneness and uniqueness of Allah, emphasizing that Allah is eternal, absolute, does not beget or be begotten, and has no equal. For Sura 1, acceptable answers include: The main themes are praise of Allah as the gracious and merciful sustainer, seeking guidance on the straight path, and avoiding the ways of those who are misguided or under anger.",
+            "marks": 4,
+            "topic_syllabus": "Quran",
+            "topic_general": "Beliefs and Practices"
+          },
+          {
+            "question_number": "1",
+            "sub_question": "(b)",
+            "question_text": "Choose any two of the following passages from the Qur’an, and briefly explain the importance of these themes in a Muslim’s life today",
+            "marking_scheme": "Award up to 4 marks for demonstrating understanding of the significance of the themes in the teachings of Islam and in the lives of Muslims today, based on the levels of response for AO2 (understanding and evaluation): Level 4 (3–4 marks): Clear and detailed explanation of the importance of the themes for both passages, showing how they apply to a Muslim’s daily life, such as fostering monotheism or seeking guidance; Level 3 (2 marks): Good explanation of the importance for both passages with some relevant examples; Level 2 (1 mark): Basic explanation of the importance for at least one passage; Level 1 (0 marks): No relevant content or incorrect explanation. For example, for Sura 112, acceptable answers include: The theme of Allah’s oneness is important as it encourages Muslims to worship only one God, promoting unity and preventing idolatry in modern life. For Sura 1, acceptable answers include: The themes of seeking guidance remind Muslims to pray regularly and make ethical decisions, helping them stay on the right path in contemporary society.",
+            "marks": 4,
+            "topic_syllabus": "Quran",
+            "topic_general": "Beliefs and Practices"
+          }
+        ],
+        "Variant_2": [
+          {
+            "question_number": "1",
+            "sub_question": "(a)",
+            "question_text": "Choose any two of the following passages from the Qur’an and briefly describe the main theme(s) in each passage",
+            "marking_scheme": "Candidates must briefly describe the main themes in each of the two chosen passages from the Qur’an. For each passage, award up to 2 marks based on the Assessment Objective 1 (AO1), which requires recalling, selecting, and presenting relevant facts. Levels of response: Level 4 (3-4 marks): Provides a detailed and accurate description of the main themes for both passages, showing comprehensive knowledge; for example, for Sura 2.255, themes include the oneness of God (Tawhid), His attributes such as being eternal, all-knowing, and supreme; for Sura 99, themes include the Day of Judgment, accountability for deeds; for Sura 93, themes include God’s favor to the Prophet and encouragement for social responsibilities like caring for orphans and the needy. Level 3 (2 marks): Provides a good description of the main themes for both passages, with some accuracy and detail. Level 2 (1 mark): Gives a basic description of the main themes for at least one passage, but may lack detail or accuracy. Level 1 (0 marks): Provides inaccurate, irrelevant, or no description. Acceptable answers include synonyms such as 'unity of God' for Tawhid, and descriptions must be in the candidate's own words where possible, but direct lifts from the text are accepted if accurate. Award marks positively for correct elements without deducting for errors or omissions.",
+            "marks": 4,
+            "topic_syllabus": "Quran",
+            "topic_general": "Beliefs"
+          },
+          {
+            "question_number": "1",
+            "sub_question": "(b)",
+            "question_text": "Choose any two of the following passages from the Qur’an and briefly explain the importance of these themes in a Muslim’s life today",
+            "marking_scheme": "Candidates must briefly explain the importance of the main themes from the two chosen passages in a Muslim’s life today. For each passage, award up to 2 marks based on Assessment Objective 2 (AO2), which requires demonstrating understanding of the significance of the themes in Islamic teachings and Muslim lives. Levels of response: Level 4 (3-4 marks): Provides a detailed and accurate explanation of the importance for both passages, showing clear understanding; for example, for Sura 2.255, the themes emphasize monotheism and God’s sovereignty, which are important as they encourage unwavering faith, reliance on God, and discourage polytheism in daily life; for Sura 99, the themes of accountability promote moral behavior, justice, and preparation for the afterlife; for Sura 93, the themes stress gratitude to God and social duties, important for fostering compassion, helping the vulnerable, and maintaining community welfare. Level 3 (2 marks): Provides a good explanation of the importance for both passages, with some depth. Level 2 (1 mark): Gives a basic explanation for at least one passage, but may lack depth or relevance. Level 1 (0 marks): Provides inaccurate, superficial, or no explanation. Acceptable answers include alternatives such as explaining how themes guide ethical decisions or strengthen spiritual practice; explanations should be in the candidate’s own words, and direct lifts are accepted if they demonstrate understanding. Award marks positively for valid points without deducting for errors.",
+            "marks": 4,
+            "topic_syllabus": "Quran",
+            "topic_general": "Beliefs"
+          }
+        ]
+      },
+      "Paper_2": {
+        "Variant_1": [
+          {
+            "question_number": "1",
+            "sub_question": "(a)",
+            "question_text": "Choose any two of the following Hadiths and describe their teaching about what Muslims believe",
+            "marking_scheme": "Candidates should select any two Hadiths from the four provided and describe their teachings regarding Muslim beliefs. Award marks based on Assessment Objective 1 (AO1), which requires recalling, selecting, and presenting relevant facts from the main elements of the faith and history of Islam. Use the following levels of response: Level 4 (3-4 marks) for a comprehensive and accurate description that demonstrates excellent knowledge, with relevant details from the chosen Hadiths; Level 3 (2 marks) for a good description that is mostly accurate with some detail; Level 2 (1 mark) for a basic description that includes some relevant facts but lacks detail; Level 1 (0 marks) for an inaccurate, irrelevant, or no response. The Hadiths are: (i) 'I and the man who brings up an orphan will be in paradise like this.' And he pointed with his two fingers, the index finger and the middle finger; (ii) 'God will not show mercy to him who does not show mercy to others'; (iii) 'One who manages the affairs of the widow and the poor man is like the one who exerts himself in the way of Allah, or the one who stands for prayer in the night or fasts in the day'; (iv) 'The world is the believer’s prison and the unbeliever’s paradise'. Acceptable answers include explanations of key teachings such as the importance of caring for orphans, showing mercy, helping the needy, and the transient nature of worldly life compared to the afterlife.",
+            "marks": 4,
+            "topic_syllabus": "Beliefs",
+            "topic_general": "Islamic Studies"
+          },
+          {
+            "question_number": "1",
+            "sub_question": "(b)",
+            "question_text": "Explain how Muslims can put these teachings into action",
+            "marking_scheme": "Candidates should explain how Muslims can apply the teachings of the two chosen Hadiths in their daily lives. Award marks based on Assessment Objective 2 (AO2), which requires demonstrating understanding of the significance of the selected information in the teachings of Islam and in the lives of Muslims. Use the following levels of response: Level 4 (3-4 marks) for a comprehensive explanation that shows excellent understanding, evaluating how the teachings can be practically implemented with relevant examples; Level 3 (2 marks) for a good explanation that demonstrates some understanding and provides examples; Level 2 (1 mark) for a basic explanation with limited understanding; Level 1 (0 marks) for an inaccurate, irrelevant, or no response. The Hadiths are: (i) 'I and the man who brings up an orphan will be in paradise like this.' And he pointed with his two fingers, the index finger and the middle finger, which teaches caring for orphans, so Muslims can put this into action by adopting or supporting orphans; (ii) 'God will not show mercy to him who does not show mercy to others', so Muslims can show kindness and forgiveness; (iii) 'One who manages the affairs of the widow and the poor man is like the one who exerts himself in the way of Allah, or the one who stands for prayer in the night or fasts in the day', so Muslims can help widows and the poor through charity; (iv) 'The world is the believer’s prison and the unbeliever’s paradise', so Muslims can focus on spiritual growth over worldly pleasures. Acceptable answers should include practical actions like charitable deeds, community support, and living modestly.",
+            "marks": 4,
+            "topic_syllabus": "Practices",
+            "topic_general": "Islamic Studies"
+          }
+        ],
+        "Variant_2": [
+          {
+            "question_number": "1",
+            "sub_question": "(a)",
+            "question_text": "Choose any two of the following Hadiths and describe their teaching about what Muslims believe",
+            "marking_scheme": "Candidates must describe the teaching about what Muslims believe from any two of the provided Hadiths. Marks are awarded based on AO1 criteria for recalling, selecting, and presenting relevant facts from the main elements of the faith and history of Islam. Award marks as follows: 4 marks for excellent recall and use of relevant facts with clear and accurate description; 3 marks for good recall and use with mostly accurate description; 2 marks for some recall and use but with inaccuracies or omissions; 1 mark for limited recall or use; 0 marks for no relevant content.",
+            "marks": 4,
+            "topic_syllabus": "Hadith",
+            "topic_general": "Teachings of Islam"
+          },
+          {
+            "question_number": "1",
+            "sub_question": "(b)",
+            "question_text": "Explain how Muslims can put these teachings into action",
+            "marking_scheme": "Candidates must explain how Muslims can apply the teachings from the two chosen Hadiths in their lives. Marks are awarded based on AO2 criteria for demonstrating understanding of the significance of the selected information in the teachings of Islam and in the lives of Muslims. Award marks as follows: 4 marks for excellent understanding and evaluation, showing clear insight into practical application; 3 marks for good understanding with relevant explanation; 2 marks for some understanding but with limited depth; 1 mark for basic understanding; 0 marks for no relevant content.",
+            "marks": 4,
+            "topic_syllabus": "Hadith",
+            "topic_general": "Teachings of Islam"
+          }
+        ]
+      }
+    }
+  },
+  "2022": {
+    "May_June": {
+      "Paper_1": {
+        "Variant_1": [
+          {
+            "question_number": "1",
+            "sub_question": "(a)",
+            "question_text": "Choose any two of the following passages from the Qur’an, and briefly describe the main theme(s) in each passage",
+            "marking_scheme": "Award up to 4 marks for AO1: recalling, selecting and presenting relevant facts from the Qur’an. Candidates must choose any two passages and describe their main themes accurately. For each passage, award marks based on the levels of response: Level 4 (3–4 marks): Excellent recall and organization, providing a detailed and accurate description of the main themes with relevant examples; Level 3 (2 marks): Good recall, describing main themes clearly with some detail; Level 2 (1 mark): Basic recall, mentioning at least one main theme but with limited detail; Level 1 (0 marks): No relevant recall or incorrect information. Acceptable answers include: For Sura 96.1–5, themes such as the creation of man from a clot, the command to read, God’s bountiful nature, teaching through the pen, and acquiring knowledge. For Sura 99, themes such as the Day of Judgment, the earth shaking and revealing its burdens, humanity’s reaction, accountability for deeds, and that even an atom’s weight of good or evil will be seen. For Sura 6.101–103, themes such as God’s role as the sole Creator of the heavens and earth, His uniqueness without a consort, His full knowledge of all things, the command to worship Him, and that He is beyond human vision but aware of all. Award 1 mark for each accurately described main theme up to the maximum for the two passages chosen. Accept answers in the candidate’s own words where appropriate, but do not accept lifted text without understanding.",
+            "marks": 4,
+            "topic_syllabus": "Quran",
+            "topic_general": "Beliefs"
+          },
+          {
+            "question_number": "1",
+            "sub_question": "(b)",
+            "question_text": "Choose any two of the following passages from the Qur’an, and briefly explain the importance of these themes in a Muslim’s life today",
+            "marking_scheme": "Award up to 4 marks for AO2: demonstrating understanding of the significance of the themes in the teachings of Islam and in the lives of Muslims. Candidates must choose the same two passages as in part (a) and explain the importance of their themes today. For each passage, award marks based on the levels of response: Level 4 (3–4 marks): Excellent understanding, providing a detailed explanation of how the themes influence a Muslim’s daily life, such as encouraging faith and practice; Level 3 (2 marks): Good understanding, explaining the importance with some relevant examples; Level 2 (1 mark): Basic understanding, mentioning general significance but with limited depth; Level 1 (0 marks): No understanding or irrelevant information. Acceptable answers include: For Sura 96.1–5, the importance of themes like creation and knowledge in promoting lifelong learning, gratitude to God, and seeking knowledge as a religious duty, which encourages education and personal development in a Muslim’s life today. For Sura 99, the importance of themes like accountability and the Day of Judgment in reminding Muslims to live righteously, perform good deeds, and avoid sins, fostering moral behavior and justice in society. For Sura 6.101–103, the importance of themes like God’s oneness and creation in strengthening monotheistic belief, encouraging worship and reliance on God, which helps in maintaining faith and ethical living amidst modern challenges. Award 1 mark for each well-explained point of importance up to the maximum for the two passages. Keep all alternatives; for example, explanations must be in the candidate’s own words where specified, and excess answers do not deny marks unless contradictory.",
+            "marks": 4,
+            "topic_syllabus": "Quran",
+            "topic_general": "Beliefs"
+          }
+        ],
+        "Variant_2": [
+          {
+            "question_number": "1",
+            "sub_question": "(a)",
+            "question_text": "Choose any two of the following passages from the Qur’an, and briefly describe the main theme(s) in each passage",
+            "marking_scheme": "Candidates must select any two passages from the provided options and provide a brief description of the main themes in each. Award marks based on Assessment Objective 1 (AO1): recalling, selecting, and presenting relevant facts. Up to 2 marks per passage: Award 2 marks for a full and accurate description of the main themes, showing good recall and detail; Award 1 mark for a basic or partial description that identifies at least one main theme; Award 0 marks for no relevant description or incorrect information. Total marks: 4. Acceptable answers include, but are not limited to: For Sura 2.21–22, themes of monotheism, creation, and gratitude; for Sura 114, themes of seeking refuge from evil whispers and the attributes of Allah; for Sura 108, themes of abundance, worship, and the fate of enemies.",
+            "marks": 4,
+            "topic_syllabus": "Quran",
+            "topic_general": "Islamic Scriptures"
+          },
+          {
+            "question_number": "1",
+            "sub_question": "(b)",
+            "question_text": "Briefly explain the importance of these themes in a Muslim’s life today",
+            "marking_scheme": "Candidates must explain the importance of the themes identified in part (a) for a Muslim’s life today, based on the two chosen passages. Award marks based on Assessment Objective 2 (AO2): demonstrating understanding of the significance of the information in the teachings of Islam and in the lives of Muslims. Up to 2 marks per theme or passage explanation: Award 2 marks for a full explanation that clearly demonstrates understanding of how the themes apply to contemporary Muslim life, such as promoting faith and protection; Award 1 mark for a basic explanation that links the themes to Muslim life but lacks depth; Award 0 marks for no relevant explanation or misunderstanding. Total marks: 4. Acceptable answers include explanations in the candidate’s own words, such as: Themes of monotheism encourage exclusive worship of Allah in daily life; seeking refuge promotes spiritual protection against temptations; abundance inspires gratitude and charity.",
+            "marks": 4,
+            "topic_syllabus": "Quran",
+            "topic_general": "Islamic Scriptures"
+          }
+        ]
+      },
+      "Paper_2": {
+        "Variant_1": [
+          {
+            "question_number": "1",
+            "sub_question": "(a)",
+            "question_text": "Choose any two of the following Hadiths and describe their teaching about what Muslims believe",
+            "marking_scheme": "Candidates must select any two Hadiths from the provided list and describe their teachings on what Muslims believe, focusing on recalling and presenting relevant facts from Islamic teachings. Award marks according to the levels of response for Assessment Objective 1 (AO1), which assesses knowledge: Level 4 (3-4 marks) for a well-developed response with accurate and detailed description of the teachings of both Hadiths; Level 3 (2 marks) for a competent response with some accurate details on both; Level 2 (1 mark) for a basic response with limited accurate details on at least one; Level 1 (0 marks) for incorrect or irrelevant information. Acceptable answers include descriptions such as for Hadith (i): It teaches that Muslims should speak good words, remain silent if not, be generous to neighbours and guests, emphasizing belief in Allah and the Last Day; for Hadith (ii): It teaches that earning through one's own work is virtuous and preferable; for Hadith (iii): It teaches the unity of the Muslim community, where harm to one affects all; for Hadith (iv): It teaches that helping widows and the poor is equivalent to great acts of worship like jihad, prayer, or fasting. Do not deduct marks for minor errors in spelling or grammar unless they obscure meaning.",
+            "marks": 4,
+            "topic_syllabus": "Hadith",
+            "topic_general": "Beliefs and Practices"
+          },
+          {
+            "question_number": "1",
+            "sub_question": "(b)",
+            "question_text": "Explain how Muslims can put these teachings into action",
+            "marking_scheme": "For the two Hadiths selected in part (a), candidates must explain how Muslims can apply these teachings in their lives, demonstrating understanding of their significance in Islamic practice. Award marks according to the levels of response for Assessment Objective 2 (AO2), which assesses understanding and evaluation: Level 4 (3-4 marks) for a well-developed explanation showing clear understanding and specific examples of application for both Hadiths; Level 3 (2 marks) for a competent explanation with some relevant examples for both; Level 2 (1 mark) for a basic explanation with limited relevance for at least one; Level 1 (0 marks) for incorrect or irrelevant information. Acceptable answers include: For Hadith (i), Muslims can speak kindly or remain silent, show generosity to neighbours by helping them, and to guests by offering hospitality; for Hadith (ii), Muslims can engage in honest work and be content with earnings from their labour; for Hadith (iii), Muslims can support the community by helping those in need and promoting unity; for Hadith (iv), Muslims can assist widows and the poor through charity or support, equating it to acts of worship. Accept answers in the candidate's own words unless specified otherwise, and do not deduct for minor errors.",
+            "marks": 4,
+            "topic_syllabus": "Hadith",
+            "topic_general": "Beliefs and Practices"
+          }
+        ],
+        "Variant_2": [
+          {
+            "question_number": "1",
+            "sub_question": "(a)",
+            "question_text": "Choose any two of the following Hadiths, and describe their teaching about what Muslims believe. The Hadiths are: (i) A man asked the Messenger of Allah (may Allah bless him and give him peace): Do you think that if I perform the obligatory prayers, fast in Ramadan, treat as lawful that which is lawful and treat as forbidden that which is forbidden, and do nothing further, I shall enter paradise? He said: Yes. (ii) The world is the believer’s prison and the unbeliever’s paradise. (iii) May God show mercy to a man who is kindly when he sells, when he buys, and when he demands his money back. (iv) He who studies the Qur’an is like the owner of tethered camels. If he attends to them he will keep hold of them, but if he lets them loose they will go away.",
+            "marking_scheme": "Award marks based on the level of response for Assessment Objective 1 (AO1): Recall, select and present relevant facts from the main elements of the faith and history of Islam. Up to 4 marks are available. Level 4 (3-4 marks): The candidate provides a detailed and accurate description of the teachings of the two chosen Hadiths, including specific details and examples directly from the Hadiths, demonstrating good knowledge. Level 3 (2 marks): The candidate provides some description of the teachings with relevant facts but lacks full detail or specific examples. Level 2 (1 mark): The candidate provides a limited or generalised description with minimal relevant facts. Level 1 (0 marks): No relevant description is provided. Acceptable answers include accurate explanations of the Hadiths' teachings, such as for Hadith (i): The teaching that performing obligatory acts like prayers and fasting, while avoiding the forbidden, can lead to paradise, emphasising the importance of basic Islamic obligations. For Hadith (ii): The teaching that this world is a place of trial for believers, contrasting with ease for non-believers. For Hadith (iii): The teaching on the value of kindness in business dealings. For Hadith (iv): The teaching that studying the Qur’an requires ongoing effort to retain its knowledge. Credit is given for valid answers, and marks are not deducted for errors or omissions.",
+            "marks": 4,
+            "topic_syllabus": "Hadith",
+            "topic_general": "Teachings of Islam"
+          },
+          {
+            "question_number": "1",
+            "sub_question": "(b)",
+            "question_text": "Choose any two of the following Hadiths, and explain how Muslims can put these teachings into action. The Hadiths are: (i) A man asked the Messenger of Allah (may Allah bless him and give him peace): Do you think that if I perform the obligatory prayers, fast in Ramadan, treat as lawful that which is lawful and treat as forbidden that which is forbidden, and do nothing further, I shall enter paradise? He said: Yes. (ii) The world is the believer’s prison and the unbeliever’s paradise. (iii) May God show mercy to a man who is kindly when he sells, when he buys, and when he demands his money back. (iv) He who studies the Qur’an is like the owner of tethered camels. If he attends to them he will keep hold of them, but if he lets them loose they will go away.",
+            "marking_scheme": "Award marks based on the level of response for Assessment Objective 2 (AO2): Demonstrate understanding of the significance of the selected information in the teachings of Islam and in the lives of Muslims. Up to 4 marks are available. Level 4 (3-4 marks): The candidate provides a detailed explanation of how Muslims can apply the teachings of the two chosen Hadiths in daily life, showing clear understanding of their significance, with specific and relevant examples. Level 3 (2 marks): The candidate provides some explanation with understanding of the significance but lacks detail or specific examples. Level 2 (1 mark): The candidate provides a limited explanation with basic understanding. Level 1 (0 marks): No relevant explanation is provided. Acceptable answers include: For Hadith (i): Muslims can put this into action by consistently performing the five daily prayers, fasting during Ramadan, adhering to halal and avoiding haram in diet and behaviour, and maintaining these as core practices. For Hadith (ii): Muslims can act on this by prioritising the afterlife over worldly pleasures, engaging in worship, charity, and avoiding sins. For Hadith (iii): Muslims can apply this by being honest, fair, and compassionate in transactions, such as forgiving debts or being patient with customers. For Hadith (iv): Muslims can implement this by regularly reading, memorising, and reflecting on the Qur’an, attending study circles, and reviewing knowledge to prevent forgetting. Credit is given for valid answers that demonstrate understanding, and marks are not deducted for errors or omissions.",
+            "marks": 4,
+            "topic_syllabus": "Hadith",
+            "topic_general": "Teachings of Islam"
+          }
+        ]
+      }
+    },
+    "Oct_Nov": {
+      "Paper_1": {
+        "Variant_1": [
+          {
+            "question_number": "1",
+            "sub_question": "(a)",
+            "question_text": "Choose any two of the following passages from the Qur’an, and briefly describe the main theme(s) in each passage",
+            "marking_scheme": "For this part, up to 4 marks are available based on the following levels of response: Level 4 (4 marks): A well-structured, clear and comprehensive response that demonstrates extensive and accurate knowledge relevant to the question. Points are detailed, well-developed and relevant. Likely to quote Qur’an verses and Hadiths to support points made or other relevant quotations. Level 3 (3 marks): A well-structured and clear response that demonstrates sound accurate knowledge which is relevant to the question. Points are elaborated upon and generally accurate. May quote Qur’an verses and Hadiths to support points made or other relevant quotations. Level 2 (2 marks): An attempt to present a structured response to the question. Response lacks cohesion or is undeveloped. Demonstrates some knowledge of the subject covering some of the main points but without detail. Points made are sometimes relevant and accurate but limited. Level 1 (1 mark): Some attempt to answer the question. Lacks cohesion and structure. Demonstrates limited knowledge of the subject. Responses made are limited with little connection to the question. Level 0 (0 marks): No creditable content.",
+            "marks": 4,
+            "topic_syllabus": "Quranic Passages",
+            "topic_general": "Quran"
+          },
+          {
+            "question_number": "1",
+            "sub_question": "(b)",
+            "question_text": "Choose any two of the following passages from the Qur’an, and briefly explain the importance of these themes in a Muslim’s life today",
+            "marking_scheme": "For this part, up to 4 marks are available based on the following levels of response: Level 2 (3-4 marks): Responses demonstrate a clear understanding of the question. Able to use own opinions to engage with the question and present reasoning that demonstrates their understanding. Level 1 (1-2 marks): Responses demonstrate some understanding of the question. There are descriptive and factual references to the question with limited discussion of the material. Level 0 (0 marks): No creditable content.",
+            "marks": 4,
+            "topic_syllabus": "Quranic Passages",
+            "topic_general": "Quran"
+          }
+        ],
+        "Variant_2": [
+          {
+            "question_number": "1",
+            "sub_question": "(a)(i)",
+            "question_text": "Briefly describe the main theme(s) in the following passage: In the name of Allah, most gracious, most merciful. Praise be to Allah, the cherisher and sustainer of the worlds; Most gracious, most merciful; Master of the day of judgement. You we worship, and your aid we seek. Show us the straight way, The way of those to whom You have given your grace, not those who earn your anger, nor those who go astray.",
+            "marking_scheme": "Award marks according to the AO1 Levels of Response as follows: Level 4 (4 marks): A well-structured, clear and comprehensive response demonstrating extensive and accurate knowledge, with detailed and relevant points, likely quoting Qur’an verses. Level 3 (3 marks): A well-structured and clear response demonstrating sound accurate knowledge, with elaborated points, may quote Qur’an verses. Level 2 (2 marks): An attempt to present a structured response, demonstrating some knowledge covering main points but without detail. Level 1 (1 mark): Some attempt to answer, lacking cohesion, demonstrating limited knowledge. Level 0 (0 marks): No creditable content. The main theme is Allah’s relationship with the created world. Candidates will develop these themes in their own way, for example, praiseworthy: God is deserving of admiration.",
+            "marks": 2,
+            "topic_syllabus": "Quran",
+            "topic_general": "Beliefs"
+          },
+          {
+            "question_number": "1",
+            "sub_question": "(a)(ii)",
+            "question_text": "Briefly describe the main theme(s) in the following passage: Say: He is Allah, the one and only; Allah, the eternal, absolute; He does not beget, nor is He begotten; And there is none like Him.",
+            "marking_scheme": "Award marks according to the AO1 Levels of Response as follows: Level 4 (4 marks): A well-structured, clear and comprehensive response demonstrating extensive and accurate knowledge, with detailed and relevant points, likely quoting Qur’an verses. Level 3 (3 marks): A well-structured and clear response demonstrating sound accurate knowledge, with elaborated points, may quote Qur’an verses. Level 2 (2 marks): An attempt to present a structured response, demonstrating some knowledge covering main points but without detail. Level 1 (1 mark): Some attempt to answer, lacking cohesion, demonstrating limited knowledge. Level 0 (0 marks): No creditable content.",
+            "marks": 2,
+            "topic_syllabus": "Quran",
+            "topic_general": "Beliefs"
+          },
+          {
+            "question_number": "1",
+            "sub_question": "(a)(iii)",
+            "question_text": "Briefly describe the main theme(s) in the following passage: By the glorious morning light, And by the night when it is still, Your Lord has not forsaken you, nor is he displeased. And truly the Hereafter will be better for you than the present. And soon your Lord will give you so that you will be pleased. Did He not find you an orphan and give you shelter? And He found you wandering, and He gave you guidance. And He found you in need, and made you independent. Therefore, do not treat the orphan with harshness, Nor drive the beggar away; But tell about the bounty of your Lord!",
+            "marking_scheme": "Award marks according to the AO1 Levels of Response as follows: Level 4 (4 marks): A well-structured, clear and comprehensive response demonstrating extensive and accurate knowledge, with detailed and relevant points, likely quoting Qur’an verses. Level 3 (3 marks): A well-structured and clear response demonstrating sound accurate knowledge, with elaborated points, may quote Qur’an verses. Level 2 (2 marks): An attempt to present a structured response, demonstrating some knowledge covering main points but without detail. Level 1 (1 mark): Some attempt to answer, lacking cohesion, demonstrating limited knowledge. Level 0 (0 marks): No creditable content.",
+            "marks": 2,
+            "topic_syllabus": "Quran",
+            "topic_general": "Beliefs"
+          },
+          {
+            "question_number": "1",
+            "sub_question": "(b)",
+            "question_text": "Briefly explain the importance of these themes in a Muslim’s life today.",
+            "marking_scheme": "Award marks according to the AO2 Levels of Response as follows: Level 2 (3-4 marks): Responses demonstrate a clear understanding of the question, able to use own opinions to engage with the question and present reasoning that demonstrates their understanding. Level 1 (1-2 marks): Responses demonstrate some understanding of the question, with descriptive and factual references but limited discussion. Level 0 (0 marks): No creditable content. Candidates should explain the importance of the themes from the chosen passages in a Muslim’s life today, such as how Allah’s attributes encourage worship, guidance, and moral behavior.",
+            "marks": 4,
+            "topic_syllabus": "Quran",
+            "topic_general": "Beliefs"
+          }
+        ]
+      },
+      "Paper_2": {
+        "Variant_1": [
+          {
+            "question_number": "1",
+            "sub_question": "(a)(i)",
+            "question_text": "He who has in his heart as much faith as a grain of mustard seed will not enter hell, and he who has in his heart as much pride as a grain of mustard seed will not enter paradise.",
+            "marking_scheme": "Acceptable answers: Award marks based on AO1 Levels of Response. For a maximum of 4 marks total for Question 1(a), candidates should describe the teaching of the chosen Hadiths. For this Hadith: The core teaching is that all those who believe in the Oneness of God will eventually enter paradise. The obedient believer, free from sin, will be among the first to enter paradise, while those with sins will join after gaining Allah’s forgiveness or through His mercy. Arrogance and pride are considered the worst sin, associated with Iblis (Satan in Islamic belief), who was expelled from paradise and denied God’s forgiveness due to his pride and arrogance. Level 4 (4 marks): A well-structured, clear, and comprehensive response demonstrating extensive and accurate knowledge, with detailed points and possible quotes from Qur’an or Hadiths. Level 3 (3 marks): A well-structured and clear response demonstrating sound accurate knowledge with elaborated points. Level 2 (2 marks): An attempt at structure with some relevant but limited points. Level 1 (1 mark): Limited response with little connection to the question. Level 0 (0 marks): No creditable content.",
+            "marks": null,
+            "topic_syllabus": "Hadith",
+            "topic_general": "Beliefs"
+          }
+        ],
+        "Variant_2": [
+          {
+            "question_number": "1",
+            "sub_question": "(a)",
+            "question_text": "Choose any two of the following Hadiths and describe their teaching about what Muslims believe",
+            "marking_scheme": "Candidates must describe the teachings of any two chosen Hadiths about what Muslims believe, using the following levels of response based on AO1: Knowledge. Maximum mark: 4. Level 4 (4 marks): A well-structured, clear and comprehensive response that demonstrates extensive and accurate knowledge relevant to the question, with detailed, well-developed and relevant points, likely quoting Qur'an verses or Hadiths. Level 3 (3 marks): A well-structured and clear response that demonstrates sound accurate knowledge relevant to the question, with points elaborated upon and generally accurate, possibly quoting Qur'an verses or Hadiths. Level 2 (2 marks): An attempt to present a structured response that lacks cohesion or is undeveloped, demonstrating some knowledge covering main points but without detail, with points sometimes relevant and accurate but limited. Level 1 (1 mark): Some attempt to answer the question that lacks cohesion and structure, demonstrating limited knowledge with little connection to the question. Level 0 (0 marks): No creditable content. For the chosen Hadiths, acceptable answers include: For Hadith 1 ('Religion is sincerity...'): The key word is sincerity or advice, teaching Muslims to be sincere in belief and practice by showing sincerity to Allah, His Book, His Messenger, the leaders of the Muslims, and the common people, ensuring all actions are backed by sincere faith to seek Allah's pleasure. For Hadith 5: Every person's joints must perform charity daily, such as acting justly, helping others, speaking good words, walking to prayers, or removing harm from the road, teaching that charity encompasses everyday acts of kindness and justice. For Hadith 11: The Prophet and one who brings up an orphan will be close in Paradise, teaching the reward for caring for orphans as an act of compassion and protection. For Hadith 15: Allah will not show mercy to those who do not show mercy to others, teaching the importance of mercy in interactions. Award marks based on the level descriptors above, ensuring responses are relevant and accurate.",
+            "marks": 4,
+            "topic_syllabus": "Hadith",
+            "topic_general": "Islamic Beliefs and Practices"
+          },
+          {
+            "question_number": "1",
+            "sub_question": "(b)",
+            "question_text": "Explain how Muslims can put these teachings into action",
+            "marking_scheme": "Candidates must explain how Muslims can put the teachings of the two chosen Hadiths into action, using the following levels of response based on AO2: Understanding. Maximum mark: 4. Level 2 (3–4 marks): Responses demonstrate a clear understanding of the question, using personal opinions to engage with it and present reasoning that shows understanding, such as discussing practical applications. Level 1 (1–2 marks): Responses demonstrate some understanding of the question, with descriptive and factual references but limited discussion. Level 0 (0 marks): No creditable content. For the chosen Hadiths, acceptable answers include: For Hadith 1: Muslims can put this into action by being sincere in worship, such as praying with full devotion to Allah, studying and following the Qur'an honestly, supporting the Prophet's teachings, obeying Muslim leaders justly, and helping ordinary people through honest advice and actions. For Hadith 5: Muslims can perform daily charities by acting justly in disputes, assisting others physically like helping with transport, speaking kindly, walking to prayers regularly, and clearing hazards from paths. For Hadith 11: Muslims can care for orphans by providing them with shelter, education, emotional support, and treating them as family members. For Hadith 15: Muslims can show mercy by being compassionate in daily life, forgiving others, helping the needy, and treating people kindly to earn Allah's mercy. Award marks based on the level descriptors, ensuring explanations are clear and reasoned.",
+            "marks": 4,
+            "topic_syllabus": "Hadith",
+            "topic_general": "Islamic Beliefs and Practices"
+          }
+        ]
+      }
+    }
+  },
+  "2023": {
+    "May_June": {
+      "Paper_1": {
+        "Variant_1": [
+          {
+            "question_number": "1",
+            "sub_question": "(a)",
+            "question_text": "Briefly describe the main theme or themes in each chosen passage",
+            "marking_scheme": "Award up to 4 marks for AO1: Recall, select and present relevant facts from the main elements of the faith and history of Islam. Marks are awarded according to the four levels of response as follows: Level 4 (3-4 marks): Full and comprehensive answer with accurate and detailed description of the main themes in the chosen passages; Level 3 (2 marks): Good answer with some accuracy and relevant details; Level 2 (1 mark): Basic answer with limited accuracy; Level 1 (0 marks): Inaccurate or irrelevant response. Acceptable answers include descriptions of themes such as seeking refuge from evil whispers in Sura 114, the creation of Adam and human responsibility in Sura 2:30–37, or abundance and devotion in Sura 108, based on the candidate's choice.",
+            "marks": 4,
+            "topic_syllabus": "Quran",
+            "topic_general": "Beliefs"
+          },
+          {
+            "question_number": "1",
+            "sub_question": "(b)",
+            "question_text": "Briefly explain the importance of these themes in a Muslim’s life today",
+            "marking_scheme": "Award up to 4 marks for AO2: Demonstrate understanding of the significance of the selected information in the teachings of Islam and in the lives of Muslims. Marks are awarded according to the four levels of response as follows: Level 4 (3-4 marks): Full understanding with clear explanation of how the themes are significant, such as using seeking refuge to protect against temptations, or the story of Adam to understand human accountability; Level 3 (2 marks): Good explanation with some understanding of significance; Level 2 (1 mark): Basic explanation with limited understanding; Level 1 (0 marks): Inaccurate or irrelevant response. Acceptable answers include explanations like the importance of seeking refuge for spiritual protection, the themes of creation for moral guidance, or devotion for daily worship.",
+            "marks": 4,
+            "topic_syllabus": "Quran",
+            "topic_general": "Beliefs"
+          }
+        ],
+        "Variant_2": [
+          {
+            "question_number": "1",
+            "sub_question": "(a)",
+            "question_text": "Briefly describe the main theme or themes in each chosen passage.",
+            "marking_scheme": "Award up to 4 marks for AO1: Recall, select and present relevant facts from the main elements of the faith and history of Islam. Marks are awarded according to the following levels: Level 4 (4 marks): Comprehensive knowledge with accurate and detailed description of the main themes in the chosen Qur'anic passages, showing excellent recall and presentation. Level 3 (3 marks): Good knowledge with mostly accurate description of the main themes, demonstrating sound recall and presentation. Level 2 (2 marks): Basic knowledge with some accurate description of the main themes, but limited in detail or depth. Level 1 (1 mark): Superficial or incomplete description of the main themes, with minimal relevant facts. Level 0 (0 marks): No relevant content or completely inaccurate response. Acceptable answers include descriptions of themes such as monotheism, creation, or guidance in the passages, based on the candidate's choice of two passages.",
+            "marks": 4,
+            "topic_syllabus": "Qur'an",
+            "topic_general": "Islamic Beliefs"
+          },
+          {
+            "question_number": "1",
+            "sub_question": "(b)",
+            "question_text": "Briefly explain the importance of these themes in a Muslim’s life today.",
+            "marking_scheme": "Award up to 4 marks for AO2: Demonstrate understanding of the significance of the selected information in the teachings of Islam and in the lives of Muslims. Marks are awarded according to the following levels: Level 4 (4 marks): Excellent understanding and evaluation, explaining the importance of the themes comprehensively and accurately in a Muslim’s daily life, such as how monotheism promotes devotion or guidance aids decision-making. Level 3 (3 marks): Good understanding, explaining the importance with mostly accurate points and some evaluation. Level 2 (2 marks): Basic understanding, with limited explanation of the importance and minimal evaluation. Level 1 (1 mark): Superficial understanding, with vague or incomplete explanation of the importance. Level 0 (0 marks): No relevant content or completely inaccurate response. Acceptable answers include explanations like the themes encouraging worship of Allah alone or providing moral guidance; accept responses in the candidate's own words unless specified otherwise.",
+            "marks": 4,
+            "topic_syllabus": "Qur'an",
+            "topic_general": "Islamic Beliefs"
+          }
+        ]
+      },
+      "Paper_2": {
+        "Variant_1": [
+          {
+            "question_number": "1",
+            "sub_question": "(a)",
+            "question_text": "Describe their teaching about what Muslims believe.",
+            "marking_scheme": "Award marks based on Assessment Objective 1 (AO1: recall, select and present relevant facts). Use the following levels of response for up to 4 marks: Level 4 (4 marks): A detailed and accurate description of the teachings about what Muslims believe from any two of the chosen Hadiths, such as (i) the Hadith indicating that performing obligatory prayers, fasting in Ramadan, and adhering to lawful and forbidden actions can lead to paradise, emphasizing basic Islamic obligations; (ii) the Hadith stating that the most excellent believer is one who strives in Allah's way with their person and property, highlighting jihad and sacrifice; (iii) the Hadith that God looks at hearts and deeds, not forms or possessions, stressing sincerity and actions over appearance; (iv) the Hadith defining religion as sincerity to Allah, His Book, His Messenger, Muslim leaders, and the common people, underscoring loyalty and integrity. Level 3 (3 marks): A good description with some detail and accuracy. Level 2 (2 marks): A basic description with limited detail. Level 1 (1 mark): A superficial or incomplete description. Level 0 (0 marks): No relevant description. Acceptable answers include direct references to the Hadiths' content; accept own words unless specified otherwise; do not deduct for minor errors in spelling or grammar as long as meaning is clear.",
+            "marks": 4,
+            "topic_syllabus": "Hadith",
+            "topic_general": "Beliefs"
+          },
+          {
+            "question_number": "1",
+            "sub_question": "(b)",
+            "question_text": "Explain how Muslims can put these teachings into action.",
+            "marking_scheme": "Award marks based on Assessment Objective 2 (AO2: demonstrate understanding of the significance of the selected information in the teachings of Islam and in the lives of Muslims). Use the following levels of response for up to 4 marks: Level 4 (4 marks): A detailed explanation showing clear understanding of how Muslims can apply the teachings from the two chosen Hadiths, such as (i) by consistently performing daily prayers, fasting during Ramadan, avoiding forbidden actions, and living righteously to seek paradise; (ii) by engaging in charitable acts, participating in community service, or striving in lawful efforts for Islam's cause; (iii) by focusing on purifying intentions and performing good deeds sincerely, rather than seeking worldly validation; (iv) by being sincere in faith through obeying Allah, studying the Quran, following the Prophet's example, supporting Muslim leaders, and treating the community with honesty. Level 3 (3 marks): A good explanation with some understanding. Level 2 (2 marks): A basic explanation with limited understanding. Level 1 (1 mark): A superficial or incomplete explanation. Level 0 (0 marks): No relevant explanation. Acceptable answers include practical examples; keep alternatives such as different ways of application; excess answers do not deny marks unless contradictory.",
+            "marks": 4,
+            "topic_syllabus": "Hadith",
+            "topic_general": "Practices"
+          }
+        ],
+        "Variant_2": [
+          {
+            "question_number": "1",
+            "sub_question": "(a)",
+            "question_text": "Describe their teaching about what Muslims believe",
+            "marking_scheme": "Award up to 4 marks for recalling, selecting and presenting relevant facts about the teachings of the two chosen Hadiths, testing AO1 (knowledge). Level 4 (3-4 marks): Comprehensive and accurate description of the teachings from two Hadiths, demonstrating a clear understanding of key elements. Level 3 (2 marks): Accurate description of teachings from at least one Hadith or partial details from two. Level 2 (1 mark): Basic description with some relevant facts. Level 1 (0 marks): Inaccurate, irrelevant or no description. Acceptable answers include: For Hadith (i): The teaching that Muslims believe in actively opposing evil through action, speech, or heart, emphasizing the levels of faith. For Hadith (ii): The teaching that true belief involves treating others as one would wish to be treated, promoting equality and brotherhood. For Hadith (iii): The teaching that modesty is a virtue that leads to good deeds and moral behavior. For Hadith (iv): The teaching that martyrdom is not limited to battlefield death but includes dying in the way of Allah through various means, broadening the concept of sacrifice.",
+            "marks": 4,
+            "topic_syllabus": "Hadith",
+            "topic_general": "Islamic Beliefs"
+          },
+          {
+            "question_number": "1",
+            "sub_question": "(b)",
+            "question_text": "Explain how Muslims can put these teachings into action",
+            "marking_scheme": "Award up to 4 marks for demonstrating understanding of the significance of the teachings in the lives of Muslims, testing AO2 (understanding and evaluation). Level 4 (3-4 marks): Clear explanation of practical applications with examples, showing how the teachings influence Muslim behavior. Level 3 (2 marks): Explanation of at least one way to apply the teachings with some detail. Level 2 (1 mark): Basic explanation of application. Level 1 (0 marks): Inaccurate, vague or no explanation. Acceptable answers include: For Hadith (i): Muslims can put this into action by stopping evil deeds physically if possible, or by speaking out against them, or at least disapproving in their heart; for example, intervening in wrongdoing or educating others. For Hadith (ii): Muslims can act on this by helping others selflessly, such as sharing resources or supporting community members as they would for themselves. For Hadith (iii): Muslims can practice modesty by dressing modestly, behaving humbly, and avoiding arrogance in daily life. For Hadith (iv): Muslims can apply this by dedicating their lives to Allah's path, such as through jihad, patience in illness, or charitable works, accepting death as martyrdom.",
+            "marks": 4,
+            "topic_syllabus": "Hadith",
+            "topic_general": "Islamic Practices"
+          }
+        ]
+      }
+    },
+    "Oct_Nov": {
+      "Paper_1": {
+        "Variant_1": [
+          {
+            "question_number": "1",
+            "sub_question": "(a)",
+            "question_text": "Briefly describe the main theme(s) in each passage.",
+            "marking_scheme": "Award up to 4 marks for recalling, selecting and presenting relevant facts from the main elements of the faith of Islam, specifically describing the main themes in each of the two chosen passages from the Qur’an. Use the levels of response for AO1: Level 4 (3–4 marks) for a detailed description with relevant facts; Level 3 (2 marks) for a good description; Level 2 (1 mark) for a basic description; Level 1 (0 marks) for inadequate or no response. Acceptable answers include descriptions of themes such as God's attributes in the chosen passages, ensuring responses are based on the candidate's selection of two passages.",
+            "marks": 4,
+            "topic_syllabus": "Quran",
+            "topic_general": "Beliefs"
+          },
+          {
+            "question_number": "1",
+            "sub_question": "(b)",
+            "question_text": "Briefly explain the importance of these themes in a Muslim’s life today.",
+            "marking_scheme": "Award up to 4 marks for demonstrating understanding of the significance of the themes described in part (a) in the teachings of Islam and in the lives of Muslims today, based on AO2. Use the levels of response for AO2: Level 4 (3–4 marks) for a detailed explanation showing clear understanding and evaluation; Level 3 (2 marks) for a good explanation; Level 2 (1 mark) for a basic explanation; Level 1 (0 marks) for inadequate or no response. Responses should explain how these themes, such as God's oneness and sovereignty, influence daily Muslim life, including worship and moral conduct.",
+            "marks": 4,
+            "topic_syllabus": "Quran",
+            "topic_general": "Beliefs"
+          }
+        ],
+        "Variant_2": [
+          {
+            "question_number": "1",
+            "sub_question": "(a)",
+            "question_text": "Briefly describe the main theme or themes in each chosen passage.",
+            "marking_scheme": "Award up to 4 marks for recalling and selecting relevant facts about the main themes in each of the two chosen Qur’anic passages, testing AO1 (recall, select and present relevant facts from the main elements of the faith and history of Islam). Award 2 marks per passage for a full and accurate description: For example, for Sura 6.101–103: Acceptable answers include descriptions of themes such as the oneness of Allah (Tawhid), His role as the sole Creator of all things, and that He is beyond human vision or comprehension. For Sura 96.1–5: Acceptable answers include themes such as the creation of man from a clot of blood, the command to read in the name of the Lord, and the teaching of knowledge through the pen. For Sura 5.110: Acceptable answers include themes such as the miracles performed by Jesus by Allah's leave, emphasizing prophethood, God's power, and the rejection of magic. Award 1 mark for each partially accurate description of a theme, up to 2 marks per passage. Ensure answers are in the candidate's own words where possible, but accept direct lifts if accurate. Not accepted: Vague or incorrect themes.",
+            "marks": 4,
+            "topic_syllabus": "Quran",
+            "topic_general": "Beliefs"
+          },
+          {
+            "question_number": "1",
+            "sub_question": "(b)",
+            "question_text": "Briefly explain the importance of these themes in a Muslim’s life today.",
+            "marking_scheme": "Award up to 4 marks for demonstrating understanding of the significance of the themes from the two chosen passages in the teachings of Islam and in the lives of Muslims, testing AO2 (demonstrate understanding of the selected information). Award 1 mark for each relevant explanation of importance: For themes in Sura 6.101–103, such as Tawhid, explain that it reinforces monotheism, encouraging Muslims to worship only Allah and rely on Him in daily life for guidance and moral decisions. For themes in Sura 96.1–5, such as seeking knowledge, explain that it promotes lifelong learning and education, vital for personal development and contributing to society as per Islamic teachings. For themes in Sura 5.110, such as prophethood and miracles, explain that they affirm faith in prophets and God's power, helping Muslims to strengthen belief and resist disbelief in modern challenges. Award up to 4 marks based on the quality of explanation: 4 marks for excellent understanding with clear, detailed links to Muslim life; 3 marks for good understanding with some detail; 2 marks for basic understanding; 1 mark for minimal or vague explanation. Keep all alternatives as presented.",
+            "marks": 4,
+            "topic_syllabus": "Quran",
+            "topic_general": "Beliefs"
+          }
+        ]
+      },
+      "Paper_2": {
+        "Variant_1": [
+          {
+            "question_number": "1",
+            "sub_question": "(a)",
+            "question_text": "Choose any two of the following Hadiths. (a) Describe their teaching about what Muslims believe.",
+            "marking_scheme": "This part tests AO1: Recall, select and present relevant facts from the main elements of the faith and history of Islam. Award up to 4 marks based on the following levels: Level 4 (3–4 marks): Candidates provide a detailed and accurate description of the teachings from any two chosen Hadiths about Muslim beliefs, showing a clear understanding of the content. For example, for Hadith (i): 'The world is the believer’s prison and the unbeliever’s paradise' teaches that life in this world is a place of trials and hardships for believers, preparing them for the afterlife, while unbelievers find it enjoyable without spiritual awareness. For Hadith (ii): It teaches that basic obligations like prayers and fasting, along with avoiding the forbidden, are sufficient for entry into paradise, emphasizing the importance of core Islamic practices. Level 3 (2 marks): Candidates provide a generally accurate description but with some omissions or lack of detail for the two Hadiths. Level 2 (1 mark): Candidates mention basic facts from one or both Hadiths but with inaccuracies or incomplete information. Level 1 (0 marks): Responses are irrelevant or show no understanding. Acceptable answers include descriptions based on the chosen Hadiths; award marks for accuracy and relevance, ensuring own words where possible, but accept direct lifts if accurate.",
+            "marks": 4,
+            "topic_syllabus": "Hadith",
+            "topic_general": "Beliefs and Practices"
+          },
+          {
+            "question_number": "1",
+            "sub_question": "(b)",
+            "question_text": "Choose any two of the following Hadiths. (b) Explain how Muslims can put these teachings into action.",
+            "marking_scheme": "This part tests AO2: Demonstrate understanding of the significance of the selected information in the teachings of Islam and in the lives of Muslims. Award up to 4 marks based on the following levels: Level 4 (3–4 marks): Candidates provide a detailed explanation of how Muslims can apply the teachings of the two chosen Hadiths in daily life, showing evaluation of their significance. For example, for Hadith (i): Muslims can put this into action by enduring worldly hardships with patience, focusing on spiritual growth and preparing for the afterlife through worship and good deeds. For Hadith (ii): Muslims can act on this by strictly performing obligatory prayers, fasting in Ramadan, and adhering to lawful and forbidden acts, ensuring a balanced life of faith. For Hadith (iii): By caring for orphans as the Prophet indicated, treating them with kindness and providing for their needs, aspiring to be close to the Prophet in paradise. For Hadith (iv): By performing daily charities such as acting justly, helping others, saying good words, attending prayers, or removing obstacles from paths. Level 3 (2 marks): Candidates explain the application with some detail but may lack depth. Level 2 (1 mark): Candidates give basic explanations with limited understanding. Level 1 (0 marks): Responses are irrelevant or show no understanding. Acceptable answers include practical applications; award marks for clear, relevant explanations, considering excess answers do not deny marks unless contradictory.",
+            "marks": 4,
+            "topic_syllabus": "Hadith",
+            "topic_general": "Beliefs and Practices"
+          }
+        ],
+        "Variant_2": [
+          {
+            "question_number": "1",
+            "sub_question": "(a)",
+            "question_text": "Choose any two of the following Hadiths. (a) Describe their teaching about what Muslims believe.",
+            "marking_scheme": "Award up to 4 marks for recalling and describing the teachings of any two chosen Hadiths about what Muslims believe. Level 4 (3–4 marks): Candidates recall and select detailed and accurate facts from the chosen Hadiths, demonstrating a clear understanding of their teachings on beliefs, such as faith, pride, gentleness, or community in Islam. Level 3 (2 marks): Candidates recall and select relevant facts with some accuracy, showing basic understanding. Level 2 (1 mark): Candidates recall limited facts with some relevance. Level 1 (0 marks): No relevant facts recalled. Acceptable answers include descriptions of the specific teachings: for Hadith (i), that even a small amount of faith saves from hell and pride prevents entry to paradise; for Hadith (ii), the importance of gentleness and avoiding alienation in leadership; for Hadith (iii), speaking good or remaining silent, being generous to neighbours and guests; for Hadith (iv), the unity of believers as one body. Award marks based on the quality of description for the two chosen Hadiths.",
+            "marks": 4,
+            "topic_syllabus": "Hadith",
+            "topic_general": "Beliefs"
+          },
+          {
+            "question_number": "1",
+            "sub_question": "(b)",
+            "question_text": "Explain how Muslims can put these teachings into action.",
+            "marking_scheme": "Award up to 4 marks for explaining how Muslims can apply the teachings of the two chosen Hadiths in their lives. Level 4 (3–4 marks): Candidates demonstrate a thorough understanding by explaining practical ways to act on the teachings, such as nurturing faith to avoid sin for Hadith (i), showing kindness in leadership for Hadith (ii), practicing good speech and generosity for Hadith (iii), and supporting the community for Hadith (iv). Level 3 (2 marks): Candidates explain with some detail and relevance. Level 2 (1 mark): Candidates provide basic explanation with limited detail. Level 1 (0 marks): No relevant explanation. Acceptable answers include: for Hadith (i), strengthening faith through prayer and avoiding arrogance; for Hadith (ii), being gentle in daily interactions and leadership roles; for Hadith (iii), speaking positively or staying silent and helping neighbours; for Hadith (iv), helping fellow Muslims in times of need. This must relate to the two Hadiths chosen in part (a).",
+            "marks": 4,
+            "topic_syllabus": "Hadith",
+            "topic_general": "Practices"
+          }
+        ]
+      }
+    }
+  },
+  "2024": {
+    "May_June": {
+      "Paper_1": {
+        "Variant_1": [
+          {
+            "question_number": "1",
+            "sub_question": "(a)",
+            "question_text": "Briefly explain the main theme(s) in each passage",
+            "marking_scheme": "For this part, marks are awarded based on Assessment Objective 1: to recall, select and present relevant facts from the main elements of the faith and history of Islam. Level 4 (3-4 marks): The candidate provides a comprehensive and accurate explanation of the main themes in each of the two chosen passages, demonstrating excellent recall and selection of relevant facts. Level 3 (2 marks): The candidate provides a good explanation of the main themes with some detail and accurate recall. Level 2 (1 mark): The candidate gives a basic explanation of the main themes with limited recall. Level 1 (0 marks): The response is inaccurate, irrelevant, or lacks any relevant facts.",
+            "marks": 4,
+            "topic_syllabus": "Quran",
+            "topic_general": "Beliefs"
+          },
+          {
+            "question_number": "1",
+            "sub_question": "(b)",
+            "question_text": "Briefly explain the importance of these themes in a Muslim’s life today",
+            "marking_scheme": "For this part, marks are awarded based on Assessment Objective 2: to demonstrate understanding of the significance of the selected information in the teachings of Islam and in the lives of Muslims. Level 4 (3-4 marks): The candidate demonstrates excellent understanding by explaining the importance of the themes in a Muslim’s life today with relevant examples, evaluation, and clear significance. Level 3 (2 marks): The candidate shows good understanding with some explanation of the importance and its relevance. Level 2 (1 mark): The candidate provides a basic understanding of the importance with limited detail. Level 1 (0 marks): The response is inaccurate, irrelevant, or lacks understanding.",
+            "marks": 4,
+            "topic_syllabus": "Quran",
+            "topic_general": "Beliefs"
+          }
+        ],
+        "Variant_2": [
+          {
+            "question_number": "1",
+            "sub_question": "(a)",
+            "question_text": "Choose any two of the following passages from the Qur’an. (a) Briefly explain the main theme(s) in each passage.",
+            "marking_scheme": "Marks are awarded for AO1: recalling, selecting and presenting relevant facts from the main elements of the faith and history of Islam. Award up to 4 marks based on the levels of response as follows: Level 4 (4 marks): Excellent recall and selection of relevant facts, with comprehensive and accurate explanation of the main themes in each of the two chosen passages (e.g., for Sura 2.255: themes of Allah's oneness, attributes, and sovereignty; for Sura 114: themes of seeking refuge from evil whispers; for Sura 2.30–37: themes of creation, knowledge, obedience, and fall from grace), showing depth and detail. Level 3 (3 marks): Good recall with some detail, explaining main themes accurately but with minor omissions. Level 2 (2 marks): Basic recall with limited detail, identifying main themes but with superficial explanation. Level 1 (1 mark): Minimal recall, mentioning only one or two themes vaguely. Level 0 (0 marks): No relevant knowledge or completely inaccurate response. Acceptable answers include explanations in candidates' own words; accept lift from the text if it demonstrates understanding. Not accepted: explanations not related to the passages.",
+            "marks": 4,
+            "topic_syllabus": "Quran",
+            "topic_general": "Beliefs"
+          },
+          {
+            "question_number": "1",
+            "sub_question": "(b)",
+            "question_text": "Choose any two of the following passages from the Qur’an. (b) Briefly explain the importance of these themes in a Muslim’s life today.",
+            "marking_scheme": "Marks are awarded for AO2: demonstrating understanding of the significance of the selected information in the teachings of Islam and in the lives of Muslims. Award up to 4 marks based on the levels of response as follows: Level 4 (4 marks): Excellent understanding and evaluation, fully explaining the importance of the themes from the two chosen passages in a Muslim’s life today (e.g., for Sura 2.255: themes emphasize monotheism and Allah's attributes, important for strengthening faith, prayer, and reliance on God in daily challenges; for Sura 114: themes of seeking refuge promote protection from evil influences, encouraging spiritual vigilance; for Sura 2.30–37: themes highlight human responsibility, repentance, and mercy, guiding ethical behavior and seeking forgiveness), with clear links to modern Muslim life. Level 3 (3 marks): Good understanding with some evaluation, explaining importance with relevant examples but minor gaps. Level 2 (2 marks): Basic understanding, stating importance without much depth. Level 1 (1 mark): Minimal understanding, mentioning importance vaguely. Level 0 (0 marks): No relevant understanding. Keep all alternatives; excess denies credit if it contradicts the response; accept own words or direct lifts if they show understanding.",
+            "marks": 4,
+            "topic_syllabus": "Quran",
+            "topic_general": "Beliefs"
+          }
+        ]
+      },
+      "Paper_2": {
+        "Variant_1": [
+          {
+            "question_number": "1",
+            "sub_question": "(a)",
+            "question_text": "Describe their teachings about what Muslims believe.",
+            "marking_scheme": "Candidates must describe the teachings of two chosen Hadiths about what Muslims believe. Marks are awarded for recalling, selecting, and presenting relevant facts from the Hadiths, based on AO1 levels of response: Level 4 (3-4 marks) for a detailed and accurate description with relevant examples; Level 3 (2 marks) for a competent description with some accuracy; Level 2 (1 mark) for basic points with limited accuracy; Level 1 (0 marks) for irrelevant or no response. Acceptable answers include key facts from the Hadiths such as mercy in (i), charity and helping the needy in (ii), commitment to Qur'anic study in (iii), and daily acts of charity in (iv).",
+            "marks": 4,
+            "topic_syllabus": "Hadith",
+            "topic_general": "Islamic Teachings"
+          },
+          {
+            "question_number": "1",
+            "sub_question": "(b)",
+            "question_text": "Explain how Muslims can put these teachings into action.",
+            "marking_scheme": "Candidates must explain how Muslims can apply the teachings of the two chosen Hadiths in their lives. Marks are awarded for demonstrating understanding of the significance of these teachings in the lives of Muslims, based on AO2 levels of response: Level 4 (3-4 marks) for a detailed explanation showing clear understanding and evaluation; Level 3 (2 marks) for a competent explanation with some understanding; Level 2 (1 mark) for basic explanation with limited understanding; Level 1 (0 marks) for irrelevant or no response. For example, for Hadith (i), explain showing mercy by helping others; for (ii), by assisting widows and the poor; for (iii), by regularly studying the Qur'an; for (iv), by performing daily charities like removing harm from roads.",
+            "marks": 4,
+            "topic_syllabus": "Hadith",
+            "topic_general": "Islamic Teachings"
+          }
+        ],
+        "Variant_2": [
+          {
+            "question_number": "1",
+            "sub_question": "(a)",
+            "question_text": "Describe their teachings about what Muslims believe.",
+            "marking_scheme": "Award marks according to the levels of response for AO1, which assesses the ability to recall, select and present relevant facts from the main elements of the faith and history of Islam. For 4 marks: Excellent recall and selection of relevant facts, providing a detailed and accurate description of the teachings from any two chosen Hadiths, such as (i) the value of earning through one's own work, (ii) the importance of kindness in transactions, (iii) the excellence of striving in Allah's way with one's person and property, or (iv) the need for gentleness in leadership. For 3 marks: Good recall of relevant facts with some detail and accuracy. For 2 marks: Basic recall of facts but lacking detail or accuracy. For 1 mark: Limited recall of facts with little relevance. For 0 marks: No relevant facts. Acceptable answers include descriptions in the candidate's own words, but accept direct lifts from the Hadiths if accurate. Do not deduct marks for minor errors in spelling or grammar as long as the meaning is clear.",
+            "marks": 4,
+            "topic_syllabus": "Hadith",
+            "topic_general": "Islamic Texts"
+          },
+          {
+            "question_number": "1",
+            "sub_question": "(b)",
+            "question_text": "Explain how Muslims can put these teachings into action.",
+            "marking_scheme": "Award marks according to the levels of response for AO2, which assesses the ability to demonstrate understanding of the significance of the selected information in the teachings of Islam and in the lives of Muslims. For 4 marks: Excellent understanding, explaining clearly and in detail how Muslims can apply the teachings from any two chosen Hadiths in daily life, such as (i) by engaging in honest work and appreciating earnings from labour, (ii) by being kind and fair in buying, selling, and debt collection, (iii) by participating in jihad through personal effort and resources, or (iv) by showing gentleness and avoiding harshness in leadership roles, with examples of significance in Muslim lives. For 3 marks: Good understanding with some detail and relevant explanation. For 2 marks: Basic understanding but lacking depth or examples. For 1 mark: Limited understanding with minimal explanation. For 0 marks: No relevant explanation. Keep all alternatives; for example, accept explanations that show how these teachings promote ethical behaviour or community harmony. Award marks for responses in the candidate's own words, and accept direct references to the Hadiths if they demonstrate understanding.",
+            "marks": 4,
+            "topic_syllabus": "Hadith",
+            "topic_general": "Islamic Texts"
+          }
+        ]
+      }
+    }
+  },
+  "2025": {
+    "May_June": {
+      "Paper_1": {
+        "Variant_1": [
+          {
+            "question_number": "1",
+            "sub_question": "(a)",
+            "question_text": "Briefly describe the main theme(s) in each passage.",
+            "marking_scheme": "Candidates must briefly describe the main themes in each of the two chosen passages from the Qur’an. Marks are awarded based on AO1: Recall, selection, and presentation of relevant facts. Level 4 (3–4 marks): Comprehensive and accurate description of main themes with specific details from the passages, e.g., for Sura 2.255: Themes of Tawhid (oneness of God), Allah's attributes such as being eternal, all-knowing, and His sovereignty over the heavens and earth; for Sura 42.4–5: Themes of Allah's supremacy, the heavens nearly splitting from awe, and angels praising God and seeking forgiveness; for Sura 6.75–79: Themes of monotheism, rejection of idols, and seeking guidance from God. Award up to 2 marks per passage for accurate themes. Level 3 (2 marks): Good description with some relevant details. Level 2 (1 mark): Basic description with limited accuracy. Level 1 (0 marks): Inaccurate or no description. Acceptable answers must be in the candidate's own words where possible, but direct lifts from the text are accepted if relevant.",
+            "marks": 4,
+            "topic_syllabus": "Quran",
+            "topic_general": "Beliefs"
+          },
+          {
+            "question_number": "1",
+            "sub_question": "(b)",
+            "question_text": "Briefly explain the importance of these themes in a Muslim’s life today.",
+            "marking_scheme": "Candidates must briefly explain the importance of the themes from the two chosen passages in a Muslim’s life today. Marks are awarded based on AO2: Demonstration of understanding and significance in Islamic teachings. Level 4 (3–4 marks): Clear and detailed explanation of how the themes apply to daily life, e.g., for themes in Sura 2.255: Emphasizes reliance on God’s oneness for spiritual strength and moral guidance in facing modern challenges; for Sura 42.4–5: Highlights the need for seeking forgiveness and mercy in interpersonal relationships and personal devotion; for Sura 6.75–79: Stresses avoiding idolatry in a materialistic world and seeking true guidance for ethical decision-making. Award up to 2 marks for each theme’s importance explained effectively. Level 3 (2 marks): Good explanation with some understanding. Level 2 (1 mark): Basic explanation with limited insight. Level 1 (0 marks): Inaccurate or no explanation. Responses should show the significance in teachings of Islam and lives of Muslims, using own words where possible.",
+            "marks": 4,
+            "topic_syllabus": "Quran",
+            "topic_general": "Beliefs"
+          }
+        ],
+        "Variant_2": [
+          {
+            "question_number": "1",
+            "sub_question": "(a)",
+            "question_text": "Choose any two of the following passages from the Qur’an, and: (a) briefly describe the main theme(s) in each passage",
+            "marking_scheme": "Candidates must select any two passages from the provided options and briefly describe the main themes in each. Award up to 2 marks for each passage, for a total of 4 marks. For each theme described accurately, award 1 mark. Acceptable answers include: For Sura 112: The main themes are the oneness of Allah (Tawhid), that Allah is eternal and absolute, that He does not beget nor is He begotten, and that there is none like Him. For Sura 1: The main themes are praise and glorification of Allah as the most gracious and merciful, acknowledgment of Him as the Master of the Day of Judgment, and seeking guidance on the straight path, distinguishing it from the paths of those who earn anger or go astray. For Sura 93: The main themes are reassurance of Allah's ongoing support, the promise that the Hereafter is better than the present, remembrance of Allah's favors to the Prophet (finding him as an orphan and giving shelter, finding him wandering and guiding him, finding him in need and making him independent), and commands to treat orphans kindly, not to drive away beggars, and to speak of Allah's bounty. Accept descriptions in the candidate's own words; do not deduct for minor errors in spelling or grammar as long as the meaning is clear.",
+            "marks": 4,
+            "topic_syllabus": "Quran",
+            "topic_general": "Beliefs"
+          },
+          {
+            "question_number": "1",
+            "sub_question": "(b)",
+            "question_text": "briefly explain the importance of these themes in a Muslim’s life today",
+            "marking_scheme": "Candidates must explain the importance of the themes from the two chosen passages in a Muslim’s life today, based on their descriptions in part (a). Award up to 2 marks for each passage, for a total of 4 marks. For each relevant explanation, award 1 mark. Acceptable answers include: For themes in Sura 112: Emphasizing Tawhid helps Muslims maintain monotheistic belief, fostering devotion and preventing idolatry in daily worship and decision-making. For themes in Sura 1: Seeking guidance promotes reliance on Allah for moral direction, encouraging ethical living, prayer, and avoidance of wrongdoing in modern challenges. For themes in Sura 93: It reminds Muslims of Allah's support, inspiring patience and gratitude, and urges social responsibilities like caring for orphans and the needy, which are vital for community welfare and charity in contemporary society. Accept explanations that demonstrate understanding of how these themes apply to daily life; credit own words and relevant examples; do not deduct for minor inaccuracies if the overall explanation is sound.",
+            "marks": 4,
+            "topic_syllabus": "Quran",
+            "topic_general": "Beliefs"
+          }
+        ]
+      },
+      "Paper_2": {
+        "Variant_1": [
+          {
+            "question_number": "1",
+            "sub_question": "(a)",
+            "question_text": "Choose any two of the following Hadiths, and describe their teachings about what Muslims believe",
+            "marking_scheme": "Award marks for AO1: Recall, select and present relevant facts from the Hadiths. For each of the two chosen Hadiths, candidates should provide a description of the teachings regarding Muslim beliefs. Level 4 (3-4 marks): Detailed and accurate description of the teachings from two Hadiths, showing comprehensive knowledge. Level 3 (2 marks): Good description with some accuracy and detail for at least one Hadith. Level 2 (1 mark): Basic description with limited accuracy or relevance. Level 1 (0 marks): Inaccurate, irrelevant, or no response. Acceptable answers include: For Hadith (i): The teaching that this world is a place of trial for believers, emphasizing patience and focus on the afterlife. For Hadith (ii): The teaching that studying the Qur'an requires constant attention, like managing camels, to retain its knowledge. For Hadith (iii): The teaching that leaders should be gentle and promote harmony. For Hadith (iv): The teaching that modesty leads to positive outcomes in character and actions. Do not deduct marks for minor errors in spelling or grammar as long as meaning is clear.",
+            "marks": 4,
+            "topic_syllabus": "Hadith",
+            "topic_general": "Islamic Teachings"
+          },
+          {
+            "question_number": "1",
+            "sub_question": "(b)",
+            "question_text": "Explain how Muslims can put these teachings into action",
+            "marking_scheme": "Award marks for AO2: Demonstrate understanding of the significance of the teachings in the lives of Muslims. For each of the two chosen Hadiths, candidates should explain practical applications. Level 4 (3-4 marks): Clear explanation showing how the teachings can be applied in daily life, with examples. Level 3 (2 marks): Good explanation with some understanding for at least one Hadith. Level 2 (1 mark): Basic explanation with limited depth. Level 1 (0 marks): Inaccurate, irrelevant, or no response. Acceptable answers include: For Hadith (i): Muslims can endure hardships with patience, prioritize religious duties over worldly pleasures, and prepare for the afterlife through good deeds. For Hadith (ii): Muslims can regularly study and revise the Qur'an to maintain knowledge, such as through daily recitation or classes. For Hadith (iii): Muslims, especially leaders, can be gentle in interactions, promote unity in communities, and avoid harshness in governance or daily affairs. For Hadith (iv): Muslims can practice modesty in behavior, speech, and dress to foster humility and moral integrity. Keep in mind instructions like accepting answers in candidates' own words where appropriate.",
+            "marks": 4,
+            "topic_syllabus": "Hadith",
+            "topic_general": "Islamic Teachings"
+          }
+        ],
+        "Variant_2": [
+          {
+            "question_number": "1",
+            "sub_question": "(a)",
+            "question_text": "Choose any two of the following Hadiths, and describe their teachings about what Muslims believe",
+            "marking_scheme": "Marks are awarded based on the levels of response for AO1 (recall, select and present relevant facts). Level 4 (4 marks): The candidate demonstrates good knowledge by accurately and relevantly describing the teachings of the two chosen Hadiths about what Muslims believe, using detailed and specific examples from the Hadiths. Level 3 (3 marks): The candidate shows sound knowledge by describing the teachings mostly accurately and relevantly, with some details. Level 2 (2 marks): The candidate provides basic knowledge with some accuracy, but lacks detail or is partially relevant. Level 1 (1 mark): The candidate makes a few relevant points, but they are vague, inaccurate or underdeveloped. Level 0 (0 marks): No relevant knowledge is demonstrated.",
+            "marks": 4,
+            "topic_syllabus": "Beliefs",
+            "topic_general": "Islamiyat"
+          },
+          {
+            "question_number": "1",
+            "sub_question": "(b)",
+            "question_text": "Choose any two of the following Hadiths, and explain how Muslims can put these teachings into action",
+            "marking_scheme": "Marks are awarded based on the levels of response for AO2 (demonstrate understanding of the significance of the information in the teachings of Islam and in the lives of Muslims). Level 4 (4 marks): The candidate demonstrates a good understanding by clearly explaining how Muslims can apply the teachings of the two chosen Hadiths in their daily lives, with relevant examples and evaluation of their importance. Level 3 (3 marks): The candidate shows sound understanding by explaining the application mostly clearly, with some relevant examples. Level 2 (2 marks): The candidate provides a basic explanation of application, but it is underdeveloped or lacks depth. Level 1 (1 mark): The candidate makes a few points about application, but they are vague or not well connected to the Hadiths. Level 0 (0 marks): No relevant understanding is demonstrated.",
+            "marks": 4,
+            "topic_syllabus": "Practices",
+            "topic_general": "Islamiyat"
+          }
+        ]
+      }
+    },
+    "Oct_Nov": {
+      "Paper_1": {
+        "Variant_1": [
+          {
+            "question_number": "1",
+            "sub_question": "(a)",
+            "question_text": "Choose any two of the following passages from the Qur’an, and briefly describe the main theme(s) in each passage.",
+            "marking_scheme": "Candidates must select any two passages from the provided options and briefly describe the main themes in each. Award marks according to the following levels of response for AO1 Knowledge: Level 4 (4 marks): A well-structured, clear, and comprehensive response that demonstrates extensive and accurate knowledge relevant to the question, with points that are detailed, well-developed, and relevant, likely including quotes from Qur’an verses to support points. Level 3 (3 marks): A well-structured and clear response that demonstrates sound accurate knowledge relevant to the question, with points that are elaborated upon and generally accurate, possibly including quotes from Qur’an verses and Hadiths. Level 2 (2 marks): An attempt to present a structured response that lacks cohesion or is undeveloped, demonstrating some knowledge covering main points but without detail, with points that are sometimes relevant and accurate but limited. Level 1 (1 mark): Some attempt to answer the question that lacks cohesion and structure, demonstrating limited knowledge with little connection to the question. Level 0 (0 marks): No creditable content. Acceptable answers include accurate descriptions of themes such as for Sura 6.101–103: the oneness of Allah, His creation of the heavens and earth, and His knowledge; for Sura 41.37: the signs of Allah in nature and the command to worship Him alone; for Sura 99: the Day of Judgement, accountability for deeds, and the revelation of actions. Not accepted: Descriptions that are completely inaccurate or irrelevant.",
+            "marks": 4,
+            "topic_syllabus": "Quran",
+            "topic_general": "Beliefs"
+          },
+          {
+            "question_number": "1",
+            "sub_question": "(b)",
+            "question_text": "Briefly explain the importance of these themes in a Muslim’s life today.",
+            "marking_scheme": "Candidates must explain the importance of the themes from the two chosen passages in a Muslim’s life today. Award marks according to the following levels of response for AO2 Understanding: Level 2 (3–4 marks): Responses demonstrate a clear understanding of the question, using own opinions to engage with it and present reasoning that demonstrates understanding, such as explaining how themes like Allah’s oneness encourage monotheism or how accountability on Judgement Day promotes ethical behaviour. Level 1 (1–2 marks): Responses demonstrate some understanding of the question, with descriptive and factual references but limited discussion, such as basic statements on the relevance of themes without deeper reasoning. Level 0 (0 marks): No creditable content. Acceptable answers include explanations like: the theme of Allah’s creation and knowledge (from Sura 6.101–103) emphasizes reliance on God and seeking knowledge in daily life; the theme of worshipping Allah alone (from Sura 41.37) reinforces avoiding idolatry and focusing on devotion; the theme of Judgement Day (from Sura 99) stresses moral conduct and responsibility. Award marks for clear, reasoned explanations; accept answers in own words unless specified otherwise.",
+            "marks": 4,
+            "topic_syllabus": "Quran",
+            "topic_general": "Beliefs"
+          }
+        ],
+        "Variant_2": [
+          {
+            "question_number": "1",
+            "sub_question": "(a)",
+            "question_text": "Briefly describe the main theme(s) in each passage.",
+            "marking_scheme": "Candidates must choose any two passages from the given options and briefly describe the main themes in each. Marks are awarded based on the levels of response for AO1 (Knowledge) as follows: Level 4 (4 marks): A well-structured, clear, and comprehensive response that demonstrates extensive and accurate knowledge relevant to the question; points are detailed, well-developed, and relevant; likely to quote Qur’an verses to support points made. Level 3 (3 marks): A well-structured and clear response that demonstrates sound accurate knowledge which is relevant to the question; points are elaborated upon and generally accurate; may quote Qur’an verses and Hadiths to support. Level 2 (2 marks): An attempt to present a structured response to the question; response lacks cohesion or is undeveloped; demonstrates some knowledge of the subject covering some of the main points but without detail; points made are sometimes relevant and accurate but limited. Level 1 (1 mark): Some attempt to answer the question; lacks cohesion and structure; demonstrates limited knowledge of the subject; responses made are limited with little connection to the question. Level 0 (0 marks): No creditable content. Acceptable answers include identifying themes such as in Sura 6.75–79: the search for true faith and rejection of idols; in Sura 2.21–22: monotheism, creation, and gratitude to Allah; in Sura 108: abundance, prayer, sacrifice, and dealing with enemies.",
+            "marks": 4,
+            "topic_syllabus": "Quran",
+            "topic_general": "Beliefs"
+          },
+          {
+            "question_number": "1",
+            "sub_question": "(b)",
+            "question_text": "Briefly explain the importance of these themes in a Muslim’s life today.",
+            "marking_scheme": "Candidates must explain the importance of the themes identified in the chosen passages for a Muslim’s life today. Marks are awarded based on the levels of response for AO2 (Understanding) as follows: Level 2 (3-4 marks): Responses demonstrate a clear understanding of the question; able to use own opinions to engage with the question and present reasoning that demonstrates their understanding, such as explaining how themes like monotheism encourage devotion or rejecting idols promotes pure faith. Level 1 (1-2 marks): Responses demonstrate some understanding of the question; there are descriptive and factual references to the question with limited discussion of the material, for example, stating themes are important without full explanation. Level 0 (0 marks): No creditable content. Acceptable answers include: For themes in Sura 6.75–79, the importance of seeking true guidance and avoiding polytheism to maintain a strong faith in modern distractions; for Sura 2.21–22, the importance of recognizing Allah as creator to foster gratitude and righteousness in daily life; for Sura 108, the importance of prayer and sacrifice to handle enmity and appreciate blessings today.",
+            "marks": 4,
+            "topic_syllabus": "Quran",
+            "topic_general": "Beliefs"
+          }
+        ]
+      },
+      "Paper_2": {
+        "Variant_1": [
+          {
+            "question_number": "1",
+            "sub_question": "(a)",
+            "question_text": "Choose any two of the following Hadiths and describe their teachings about what Muslims believe.",
+            "marking_scheme": "Marks are awarded based on the levels of response for AO1 (Knowledge): Level 4 (4 marks): A well-structured, clear, and comprehensive response that demonstrates extensive and accurate knowledge relevant to the question; points are detailed, well-developed, and relevant; likely to quote Qur’an verses and Hadiths to support points made. Level 3 (3 marks): A well-structured and clear response that demonstrates sound accurate knowledge which is relevant to the question; points are elaborated upon and generally accurate; may quote Qur’an verses and Hadiths to support. Level 2 (2 marks): An attempt to present a structured response to the question; response lacks cohesion or is undeveloped; demonstrates some knowledge of the subject covering some of the main points but without detail; points made are sometimes relevant and accurate but limited. Level 1 (1 mark): Some attempt to answer the question; lacks cohesion and structure; demonstrates limited knowledge of the subject; responses made are limited with little connection to the question. Level 0 (0 marks): No creditable content. Acceptable answers include descriptions of the teachings from the chosen Hadiths, such as for Hadith (i): The teaching that the Muslim community is like a single body, emphasizing unity and mutual support. For Hadith (ii): The teaching that performing obligatory acts like prayers, fasting, and following lawful and forbidden matters can lead to Paradise. For Hadith (iii): The teaching that earning a living through one's own work is virtuous. For Hadith (iv): The teaching that true belief involves wishing for others what one wishes for oneself, promoting equality and brotherhood.",
+            "marks": 4,
+            "topic_syllabus": "Hadith",
+            "topic_general": "Islamic Beliefs and Practices"
+          },
+          {
+            "question_number": "1",
+            "sub_question": "(b)",
+            "question_text": "Choose any two of the following Hadiths and explain how Muslims can put these teachings into action.",
+            "marking_scheme": "Marks are awarded based on the levels of response for AO2 (Understanding): Level 2 (3–4 marks): Responses demonstrate a clear understanding of the question; able to use own opinions to engage with the question and present reasoning that demonstrates their understanding. Level 1 (1–2 marks): Responses demonstrate some understanding of the question; there are descriptive and factual references to the question with limited discussion of the material. Level 0 (0 marks): No creditable content. Acceptable answers include explanations of practical applications, such as for Hadith (i): Muslims can put this into action by supporting community members in times of need, like helping the sick or aiding those in distress. For Hadith (ii): Muslims can act on this by strictly observing the five daily prayers, fasting in Ramadan, and adhering to Islamic dietary laws. For Hadith (iii): Muslims can apply this by engaging in honest work and earning a livelihood through permissible means, avoiding dependence on others. For Hadith (iv): Muslims can implement this by treating others with fairness, sharing resources, and promoting social justice.",
+            "marks": 4,
+            "topic_syllabus": "Hadith",
+            "topic_general": "Islamic Beliefs and Practices"
+          }
+        ],
+        "Variant_2": [
+          {
+            "question_number": "1",
+            "sub_question": "(a)",
+            "question_text": "Choose any two of the following Hadiths and describe their teachings about what Muslims believe.",
+            "marking_scheme": "Marking scheme for AO1 (Knowledge): Level 4 (4 marks): A well-structured, clear, and comprehensive response that demonstrates extensive and accurate knowledge relevant to the question. Points are detailed, well-developed, and relevant. Likely to quote Qur’an verses and Hadiths to support points made or other relevant quotations. Level 3 (3 marks): A well-structured and clear response that demonstrates sound accurate knowledge which is relevant to the question. Points are elaborated upon and generally accurate. May quote Qur’an verses and Hadiths to support. Level 2 (2 marks): An attempt to present a structured response to the question. Response lacks cohesion or is undeveloped. Demonstrates some knowledge of the subject covering some of the main points but without detail. Points made are sometimes relevant and accurate but limited. Level 1 (1 mark): Some attempt to answer the question. Lacks cohesion and structure. Demonstrates limited knowledge of the subject. Responses made are limited with little connection to the question. Level 0 (0 marks): No creditable content.",
+            "marks": 4,
+            "topic_syllabus": "Hadith",
+            "topic_general": "Islamic Beliefs and Practices"
+          },
+          {
+            "question_number": "1",
+            "sub_question": "(b)",
+            "question_text": "Explain how Muslims can put these teachings into action.",
+            "marking_scheme": "Marking scheme for AO2 (Understanding): Level 2 (3–4 marks): Responses demonstrate a clear understanding of the question. Able to use own opinions to engage with the question and present reasoning that demonstrates their understanding. Level 1 (1–2 marks): Responses demonstrate some understanding of the question. There are descriptive and factual references to the question with limited discussion of the material. Level 0 (0 marks): No creditable content.",
+            "marks": 4,
+            "topic_syllabus": "Hadith",
+            "topic_general": "Islamic Beliefs and Practices"
+          }
+        ]
+      }
+    }
+  }
+}

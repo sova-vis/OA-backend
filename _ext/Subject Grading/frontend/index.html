@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>O/A Evaluator (React)</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <div id="root"></div>
+  <!-- Set window.OA_API_BASE to point at the evaluator API (default: same host, port 8001). Change or remove if serving API elsewhere. -->
+  <script>window.OA_API_BASE = "http://localhost:8001";</script>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script type="text/babel" src="/static/react-app.jsx"></script>
+</body>
+</html>

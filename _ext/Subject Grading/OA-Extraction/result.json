@@ -1,0 +1,722 @@
+{
+  "input_type": "image",
+  "page_count": 1,
+  "whole_text_raw": "Q. Solve log\u20832x + log\u2089x =12\nA. log\u20832x + log\u2083x / log\u20839 =12\nlog\u20832x + log\u2083x /2 =12\n2log\u20832x + log\u2083x =24\n2log\u20832x + log\u2083x =24\n3log\u2083x =24\nlog\u2083x =24/3\nlog\u2083x =8\nx = 3^8\nx =6561",
+  "question_raw": "Q. Solve log\u20832x + log\u2089x =12",
+  "answer_raw": "A. log\u20832x + log\u2083x / log\u20839 =12\nlog\u20832x + log\u2083x /2 =12\n2log\u20832x + log\u2083x =24\n2log\u20832x + log\u2083x =24\n3log\u2083x =24\nlog\u2083x =24/3\nlog\u2083x =8\nx = 3^8\nx =6561",
+  "question_normalized": "Q. Solve log\u20832x + log\u2089x =12",
+  "answer_normalized": "A. log\u20832x + log\u2083x / log\u20839 =12\nlog\u20832x + log\u2083x /2 =12\n2log\u20832x + log\u2083x =24\n2log\u20832x + log\u2083x =24\n3log\u2083x =24\nlog\u2083x =24/3\nlog\u2083x =8\nx = 3^8\nx =6561",
+  "subject": "Math",
+  "confidence": {
+    "ocr": 0.78,
+    "split": 0.85,
+    "classification": 0.9,
+    "overall": 0.78
+  },
+  "flags": [
+    {
+      "code": "low_ocr_confidence",
+      "severity": "warning",
+      "message": "OCR confidence 0.78 is below threshold 0.85."
+    },
+    {
+      "code": "low_split_confidence",
+      "severity": "warning",
+      "message": "Split confidence 0.85 is below threshold 0.90."
+    },
+    {
+      "code": "potential_symbol_ambiguity",
+      "severity": "warning",
+      "message": "Detected visually confusable math symbols such as 0/O or 1/I/l."
+    },
+    {
+      "code": "ocr_engine_disagreement",
+      "severity": "warning",
+      "message": "OCR candidates disagree materially on one or more lines."
+    },
+    {
+      "code": "unresolved_ocr_conflicts",
+      "severity": "warning",
+      "message": "Some disputed OCR lines remain unresolved after arbitration."
+    }
+  ],
+  "needs_review": true,
+  "diagnostics": {
+    "selected_ocr_engine": "grok",
+    "selected_variant": "original",
+    "ocr_candidates": [
+      {
+        "engine": "grok",
+        "variant": "original",
+        "full_text": "Q. Solve log\u20832x + log\u2089x =12\nA. log\u20832x + log\u2083x / log\u20839 =12\nlog\u20832x + log\u2083x /2 =12\n2log\u20832x + log\u2083x =24\n2log\u20832x + log\u2083x =24\n3log\u2083x =24\nlog\u2083x =24/3\nlog\u2083x =8\nx = 3^8\nx =6561",
+        "lines": [
+          {
+            "page_number": 1,
+            "line_index": 1,
+            "text": "Q. Solve log\u20832x + log\u2089x =12",
+            "confidence": 0.78
+          },
+          {
+            "page_number": 1,
+            "line_index": 2,
+            "text": "A. log\u20832x + log\u2083x / log\u20839 =12",
+            "confidence": 0.78
+          },
+          {
+            "page_number": 1,
+            "line_index": 3,
+            "text": "log\u20832x + log\u2083x /2 =12",
+            "confidence": 0.78
+          },
+          {
+            "page_number": 1,
+            "line_index": 4,
+            "text": "2log\u20832x + log\u2083x =24",
+            "confidence": 0.78
+          },
+          {
+            "page_number": 1,
+            "line_index": 5,
+            "text": "2log\u20832x + log\u2083x =24",
+            "confidence": 0.78
+          },
+          {
+            "page_number": 1,
+            "line_index": 6,
+            "text": "3log\u2083x =24",
+            "confidence": 0.78
+          },
+          {
+            "page_number": 1,
+            "line_index": 7,
+            "text": "log\u2083x =24/3",
+            "confidence": 0.78
+          },
+          {
+            "page_number": 1,
+            "line_index": 8,
+            "text": "log\u2083x =8",
+            "confidence": 0.78
+          },
+          {
+            "page_number": 1,
+            "line_index": 9,
+            "text": "x = 3^8",
+            "confidence": 0.78
+          },
+          {
+            "page_number": 1,
+            "line_index": 10,
+            "text": "x =6561",
+            "confidence": 0.78
+          }
+        ],
+        "ocr_confidence": 0.78,
+        "uncertain_spans": [],
+        "selection_score": 0.8658
+      },
+      {
+        "engine": "grok",
+        "variant": "sharpened_binary",
+        "full_text": "Q. Solve log\u2083x + log\u2089x =12\nA. log\u2083x + log\u2083x =12\n          log\u20839\nlog\u2083x + log\u2083x /2 =12\n2log\u2083x + log\u2083x =24\n2log\u2083x + log\u2083x =24\n3log\u2083x =24\nlog\u2083x =24/3\nlog\u2083x =8\nx =3\u2078\nx =6561",
+        "lines": [
+          {
+            "page_number": 1,
+            "line_index": 1,
+            "text": "Q. Solve log\u2083x + log\u2089x =12",
+            "confidence": 0.82
+          },
+          {
+            "page_number": 1,
+            "line_index": 2,
+            "text": "A. log\u2083x + log\u2083x =12",
+            "confidence": 0.82
+          },
+          {
+            "page_number": 1,
+            "line_index": 3,
+            "text": "          log\u20839",
+            "confidence": 0.82
+          },
+          {
+            "page_number": 1,
+            "line_index": 4,
+            "text": "log\u2083x + log\u2083x /2 =12",
+            "confidence": 0.82
+          },
+          {
+            "page_number": 1,
+            "line_index": 5,
+            "text": "2log\u2083x + log\u2083x =24",
+            "confidence": 0.82
+          },
+          {
+            "page_number": 1,
+            "line_index": 6,
+            "text": "2log\u2083x + log\u2083x =24",
+            "confidence": 0.82
+          },
+          {
+            "page_number": 1,
+            "line_index": 7,
+            "text": "3log\u2083x =24",
+            "confidence": 0.82
+          },
+          {
+            "page_number": 1,
+            "line_index": 8,
+            "text": "log\u2083x =24/3",
+            "confidence": 0.82
+          },
+          {
+            "page_number": 1,
+            "line_index": 9,
+            "text": "log\u2083x =8",
+            "confidence": 0.82
+          },
+          {
+            "page_number": 1,
+            "line_index": 10,
+            "text": "x =3\u2078",
+            "confidence": 0.82
+          },
+          {
+            "page_number": 1,
+            "line_index": 11,
+            "text": "x =6561",
+            "confidence": 0.82
+          }
+        ],
+        "ocr_confidence": 0.82,
+        "uncertain_spans": [],
+        "selection_score": 0.8612
+      },
+      {
+        "engine": "grok",
+        "variant": "grayscale_autocontrast",
+        "full_text": "Q. Solve log\u2083 2x + log\u2089 x =12\nA.\nlog\u2083 2x + log\u2083 x / log\u2083 9 =12\nlog\u2083 2x + log\u2083 x / 2 =12\n2 log\u2083 2x + log\u2083 x =24\n\n2 log\u2083 2x + log\u2083 x =24\n3 log\u2083 x =24\nlog\u2083 x =24/3\nlog\u2083 x =8\nx=3^8\nx=6561",
+        "lines": [
+          {
+            "page_number": 1,
+            "line_index": 1,
+            "text": "Q. Solve log\u2083 2x + log\u2089 x =12",
+            "confidence": 0.68
+          },
+          {
+            "page_number": 1,
+            "line_index": 2,
+            "text": "A.",
+            "confidence": 0.68
+          },
+          {
+            "page_number": 1,
+            "line_index": 3,
+            "text": "log\u2083 2x + log\u2083 x / log\u2083 9 =12",
+            "confidence": 0.68
+          },
+          {
+            "page_number": 1,
+            "line_index": 4,
+            "text": "log\u2083 2x + log\u2083 x / 2 =12",
+            "confidence": 0.68
+          },
+          {
+            "page_number": 1,
+            "line_index": 5,
+            "text": "2 log\u2083 2x + log\u2083 x =24",
+            "confidence": 0.68
+          },
+          {
+            "page_number": 1,
+            "line_index": 6,
+            "text": "2 log\u2083 2x + log\u2083 x =24",
+            "confidence": 0.68
+          },
+          {
+            "page_number": 1,
+            "line_index": 7,
+            "text": "3 log\u2083 x =24",
+            "confidence": 0.68
+          },
+          {
+            "page_number": 1,
+            "line_index": 8,
+            "text": "log\u2083 x =24/3",
+            "confidence": 0.68
+          },
+          {
+            "page_number": 1,
+            "line_index": 9,
+            "text": "log\u2083 x =8",
+            "confidence": 0.68
+          },
+          {
+            "page_number": 1,
+            "line_index": 10,
+            "text": "x=3^8",
+            "confidence": 0.68
+          },
+          {
+            "page_number": 1,
+            "line_index": 11,
+            "text": "x=6561",
+            "confidence": 0.68
+          }
+        ],
+        "ocr_confidence": 0.68,
+        "uncertain_spans": [
+          {
+            "page_number": 1,
+            "text": "log\u2083 2x",
+            "reason": "Grok uncertain span",
+            "line_index": null,
+            "confidence": null
+          },
+          {
+            "page_number": 1,
+            "text": "log\u2089 x",
+            "reason": "Grok uncertain span",
+            "line_index": null,
+            "confidence": null
+          },
+          {
+            "page_number": 1,
+            "text": "log\u2083 9",
+            "reason": "Grok uncertain span",
+            "line_index": null,
+            "confidence": null
+          },
+          {
+            "page_number": 1,
+            "text": "2x",
+            "reason": "Grok uncertain span",
+            "line_index": null,
+            "confidence": null
+          },
+          {
+            "page_number": 1,
+            "text": "3^8",
+            "reason": "Grok uncertain span",
+            "line_index": null,
+            "confidence": null
+          }
+        ],
+        "selection_score": 0.7263
+      },
+      {
+        "engine": "azure",
+        "variant": "original",
+        "full_text": "Q. Solve log3x+logax =12\nA.\n1003x + 1003x =12 10939\n1003x + 1093x =12\n21003x + 1093x = 24\n2 109 3x + 1093x = 24\n3100,3x =24\n1092x = 24\n3\n1093x = 8\nx = 3\u00b0 8\nX =6561",
+        "lines": [
+          {
+            "page_number": 1,
+            "line_index": 1,
+            "text": "Q. Solve log3x+logax =12",
+            "confidence": null
+          },
+          {
+            "page_number": 1,
+            "line_index": 2,
+            "text": "A.",
+            "confidence": null
+          },
+          {
+            "page_number": 1,
+            "line_index": 3,
+            "text": "1003x + 1003x =12",
+            "confidence": null
+          },
+          {
+            "page_number": 1,
+            "line_index": 4,
+            "text": "10939",
+            "confidence": null
+          },
+          {
+            "page_number": 1,
+            "line_index": 5,
+            "text": "1003x + 1093x",
+            "confidence": null
+          },
+          {
+            "page_number": 1,
+            "line_index": 6,
+            "text": "=12",
+            "confidence": null
+          },
+          {
+            "page_number": 1,
+            "line_index": 7,
+            "text": "21003x + 1093x = 24",
+            "confidence": null
+          },
+          {
+            "page_number": 1,
+            "line_index": 8,
+            "text": "2 109 3x + 1093x = 24",
+            "confidence": null
+          },
+          {
+            "page_number": 1,
+            "line_index": 9,
+            "text": "3100,3x =24",
+            "confidence": null
+          },
+          {
+            "page_number": 1,
+            "line_index": 10,
+            "text": "1092x = 24",
+            "confidence": null
+          },
+          {
+            "page_number": 1,
+            "line_index": 11,
+            "text": "3",
+            "confidence": null
+          },
+          {
+            "page_number": 1,
+            "line_index": 12,
+            "text": "1093x = 8",
+            "confidence": null
+          },
+          {
+            "page_number": 1,
+            "line_index": 13,
+            "text": "x = 3\u00b0",
+            "confidence": null
+          },
+          {
+            "page_number": 1,
+            "line_index": 14,
+            "text": "8",
+            "confidence": null
+          },
+          {
+            "page_number": 1,
+            "line_index": 15,
+            "text": "X =6561",
+            "confidence": null
+          }
+        ],
+        "ocr_confidence": 0.7809,
+        "uncertain_spans": [
+          {
+            "page_number": 1,
+            "text": "Q.",
+            "reason": "Azure low-confidence word",
+            "line_index": null,
+            "confidence": 0.67
+          },
+          {
+            "page_number": 1,
+            "text": "log3x+logax",
+            "reason": "Azure low-confidence word",
+            "line_index": null,
+            "confidence": 0.222
+          },
+          {
+            "page_number": 1,
+            "text": "=12",
+            "reason": "Azure low-confidence word",
+            "line_index": null,
+            "confidence": 0.295
+          },
+          {
+            "page_number": 1,
+            "text": "A.",
+            "reason": "Azure low-confidence word",
+            "line_index": null,
+            "confidence": 0.661
+          },
+          {
+            "page_number": 1,
+            "text": "1003x",
+            "reason": "Azure low-confidence word",
+            "line_index": null,
+            "confidence": 0.667
+          },
+          {
+            "page_number": 1,
+            "text": "1003x",
+            "reason": "Azure low-confidence word",
+            "line_index": null,
+            "confidence": 0.588
+          },
+          {
+            "page_number": 1,
+            "text": "1003x",
+            "reason": "Azure low-confidence word",
+            "line_index": null,
+            "confidence": 0.662
+          },
+          {
+            "page_number": 1,
+            "text": "1093x",
+            "reason": "Azure low-confidence word",
+            "line_index": null,
+            "confidence": 0.757
+          },
+          {
+            "page_number": 1,
+            "text": "=12",
+            "reason": "Azure low-confidence word",
+            "line_index": null,
+            "confidence": 0.581
+          },
+          {
+            "page_number": 1,
+            "text": "21003x",
+            "reason": "Azure low-confidence word",
+            "line_index": null,
+            "confidence": 0.54
+          },
+          {
+            "page_number": 1,
+            "text": "1093x",
+            "reason": "Azure low-confidence word",
+            "line_index": null,
+            "confidence": 0.779
+          },
+          {
+            "page_number": 1,
+            "text": "109",
+            "reason": "Azure low-confidence word",
+            "line_index": null,
+            "confidence": 0.581
+          },
+          {
+            "page_number": 1,
+            "text": "3x",
+            "reason": "Azure low-confidence word",
+            "line_index": null,
+            "confidence": 0.683
+          },
+          {
+            "page_number": 1,
+            "text": "1093x",
+            "reason": "Azure low-confidence word",
+            "line_index": null,
+            "confidence": 0.729
+          },
+          {
+            "page_number": 1,
+            "text": "3100,3x",
+            "reason": "Azure low-confidence word",
+            "line_index": null,
+            "confidence": 0.689
+          },
+          {
+            "page_number": 1,
+            "text": "1092x",
+            "reason": "Azure low-confidence word",
+            "line_index": null,
+            "confidence": 0.257
+          },
+          {
+            "page_number": 1,
+            "text": "1093x",
+            "reason": "Azure low-confidence word",
+            "line_index": null,
+            "confidence": 0.732
+          },
+          {
+            "page_number": 1,
+            "text": "x",
+            "reason": "Azure low-confidence word",
+            "line_index": null,
+            "confidence": 0.775
+          },
+          {
+            "page_number": 1,
+            "text": "3\u00b0",
+            "reason": "Azure low-confidence word",
+            "line_index": null,
+            "confidence": 0.664
+          }
+        ],
+        "selection_score": 0.7113
+      }
+    ],
+    "disagreement_spans": [
+      {
+        "page_number": 1,
+        "line_index": 1,
+        "selected_text": "Q. Solve log\u20832x + log\u2089x =12",
+        "alternate_texts": [
+          "Q. Solve log\u2083x + log\u2089x =12",
+          "Q. Solve log\u2083 2x + log\u2089 x =12",
+          "Q. Solve log3x+logax =12"
+        ],
+        "disagreement_score": 0.1373,
+        "unresolved": true
+      },
+      {
+        "page_number": 1,
+        "line_index": 2,
+        "selected_text": "A. log\u20832x + log\u2083x / log\u20839 =12",
+        "alternate_texts": [
+          "A. log\u2083x + log\u2083x =12",
+          "A."
+        ],
+        "disagreement_score": 0.871,
+        "unresolved": true
+      },
+      {
+        "page_number": 1,
+        "line_index": 3,
+        "selected_text": "log\u20832x + log\u2083x /2 =12",
+        "alternate_texts": [
+          "log\u20839",
+          "log\u2083 2x + log\u2083 x / log\u2083 9 =12",
+          "1003x + 1003x =12"
+        ],
+        "disagreement_score": 0.6923,
+        "unresolved": true
+      },
+      {
+        "page_number": 1,
+        "line_index": 4,
+        "selected_text": "2log\u20832x + log\u2083x =24",
+        "alternate_texts": [
+          "log\u2083x + log\u2083x /2 =12",
+          "log\u2083 2x + log\u2083 x / 2 =12",
+          "10939"
+        ],
+        "disagreement_score": 1.0,
+        "unresolved": true
+      },
+      {
+        "page_number": 1,
+        "line_index": 5,
+        "selected_text": "2log\u20832x + log\u2083x =24",
+        "alternate_texts": [
+          "2log\u2083x + log\u2083x =24",
+          "2 log\u2083 2x + log\u2083 x =24",
+          "1003x + 1093x"
+        ],
+        "disagreement_score": 0.6875,
+        "unresolved": true
+      },
+      {
+        "page_number": 1,
+        "line_index": 6,
+        "selected_text": "3log\u2083x =24",
+        "alternate_texts": [
+          "2log\u2083x + log\u2083x =24",
+          "2 log\u2083 2x + log\u2083 x =24",
+          "=12"
+        ],
+        "disagreement_score": 0.6923,
+        "unresolved": true
+      },
+      {
+        "page_number": 1,
+        "line_index": 7,
+        "selected_text": "log\u2083x =24/3",
+        "alternate_texts": [
+          "3log\u2083x =24",
+          "3 log\u2083 x =24",
+          "21003x + 1093x = 24"
+        ],
+        "disagreement_score": 0.6667,
+        "unresolved": true
+      },
+      {
+        "page_number": 1,
+        "line_index": 8,
+        "selected_text": "log\u2083x =8",
+        "alternate_texts": [
+          "log\u2083x =24/3",
+          "log\u2083 x =24/3",
+          "2 109 3x + 1093x = 24"
+        ],
+        "disagreement_score": 0.7931,
+        "unresolved": true
+      },
+      {
+        "page_number": 1,
+        "line_index": 9,
+        "selected_text": "x = 3^8",
+        "alternate_texts": [
+          "log\u2083x =8",
+          "log\u2083 x =8",
+          "3100,3x =24"
+        ],
+        "disagreement_score": 0.6667,
+        "unresolved": true
+      },
+      {
+        "page_number": 1,
+        "line_index": 10,
+        "selected_text": "x =6561",
+        "alternate_texts": [
+          "x =3\u2078",
+          "x=3^8",
+          "1092x = 24"
+        ],
+        "disagreement_score": 0.6667,
+        "unresolved": true
+      }
+    ],
+    "repair_actions": [
+      {
+        "page_number": 1,
+        "line_index": 1,
+        "before_text": "Q. Solve log\u20832x + log\u2089x =12",
+        "after_text": "Q. Solve log\u2083x + log\u2089x =12",
+        "source": "grok_repair",
+        "accepted": false,
+        "confidence": 0.75,
+        "rationale": "Image and alternate OCR support log\u2083x (no 2 in argument); selected OCR erroneously inserts 2, but this matches the consistent solution path to x=6561."
+      },
+      {
+        "page_number": 1,
+        "line_index": 2,
+        "before_text": "A. log\u20832x + log\u2083x / log\u20839 =12",
+        "after_text": "A. log\u2083x + log\u2083x / log\u20839 =12",
+        "source": "grok_repair",
+        "accepted": false,
+        "confidence": 0.8,
+        "rationale": "Image shows change-of-base step on second term only; first log is of x (no 2), consistent with later steps reducing to 3log\u2083x=24."
+      },
+      {
+        "page_number": 1,
+        "line_index": 3,
+        "before_text": "log\u20832x + log\u2083x /2 =12",
+        "after_text": "log\u2083x + log\u2083x /2 =12",
+        "source": "grok_repair",
+        "accepted": false,
+        "confidence": 0.75,
+        "rationale": "Image and math steps indicate simplified change-of-base result without 2 in first argument; competing OCR includes this correction."
+      },
+      {
+        "page_number": 1,
+        "line_index": 4,
+        "before_text": "2log\u20832x + log\u2083x =24",
+        "after_text": "2log\u2083x + log\u2083x =24",
+        "source": "grok_repair",
+        "accepted": false,
+        "confidence": 0.7,
+        "rationale": "Image displays this multiplied form without 2 in the argument (post-line); selected misreads as 2x version, but alternate supports the consistent 2log\u2083x version."
+      },
+      {
+        "page_number": 1,
+        "line_index": 5,
+        "before_text": "2log\u20832x + log\u2083x =24",
+        "after_text": "2log\u2083x + log\u2083x =24",
+        "source": "grok_repair",
+        "accepted": false,
+        "confidence": 0.7,
+        "rationale": "Repeated step in image lacks the 2 in argument; aligns with subsequent 3log\u2083x=24 reduction and final answer."
+      }
+    ],
+    "selection_reasons": [
+      "Selected grok:original (ocr_confidence=0.78, selection_score=0.87) as the highest-scoring OCR candidate.",
+      "Selection score combines OCR confidence, symbol preservation, math-token preservation, QA anchors, and peer agreement.",
+      "Best alternate was grok:sharpened_binary (ocr_confidence=0.82, selection_score=0.86).",
+      "Rejected targeted repair actions because they lowered candidate quality.",
+      "Accepted split-only retry because it improved or matched split confidence with explicit line assignments."
+    ]
+  }
+}

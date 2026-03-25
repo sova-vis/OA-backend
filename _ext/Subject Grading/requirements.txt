@@ -1,0 +1,21 @@
+# Core HTTP + env
+requests>=2.31.0
+python-dotenv>=1.0.1
+-e ./OA-Extraction
+
+# API (O/A Levels evaluator + Phase 5 image endpoint)
+fastapi>=0.111.0
+uvicorn>=0.30.0
+pydantic>=2.0.0
+python-multipart>=0.0.6
+
+# Embeddings + search index
+numpy>=1.26.0
+sentence-transformers>=3.0.0
+Pillow>=10.0.0
+
+# PDF / document handling (tools + optional)
+PyMuPDF>=1.24.0
+
+# Azure OCR (Phase 5: evaluate-from-image)
+azure-ai-formrecognizer>=3.3.3

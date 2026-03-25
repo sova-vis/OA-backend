@@ -1,0 +1,72 @@
+[
+  {
+    "question_id": "main|Mathematics 1014|2017|Oct_Nov|Paper_2|Variant_2|9(i)",
+    "question_text": "Find d/dx (ln x * x).",
+    "page_number": null,
+    "marking_scheme_answer": "Award 1 mark for product rule: d/dx (ln x * x) = (1/x)*x + ln x *1 = 1 + ln x.",
+    "source_paper_reference": "Mathematics 1014/2017/Oct_Nov/Paper_2/Variant_2"
+  },
+  {
+    "question_id": "main|Mathematics 1014|2015|Oct_Nov|Paper_1|Variant_2|4(a)(iii)",
+    "question_text": "Find the number of ways this can be done if 3 of the 8 books are music books which have to be kept together.",
+    "page_number": null,
+    "marking_scheme_answer": "Award 1 mark for treating the 3 music books as a single unit, so arranging 6 units (the music block and 5 other books). Award 1 mark for the arrangements: 6! for the units, and 3! for the music books inside the block, and choosing 3 books from the remaining 5, giving 2 × 6! × 3! × C(5,3) = 720.",
+    "source_paper_reference": "Mathematics 1014/2015/Oct_Nov/Paper_1/Variant_2"
+  },
+  {
+    "question_id": "main|Mathematics 1014|2017|May_June|Paper_2|Variant_2|7(a)(i)",
+    "question_text": "Given that a^b = 7, where a and b are positive constants, find log_b a.",
+    "page_number": null,
+    "marking_scheme_answer": "Award 1 mark for log_b a = 1 / log_a b, and since a^b = 7, log_b a = 1 / b where b is from the equation.",
+    "source_paper_reference": "Mathematics 1014/2017/May_June/Paper_2/Variant_2"
+  },
+  {
+    "question_id": "main|Mathematics 1014|2017|May_June|Paper_2|Variant_2|2",
+    "question_text": "Without using a calculator, express 3 - √5 + 1/√5 - 2/5 in the form a + b√5, where a and b are integers.",
+    "page_number": null,
+    "marking_scheme_answer": "Award 1 mark for dealing with the negative index, such as rewriting 1/√5 as √5/5. Award 1 mark for rationalising the expression, such as multiplying numerator and denominator by √5 - 1 where appropriate. Award 1 mark for correctly multiplying out the terms, such as obtaining -9 + 4√5 after squaring and simplifying. Award 1 mark for correctly squaring the binomial to get the form that leads to the final answer. Award 1 mark for the correct answer -9 + 4√5. Acceptable answers: Final form must be exactly -9 + 4√5 with a and b as integers.",
+    "source_paper_reference": "Mathematics 1014/2017/May_June/Paper_2/Variant_2"
+  },
+  {
+    "question_id": "main|Mathematics 1014|2019|Oct_Nov|Paper_2|Variant_3|8(iv)",
+    "question_text": "Find the integer value of x for which the gradient of the curve is 2 and the corresponding value of y.",
+    "page_number": null,
+    "marking_scheme_answer": "Award up to 3 marks for solving 3x^2 + 2a x + b = 2 with their a and b, finding x=1 and y=16.",
+    "source_paper_reference": "Mathematics 1014/2019/Oct_Nov/Paper_2/Variant_3"
+  },
+  {
+    "question_id": "main|Mathematics 1014|2016|Oct_Nov|Paper_1|Variant_3|2",
+    "question_text": "Express m^2 + 4/m - 9/m^3 in the form A m + B/m^2, where A and B are integers to be found.",
+    "page_number": null,
+    "marking_scheme_answer": "Award 1 mark for multiplying each term by m^3, using a common denominator of m^3 or for multiplying numerator and denominator by m^2 - 3. Award 1 mark for a correct expression that simplifies to (m^2 - 3)(m^2 + 3 m + 3) or equivalent. Award 1 mark for m^2 - 3 or A = 2 and B = -3. Alternatively, award 1 mark for correct expansion of the numerator. Award 1 mark for correct comparisons to obtain A and B. Award 1 mark for m^2 - 3 or A = 2 and B = -3.",
+    "source_paper_reference": "Mathematics 1014/2016/Oct_Nov/Paper_1/Variant_3"
+  },
+  {
+    "question_id": "main|Mathematics 1014|2015|Oct_Nov|Paper_1|Variant_3|4(i)",
+    "question_text": "In triangle ABC, with sides and angles as given, find the length of BC.",
+    "page_number": null,
+    "marking_scheme_answer": "Award 1 mark for correct use of the area formula. Award 1 mark for correct rationalisation. Award 1 mark for the final answer BC = -4/3, dependent on all method marks.",
+    "source_paper_reference": "Mathematics 1014/2015/Oct_Nov/Paper_1/Variant_3"
+  },
+  {
+    "question_id": "main|Mathematics 1014|2018|Oct_Nov|Paper_1|Variant_2|8(i)",
+    "question_text": "Find the values of the constant a for which the inverse of matrix A = [[a, 4], [3, 4]] does not exist.",
+    "page_number": null,
+    "marking_scheme_answer": "Award 1 mark for finding the determinant of A. Award another mark for setting the determinant to zero and solving for a. Award the final mark for the values of a.",
+    "source_paper_reference": "Mathematics 1014/2018/Oct_Nov/Paper_1/Variant_2"
+  },
+  {
+    "question_id": "main|Mathematics 1014|2016|Oct_Nov|Paper_1|Variant_2|8(i)",
+    "question_text": "The diagram shows a sector AOB of the circle, centre O, radius 12 cm, together with points C and D such that ABCD is a rectangle. The angle AOB is θ radians and the perimeter of the sector AOB is 47 cm. Show that θ = 1.92 radians correct to 2 decimal places.",
+    "page_number": null,
+    "marking_scheme_answer": "Award 1 mark for the equation 12θ + 24 = 47; Award 1 mark for θ ≈ 1.92.",
+    "source_paper_reference": "Mathematics 1014/2016/Oct_Nov/Paper_1/Variant_2"
+  },
+  {
+    "question_id": "main|Mathematics 1014|2018|May_June|Paper_2|Variant_1|7(ii)",
+    "question_text": "Differentiate with respect to x: e^(x) / (x^2 + 3) - 1",
+    "page_number": null,
+    "marking_scheme_answer": "Award 3 marks for: Use quotient rule or product rule; derivative is [ (e^x (x^2+3) - e^x * 2x) / (x^2+3)^2 ] for the fraction part, then subtract 0 for -1. Full expression needed.",
+    "source_paper_reference": "Mathematics 1014/2018/May_June/Paper_2/Variant_1"
+  }
+]

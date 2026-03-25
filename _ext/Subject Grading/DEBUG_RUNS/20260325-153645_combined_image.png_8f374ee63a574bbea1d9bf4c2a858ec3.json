@@ -1,0 +1,669 @@
+{
+  "endpoint": "/oa-level/evaluate-from-image/preview",
+  "filename": "combined_image.png",
+  "content_type": "image/png",
+  "size_bytes": 454157,
+  "page_number": 1,
+  "filters": {
+    "subject": null,
+    "year": null,
+    "session": null,
+    "paper": null,
+    "variant": null,
+    "question_id": null
+  },
+  "routing": {
+    "incoming_question_id": null,
+    "effective_question_id": null,
+    "question_id_ignored_for_preview": false
+  },
+  "preprocess": {
+    "enabled": true,
+    "input_format": "PNG",
+    "profile_name": "balanced",
+    "original_width_px": 600,
+    "original_height_px": 895,
+    "output_width_px": 1800,
+    "output_height_px": 2685,
+    "operations": [
+      "profile:balanced",
+      "exif_transpose",
+      "grayscale",
+      "autocontrast:1",
+      "upscale:1800w",
+      "median:3",
+      "unsharp:r1.20_p125_t3"
+    ],
+    "output_content_type": "image/png",
+    "pdf_render_dpi": null,
+    "fallback_reason": null
+  },
+  "preprocess_variants": [
+    {
+      "profile_name": "balanced",
+      "content_type": "image/png",
+      "meta": {
+        "enabled": true,
+        "input_format": "PNG",
+        "profile_name": "balanced",
+        "original_width_px": 600,
+        "original_height_px": 895,
+        "output_width_px": 1800,
+        "output_height_px": 2685,
+        "operations": [
+          "profile:balanced",
+          "exif_transpose",
+          "grayscale",
+          "autocontrast:1",
+          "upscale:1800w",
+          "median:3",
+          "unsharp:r1.20_p125_t3"
+        ],
+        "output_content_type": "image/png",
+        "pdf_render_dpi": null,
+        "fallback_reason": null
+      }
+    },
+    {
+      "profile_name": "small_handwriting",
+      "content_type": "image/png",
+      "meta": {
+        "enabled": true,
+        "input_format": "PNG",
+        "profile_name": "small_handwriting",
+        "original_width_px": 600,
+        "original_height_px": 895,
+        "output_width_px": 2250,
+        "output_height_px": 3356,
+        "operations": [
+          "profile:small_handwriting",
+          "exif_transpose",
+          "grayscale",
+          "autocontrast:2",
+          "upscale:2250w",
+          "median:3",
+          "unsharp:r1.45_p165_t3"
+        ],
+        "output_content_type": "image/png",
+        "pdf_render_dpi": null,
+        "fallback_reason": null
+      }
+    }
+  ],
+  "regions": {
+    "question_region": {
+      "split_ratio": 0.6212,
+      "detection": "whitespace_gap",
+      "width_px": 1800,
+      "height_px": 2685
+    },
+    "answer_region": {
+      "split_ratio": 0.6212,
+      "detection": "whitespace_gap",
+      "width_px": 1800,
+      "height_px": 2685
+    }
+  },
+  "grok_vision": {
+    "question_text": "Q. Solve log₂x+log₂x=12",
+    "student_answer": "A. log₂x + log₂x =12\nA. log₂x + log₉x =12\nlog₂x + log₃x =12\nΔlog₂x + log₃x =14\nlog₃x + log₃x =24\n3log₃x =24\nlog₃x =24/3\nlog₃x =8\nz =3^8\nX=6561",
+    "question_text_canonical": null,
+    "student_answer_canonical": null,
+    "confidence": 0.75,
+    "reason": "ok",
+    "notes": "Δ symbol before log₂x hard-to-read; subscript ₉ on second log base uncertain; fraction 24/3 shown vertically with bar; z and X in final lines possibly handwritten x; minor OCR artifacts like PIPE near fraction.",
+    "diag": {
+      "model": "grok-4-1-fast-reasoning",
+      "timeout_seconds": 90,
+      "subject": null,
+      "math_profile": false,
+      "focus": "both",
+      "region_label": "whole_page",
+      "elapsed_ms": 48797
+    },
+    "raw_response": "{\"id\":\"8b874274-94a4-9e0f-ba3d-0084f2d82760\",\"object\":\"chat.completion\",\"created\":1774434808,\"model\":\"grok-4-1-fast-reasoning\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"{\\\"question_text\\\": \\\"Q. Solve log₂x+log₂x=12\\\", \\\"student_answer\\\": \\\"A. log₂x + log₂x =12\\\\nA. log₂x + log₉x =12\\\\nlog₂x + log₃x =12\\\\nΔlog₂x + log₃x =14\\\\nlog₃x + log₃x =24\\\\n3log₃x =24\\\\nlog₃x =24/3\\\\nlog₃x =8\\\\nz =3^8\\\\nX=6561\\\", \\\"confidence\\\": 0.75, \\\"notes\\\": \\\"Δ symbol before log₂x hard-to-read; subscript ₉ on second log base uncertain; fraction 24/3 shown vertically with bar; z and X in final lines possibly handwritten x; minor OCR artifacts like PIPE near fraction.\\\"}\",\"refusal\":null},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":620,\"completion_tokens\":179,\"total_tokens\":5724,\"prompt_tokens_details\":{\"text_tokens\":364,\"audio_tokens\":0,\"image_tokens\":256,\"cached_tokens\":149},\"completion_tokens_details\":{\"reasoning_tokens\":4925,\"audio_tokens\":0,\"accepted_prediction_tokens\":0,\"rejected_prediction_tokens\":0},\"num_sources_used\":0,\"cost_in_usd_ticks\":26536500},\"system_fingerprint\":\"fp_59fdf7f60c\"}"
+  },
+  "grok_vision_passes": [
+    {
+      "profile_name": "balanced",
+      "region_name": "whole_page",
+      "focus": "both",
+      "pass_type": "base",
+      "vision_confidence": 0.75,
+      "question_text": "Solve log₂x+log₂x=12",
+      "student_answer": "log₂x + log₂x =12 A. log₂x + log₉x =12 log₂x + log₃x =12 Δlog₂x + log₃x =14 log₃x + log₃x =24 3log₃x =24 log₃x =24/3 log₃x =8 z =3^8 X=6561",
+      "question_text_canonical": null,
+      "student_answer_canonical": null,
+      "warning_codes": [
+        "log_base_set_mismatch",
+        "vision_uncertainty_noted"
+      ],
+      "content_type": "symbolic",
+      "reason": "ok",
+      "notes": "Δ symbol before log₂x hard-to-read; subscript ₉ on second log base uncertain; fraction 24/3 shown vertically with bar; z and X in final lines possibly handwritten x; minor OCR artifacts like PIPE near fraction.",
+      "diag": {
+        "model": "grok-4-1-fast-reasoning",
+        "timeout_seconds": 90,
+        "subject": null,
+        "math_profile": false,
+        "focus": "both",
+        "region_label": "whole_page",
+        "elapsed_ms": 48797
+      },
+      "variant_meta": {
+        "enabled": true,
+        "input_format": "PNG",
+        "profile_name": "balanced",
+        "original_width_px": 600,
+        "original_height_px": 895,
+        "output_width_px": 1800,
+        "output_height_px": 2685,
+        "operations": [
+          "profile:balanced",
+          "exif_transpose",
+          "grayscale",
+          "autocontrast:1",
+          "upscale:1800w",
+          "median:3",
+          "unsharp:r1.20_p125_t3"
+        ],
+        "output_content_type": "image/png",
+        "pdf_render_dpi": null,
+        "fallback_reason": null
+      }
+    },
+    {
+      "profile_name": "balanced",
+      "region_name": "question_region",
+      "focus": "question_only",
+      "pass_type": "question_retry",
+      "vision_confidence": 0.85,
+      "question_text": "Solve log3x + logq x =12",
+      "student_answer": "log3x + log2x =12 log9 log2 x + log3 x =12 3 2log3x + log3 x =24 3log3x + log2x =24 3log3 x =24",
+      "question_text_canonical": null,
+      "student_answer_canonical": null,
+      "warning_codes": [
+        "ambiguous_log_base_argument",
+        "vision_uncertainty_noted"
+      ],
+      "content_type": "symbolic",
+      "reason": "ok",
+      "notes": "Alignment in student working suggests possible fractions (e.g., log2x over log9, log3x over 3); exact positioning uncertain from crop.",
+      "diag": {
+        "model": "grok-4-1-fast-reasoning",
+        "timeout_seconds": 90,
+        "subject": null,
+        "math_profile": false,
+        "focus": "question_only",
+        "region_label": "question_region",
+        "elapsed_ms": 45571
+      },
+      "variant_meta": {
+        "enabled": true,
+        "input_format": "PNG",
+        "profile_name": "balanced",
+        "original_width_px": 600,
+        "original_height_px": 895,
+        "output_width_px": 1800,
+        "output_height_px": 2685,
+        "operations": [
+          "profile:balanced",
+          "exif_transpose",
+          "grayscale",
+          "autocontrast:1",
+          "upscale:1800w",
+          "median:3",
+          "unsharp:r1.20_p125_t3"
+        ],
+        "output_content_type": "image/png",
+        "pdf_render_dpi": null,
+        "fallback_reason": null
+      }
+    },
+    {
+      "profile_name": "small_handwriting",
+      "region_name": "question_region",
+      "focus": "question_only",
+      "pass_type": "question_retry",
+      "vision_confidence": 0.0,
+      "question_text": "Solve log3x+logqx=12",
+      "student_answer": "",
+      "question_text_canonical": null,
+      "student_answer_canonical": null,
+      "warning_codes": [
+        "ambiguous_log_base_argument",
+        "missing_answer_text",
+        "vision_uncertainty_noted"
+      ],
+      "content_type": "symbolic",
+      "reason": "missing_answer",
+      "notes": "Uncertain symbol in 'logqx' (possibly '9' for base); space between 'q' and 'x'; crop contains additional lines of apparent student working below question statement.",
+      "diag": {
+        "model": "grok-4-1-fast-reasoning",
+        "timeout_seconds": 90,
+        "subject": null,
+        "math_profile": false,
+        "focus": "question_only",
+        "region_label": "question_region",
+        "elapsed_ms": 39529
+      },
+      "variant_meta": {
+        "enabled": true,
+        "input_format": "PNG",
+        "profile_name": "small_handwriting",
+        "original_width_px": 600,
+        "original_height_px": 895,
+        "output_width_px": 2250,
+        "output_height_px": 3356,
+        "operations": [
+          "profile:small_handwriting",
+          "exif_transpose",
+          "grayscale",
+          "autocontrast:2",
+          "upscale:2250w",
+          "median:3",
+          "unsharp:r1.45_p165_t3"
+        ],
+        "output_content_type": "image/png",
+        "pdf_render_dpi": null,
+        "fallback_reason": null
+      }
+    }
+  ],
+  "image_sha256": "8015f86a380daaf4423116d0f534fd5861f046a666242b652820eea8faad80a1",
+  "normalization": {
+    "selected_question": {
+      "display_text": "Solve log_2 x + log_2 x = 12",
+      "canonical_text": null,
+      "matcher_text": "Solve log base 2 x log base 2 x 12",
+      "warning_codes": [
+        "log_base_set_mismatch",
+        "vision_uncertainty_noted"
+      ],
+      "content_type": "symbolic"
+    },
+    "selected_student_answer": {
+      "display_text": "log_2 x + log_2 x = 12 A. log_2 x + log_9 x = 12 log_2 x + log_3 x = 12 Δlog_2 x + log_3 x = 14 log_3 x + log_3 x = 24 3log_3 x = 24 log_3 x = 24 / 3 log_3 x = 8 z = 3^8 X = 6561",
+      "canonical_text": null,
+      "matcher_text": "log base 2 x log base 2 x 12 A log base 2 x log base 9 x 12 log base 2 x log base 3 x 12 log 2 x log base 3 x 14 log base 3 x log base 3 x 24 3log 3 x 24 log base 3 x 24 3 log base 3 x 8 z 3 power 8 X 6561",
+      "content_type": "symbolic"
+    }
+  },
+  "recovery": {
+    "applied": true,
+    "reason_codes": [
+      "ambiguous_log_base_argument",
+      "low_match_margin",
+      "low_vision_confidence",
+      "vision_uncertainty_noted",
+      "vision_warning_present",
+      "weak_match_confidence"
+    ],
+    "pass_count": 3,
+    "selection_reason_codes": [],
+    "selected_candidate": {
+      "text": "Solve log_2 x + log_2 x = 12",
+      "source": "raw",
+      "source_region": "whole_page",
+      "source_variant": "balanced",
+      "retrieval_match_confidence": 0.8172,
+      "structure_score": 0.91,
+      "answer_consistency_score": 0.95,
+      "final_score": 0.8004,
+      "selected": true,
+      "family_label": "logarithmic",
+      "ocr_distance": 0.0,
+      "hard_rejected": false,
+      "rejection_reason_codes": [],
+      "answer_signal_score": 1.0
+    },
+    "best_image_grounded_candidate": {
+      "text": "Solve log_2 x + log_2 x = 12",
+      "source": "raw",
+      "source_region": "whole_page",
+      "source_variant": "balanced",
+      "retrieval_match_confidence": 0.8172,
+      "structure_score": 0.91,
+      "answer_consistency_score": 0.95,
+      "final_score": 0.8004,
+      "selected": false,
+      "family_label": "logarithmic",
+      "ocr_distance": 0.0,
+      "hard_rejected": false,
+      "rejection_reason_codes": [],
+      "answer_signal_score": 1.0
+    },
+    "question_candidates": [
+      {
+        "text": "Solve log_2 x + log_2 x = 12",
+        "source": "raw",
+        "source_region": "whole_page",
+        "source_variant": "balanced",
+        "retrieval_match_confidence": 0.8172,
+        "structure_score": 0.91,
+        "answer_consistency_score": 0.95,
+        "final_score": 0.8004,
+        "selected": true,
+        "family_label": "logarithmic",
+        "ocr_distance": 0.0,
+        "hard_rejected": false,
+        "rejection_reason_codes": [],
+        "answer_signal_score": 1.0
+      },
+      {
+        "text": "Solve log3x + logq x = 12",
+        "source": "retry",
+        "source_region": "question_region",
+        "source_variant": "balanced",
+        "retrieval_match_confidence": 0.6223,
+        "structure_score": 0.91,
+        "answer_consistency_score": 0.9,
+        "final_score": 0.7465,
+        "selected": false,
+        "family_label": "logarithmic",
+        "ocr_distance": 0.0,
+        "hard_rejected": false,
+        "rejection_reason_codes": [],
+        "answer_signal_score": 1.0
+      },
+      {
+        "text": "Solve log3x + logqx = 12",
+        "source": "retry",
+        "source_region": "question_region",
+        "source_variant": "small_handwriting",
+        "retrieval_match_confidence": 0.5625,
+        "structure_score": 0.77,
+        "answer_consistency_score": 0.81,
+        "final_score": 0.6395,
+        "selected": false,
+        "family_label": "logarithmic",
+        "ocr_distance": 0.0,
+        "hard_rejected": false,
+        "rejection_reason_codes": [],
+        "answer_signal_score": 0.9
+      }
+    ]
+  },
+  "preview": {
+    "request_id": "8015f86a380daaf4423116d0f534fd5861f046a666242b652820eea8faad80a1",
+    "extracted_question_text": "Solve log₂x+log₂x=12",
+    "extracted_student_answer": "log₂x + log₂x =12 A. log₂x + log₉x =12 log₂x + log₃x =12 Δlog₂x + log₃x =14 log₃x + log₃x =24 3log₃x =24 log₃x =24/3 log₃x =8 z =3^8 X=6561",
+    "normalized_question_text": "Solve log_2 x + log_2 x = 12",
+    "normalized_student_answer": "log_2 x + log_2 x = 12 A. log_2 x + log_9 x = 12 log_2 x + log_3 x = 12 Δlog_2 x + log_3 x = 14 log_3 x + log_3 x = 24 3log_3 x = 24 log_3 x = 24 / 3 log_3 x = 8 z = 3^8 X = 6561",
+    "canonical_question_text": null,
+    "canonical_student_answer": null,
+    "math_extraction_profile_used": false,
+    "vision_confidence": 0.75,
+    "vision_warnings": [
+      "log_base_set_mismatch",
+      "vision_uncertainty_noted"
+    ],
+    "match_confidence": 0.8172,
+    "top1_top2_margin": 0.03660000000000008,
+    "auto_accept_eligible": false,
+    "auto_accept_reason": "blocked:vision_gate=False,match_gate=False,warnings=log_base_set_mismatch,vision_uncertainty_noted",
+    "content_type": "symbolic",
+    "recovery_applied": true,
+    "recovery_reason_codes": [
+      "ambiguous_log_base_argument",
+      "low_match_margin",
+      "low_vision_confidence",
+      "vision_uncertainty_noted",
+      "vision_warning_present",
+      "weak_match_confidence"
+    ],
+    "question_candidates": [
+      {
+        "text": "Solve log_2 x + log_2 x = 12",
+        "source": "raw",
+        "source_region": "whole_page",
+        "source_variant": "balanced",
+        "retrieval_match_confidence": 0.8172,
+        "structure_score": 0.91,
+        "answer_consistency_score": 0.95,
+        "final_score": 0.8004,
+        "selected": true,
+        "family_label": "logarithmic",
+        "ocr_distance": 0.0,
+        "hard_rejected": false,
+        "rejection_reason_codes": [],
+        "answer_signal_score": 1.0
+      },
+      {
+        "text": "Solve log3x + logq x = 12",
+        "source": "retry",
+        "source_region": "question_region",
+        "source_variant": "balanced",
+        "retrieval_match_confidence": 0.6223,
+        "structure_score": 0.91,
+        "answer_consistency_score": 0.9,
+        "final_score": 0.7465,
+        "selected": false,
+        "family_label": "logarithmic",
+        "ocr_distance": 0.0,
+        "hard_rejected": false,
+        "rejection_reason_codes": [],
+        "answer_signal_score": 1.0
+      },
+      {
+        "text": "Solve log3x + logqx = 12",
+        "source": "retry",
+        "source_region": "question_region",
+        "source_variant": "small_handwriting",
+        "retrieval_match_confidence": 0.5625,
+        "structure_score": 0.77,
+        "answer_consistency_score": 0.81,
+        "final_score": 0.6395,
+        "selected": false,
+        "family_label": "logarithmic",
+        "ocr_distance": 0.0,
+        "hard_rejected": false,
+        "rejection_reason_codes": [],
+        "answer_signal_score": 0.9
+      }
+    ],
+    "top_alternatives": [
+      {
+        "question_id": "main|Mathematics 1014|2016|May_June|Paper_2|Variant_2|10(c)",
+        "match_confidence": 0.8172,
+        "question_text": "Solve log(x+1) + log(x) = 2 log(3) - log(2).",
+        "source_paper_reference": "Mathematics 1014/2016/May_June/Paper_2/Variant_2"
+      },
+      {
+        "question_id": "main|Mathematics 1014|2019|Oct_Nov|Paper_1|Variant_2|6(b)",
+        "match_confidence": 0.7806,
+        "question_text": "Solve log x + 7 log 2 = 3 log(x + 7).",
+        "source_paper_reference": "Mathematics 1014/2019/Oct_Nov/Paper_1/Variant_2"
+      },
+      {
+        "question_id": "main|Mathematics 1014|2016|May_June|Paper_2|Variant_1|3(iv)",
+        "match_confidence": 0.7716,
+        "question_text": "Solve log x + log x^2 + log x^3 = log 600.",
+        "source_paper_reference": "Mathematics 1014/2016/May_June/Paper_2/Variant_1"
+      }
+    ],
+    "debug_run_id": null
+  },
+  "retrieval_policy": {
+    "mode": "question_only",
+    "use_answer_hint": false,
+    "direct_question_id_allowed": false,
+    "question_id_ignored_for_preview": false,
+    "retrieval_signal_present": true,
+    "math_canonical_enabled": false,
+    "question_matcher_mode": "display_fallback",
+    "answer_matcher_mode": "display_fallback"
+  },
+  "probe_response": {
+    "match_confidence": 0.8172,
+    "top1_top2_margin": 0.03660000000000008,
+    "top_alternatives": [
+      {
+        "question_id": "main|Mathematics 1014|2016|May_June|Paper_2|Variant_2|10(c)",
+        "match_confidence": 0.8172,
+        "question_text": "Solve log(x+1) + log(x) = 2 log(3) - log(2).",
+        "source_paper_reference": "Mathematics 1014/2016/May_June/Paper_2/Variant_2"
+      },
+      {
+        "question_id": "main|Mathematics 1014|2019|Oct_Nov|Paper_1|Variant_2|6(b)",
+        "match_confidence": 0.7806,
+        "question_text": "Solve log x + 7 log 2 = 3 log(x + 7).",
+        "source_paper_reference": "Mathematics 1014/2019/Oct_Nov/Paper_1/Variant_2"
+      },
+      {
+        "question_id": "main|Mathematics 1014|2016|May_June|Paper_2|Variant_1|3(iv)",
+        "match_confidence": 0.7716,
+        "question_text": "Solve log x + log x^2 + log x^3 = log 600.",
+        "source_paper_reference": "Mathematics 1014/2016/May_June/Paper_2/Variant_1"
+      }
+    ],
+    "retrieval_signal_present": true
+  },
+  "debug_trace": {
+    "enabled": true,
+    "request_raw": {
+      "subject": null,
+      "year": null,
+      "session": null,
+      "paper": null,
+      "variant": null,
+      "question_id": null,
+      "question_len": 28,
+      "student_answer_len": 178
+    },
+    "request_sanitized": {
+      "subject": null,
+      "year": null,
+      "session": null,
+      "paper": null,
+      "variant": null,
+      "question_id": null,
+      "question_len": 28,
+      "student_answer_len": 178
+    },
+    "timings_ms": {
+      "primary": 11247,
+      "total": 11247
+    },
+    "stages": [
+      {
+        "stage": "primary",
+        "data_source": "o_level_main_json",
+        "records_total": 12465,
+        "records_scoped": 12465,
+        "status": "running",
+        "match_confidence": 0.0,
+        "matched_question_id": null,
+        "reason": "records_scoped"
+      },
+      {
+        "stage": "primary_match",
+        "data_source": "o_level_main_json",
+        "records_total": 12465,
+        "records_scoped": 12465,
+        "status": "accepted",
+        "match_confidence": 0.8172,
+        "matched_question_id": "main|Mathematics 1014|2016|May_June|Paper_2|Variant_2|10(c)",
+        "reason": "matched"
+      }
+    ],
+    "final_decision": {
+      "status": "accepted",
+      "data_source": "o_level_main_json",
+      "fallback_used": false,
+      "primary_status": "accepted",
+      "primary_match_confidence": 0.8172,
+      "primary_data_source": "o_level_main_json",
+      "fallback_data_source": "oa_main_dataset",
+      "match_confidence": 0.8172,
+      "matched_question_id": "main|Mathematics 1014|2016|May_June|Paper_2|Variant_2|10(c)"
+    },
+    "source_order": {
+      "source_priority": "o_level_main_first",
+      "primary_data_source": "o_level_main_json",
+      "fallback_data_source": "oa_main_dataset"
+    },
+    "retrieval": {
+      "use_answer_hint": false,
+      "direct_question_id_allowed": false
+    },
+    "search_diagnostics": [
+      {
+        "search_method": "embedding_local",
+        "index_source": "o_level_main_json",
+        "use_answer_hint": false,
+        "query_subject": null,
+        "normalized_query_text": "Solve log_2 x + log_2 x = 12",
+        "index_version": 2,
+        "index_rebuilt": false,
+        "rebuild_reason": "up_to_date",
+        "records_scoped": 12465,
+        "top_k_searched": 50,
+        "query_embedding_ms": 0,
+        "similarity_search_ms": 13,
+        "rerank_ms": 2,
+        "final_search_score": 0.8172,
+        "top_search_candidates": [
+          {
+            "question_id": "main|Mathematics 1014|2016|May_June|Paper_2|Variant_2|10(c)",
+            "embedding_similarity": 0.9372,
+            "lexical_overlap": 0.5714,
+            "answer_hint_score": 0.0,
+            "answer_hint_used": false,
+            "final_score": 0.8172,
+            "question_text": "Solve log(x+1) + log(x) = 2 log(3) - log(2).",
+            "matcher_text": "Solve log x 1 log x 2 log 3 log 2",
+            "source_paper_reference": "Mathematics 1014/2016/May_June/Paper_2/Variant_2"
+          },
+          {
+            "question_id": "main|Mathematics 1014|2019|Oct_Nov|Paper_1|Variant_2|6(b)",
+            "embedding_similarity": 0.8884,
+            "lexical_overlap": 0.5714,
+            "answer_hint_score": 0.0,
+            "answer_hint_used": false,
+            "final_score": 0.7806,
+            "question_text": "Solve log x + 7 log 2 = 3 log(x + 7).",
+            "matcher_text": "Solve log x 7 log 2 3 log x 7",
+            "source_paper_reference": "Mathematics 1014/2019/Oct_Nov/Paper_1/Variant_2"
+          },
+          {
+            "question_id": "main|Mathematics 1014|2016|May_June|Paper_2|Variant_1|3(iv)",
+            "embedding_similarity": 0.8955,
+            "lexical_overlap": 0.5,
+            "answer_hint_score": 0.0,
+            "answer_hint_used": false,
+            "final_score": 0.7716,
+            "question_text": "Solve log x + log x^2 + log x^3 = log 600.",
+            "matcher_text": "Solve log x log x power 2 log x power 3 log 600",
+            "source_paper_reference": "Mathematics 1014/2016/May_June/Paper_2/Variant_1"
+          },
+          {
+            "question_id": "main|Mathematics 1014|2025|Oct_Nov|Paper_1|Variant_3|9(a)",
+            "embedding_similarity": 0.8785,
+            "lexical_overlap": 0.4444,
+            "answer_hint_score": 0.0,
+            "answer_hint_used": false,
+            "final_score": 0.7478,
+            "question_text": "Solve the equation log(x) - log(x-5) = 2 + log(2) - log(5) - log(25)",
+            "matcher_text": "Solve the equation log x log x 5 2 log 2 log 5 log 25",
+            "source_paper_reference": "Mathematics 1014/2025/Oct_Nov/Paper_1/Variant_3"
+          }
+        ],
+        "embedding_backend": "hash_fallback",
+        "embedding_model": "hash-token-384",
+        "search_total_ms": 303
+      }
+    ],
+    "grading": {
+      "source": "grok",
+      "model": "grok-4-1-fast-reasoning",
+      "error": null,
+      "correct_option": null,
+      "student_option": "A"
+    }
+  },
+  "run_id": "8f374ee63a574bbea1d9bf4c2a858ec3",
+  "saved_at_unix": 1774435005,
+  "saved_at_iso": "2026-03-25T15:36:45+0500",
+  "hostname": "SERENITY"
+}

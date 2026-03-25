@@ -1,0 +1,529 @@
+{
+  "endpoint": "/oa-level/evaluate-from-image/preview",
+  "filename": "oa_1.png",
+  "content_type": "image/png",
+  "size_bytes": 454157,
+  "page_number": 1,
+  "filters": {
+    "subject": "Mathematics 1014",
+    "year": null,
+    "session": null,
+    "paper": null,
+    "variant": null,
+    "question_id": null
+  },
+  "routing": {
+    "incoming_question_id": null,
+    "effective_question_id": null,
+    "question_id_ignored_for_preview": false
+  },
+  "request_id": "47cabc5bc4937509dc66eeaf90ed6a8887ec86a56393d754519847217ecf2309",
+  "oa_extraction": {
+    "input_type": "image",
+    "page_count": 1,
+    "subject": "Math",
+    "needs_review": true,
+    "whole_text_raw": "Q. Solve log₃x + log₉x =12\nA. log₃x + log₃x/log₃9 =12\nlog₃x + log₃x/2 =12\n2log₃x + log₃x =24\n2log₃x + log₃x =24\n3log₃x =24\nlog₃x =24/3\nlog₃x =8\nx=3⁸\nx=6561",
+    "question_raw": "Q. Solve log₃x + log₉x =12",
+    "answer_raw": "A. log₃x + log₃x/log₃9 =12\nlog₃x + log₃x/2 =12\n2log₃x + log₃x =24\n2log₃x + log₃x =24\n3log₃x =24\nlog₃x =24/3\nlog₃x =8\nx=3⁸\nx=6561",
+    "question_normalized": "Q. Solve log₃x + log₉x =12",
+    "answer_normalized": "A. log₃x + log₃x/log₃9 =12\nlog₃x + log₃x/2 =12\n2log₃x + log₃x =24\n2log₃x + log₃x =24\n3log₃x =24\nlog₃x =24/3\nlog₃x =8\nx=3⁸\nx=6561",
+    "confidence": {
+      "ocr": 0.78,
+      "split": 0.8,
+      "classification": 0.9,
+      "overall": 0.78
+    },
+    "flags": [
+      {
+        "code": "low_ocr_confidence",
+        "severity": "warning",
+        "message": "OCR confidence 0.78 is below threshold 0.85."
+      },
+      {
+        "code": "low_split_confidence",
+        "severity": "warning",
+        "message": "Split confidence 0.80 is below threshold 0.90."
+      },
+      {
+        "code": "potential_symbol_ambiguity",
+        "severity": "warning",
+        "message": "Detected visually confusable math symbols such as 0/O or 1/I/l."
+      },
+      {
+        "code": "ocr_engine_disagreement",
+        "severity": "warning",
+        "message": "OCR candidates disagree materially on one or more lines."
+      },
+      {
+        "code": "unresolved_ocr_conflicts",
+        "severity": "warning",
+        "message": "Some disputed OCR lines remain unresolved after arbitration."
+      }
+    ],
+    "recovery_reason_codes": [
+      "split_retry_applied",
+      "low_ocr_confidence",
+      "low_split_confidence",
+      "potential_symbol_ambiguity",
+      "ocr_engine_disagreement",
+      "unresolved_ocr_conflicts",
+      "needs_review"
+    ],
+    "diagnostics": {
+      "selected_ocr_engine": "grok",
+      "selected_variant": "sharpened_binary",
+      "split_retry_applied": true,
+      "ocr_candidates": [
+        {
+          "engine": "grok",
+          "variant": "sharpened_binary",
+          "ocr_confidence": 0.78,
+          "selection_score": 0.8496,
+          "line_count": 10,
+          "uncertain_span_count": 0
+        },
+        {
+          "engine": "grok",
+          "variant": "grayscale_autocontrast",
+          "ocr_confidence": 0.78,
+          "selection_score": 0.8319,
+          "line_count": 10,
+          "uncertain_span_count": 0
+        },
+        {
+          "engine": "grok",
+          "variant": "original",
+          "ocr_confidence": 0.72,
+          "selection_score": 0.7838,
+          "line_count": 11,
+          "uncertain_span_count": 5
+        },
+        {
+          "engine": "azure",
+          "variant": "original",
+          "ocr_confidence": 0.7809,
+          "selection_score": 0.7094,
+          "line_count": 15,
+          "uncertain_span_count": 19
+        }
+      ],
+      "disagreement_spans": [
+        {
+          "page_number": 1,
+          "line_index": 1,
+          "selected_text": "Q. Solve log₃x + log₉x =12",
+          "alternate_texts": [
+            "Q. Solve log₃2x + log₉x =12",
+            "Q. Solve log3x+logax =12"
+          ],
+          "disagreement_score": 0.12,
+          "unresolved": true
+        },
+        {
+          "page_number": 1,
+          "line_index": 2,
+          "selected_text": "A. log₃x + log₃x/log₃9 =12",
+          "alternate_texts": [
+            "A. log₃2x + log₃x / log₃9 =12",
+            "A."
+          ],
+          "disagreement_score": 0.8571,
+          "unresolved": true
+        },
+        {
+          "page_number": 1,
+          "line_index": 3,
+          "selected_text": "log₃x + log₃x/2 =12",
+          "alternate_texts": [
+            "log₃2x + log₃x / 2 =12",
+            "log₃2x + log₃x / log₃9 =12",
+            "1003x + 1003x =12"
+          ],
+          "disagreement_score": 0.5,
+          "unresolved": true
+        },
+        {
+          "page_number": 1,
+          "line_index": 4,
+          "selected_text": "2log₃x + log₃x =24",
+          "alternate_texts": [
+            "2 log₃2x + log₃x =24",
+            "log₃2x + log₃x / 2 =12",
+            "10939"
+          ],
+          "disagreement_score": 1.0,
+          "unresolved": true
+        },
+        {
+          "page_number": 1,
+          "line_index": 5,
+          "selected_text": "2log₃x + log₃x =24",
+          "alternate_texts": [
+            "2 log₃2x + log₃x =24",
+            "2log₃2x + log₃x =24",
+            "1003x + 1093x"
+          ],
+          "disagreement_score": 0.6774,
+          "unresolved": true
+        },
+        {
+          "page_number": 1,
+          "line_index": 6,
+          "selected_text": "3log₃x =24",
+          "alternate_texts": [
+            "3 log₃x =24",
+            "2log₃2x + log₃x =24",
+            "=12"
+          ],
+          "disagreement_score": 0.6923,
+          "unresolved": true
+        },
+        {
+          "page_number": 1,
+          "line_index": 7,
+          "selected_text": "log₃x =24/3",
+          "alternate_texts": [
+            "log₃x =24 / 3",
+            "3log₃x =24",
+            "21003x + 1093x = 24"
+          ],
+          "disagreement_score": 0.6667,
+          "unresolved": true
+        },
+        {
+          "page_number": 1,
+          "line_index": 8,
+          "selected_text": "log₃x =8",
+          "alternate_texts": [
+            "log₃x = 24/3",
+            "2 109 3x + 1093x = 24"
+          ],
+          "disagreement_score": 0.7931,
+          "unresolved": true
+        },
+        {
+          "page_number": 1,
+          "line_index": 9,
+          "selected_text": "x=3⁸",
+          "alternate_texts": [
+            "x = 3⁸",
+            "log₃x =8",
+            "3100,3x =24"
+          ],
+          "disagreement_score": 0.7333,
+          "unresolved": true
+        },
+        {
+          "page_number": 1,
+          "line_index": 10,
+          "selected_text": "x=6561",
+          "alternate_texts": [
+            "x =6561",
+            "x = 3⁸",
+            "1092x = 24"
+          ],
+          "disagreement_score": 0.75,
+          "unresolved": true
+        }
+      ],
+      "repair_actions": [
+        {
+          "page_number": 1,
+          "line_index": 1,
+          "before_text": "Q. Solve log₃x + log₉x =12",
+          "after_text": "0. Solve log₃x + log₉x =12",
+          "source": "grok_repair",
+          "accepted": false,
+          "confidence": 0.8,
+          "rationale": "Image clearly begins with '0.' (question number), not 'Q.'; rest of line matches selected OCR while alternates introduce errors like 'log₃2x' or 'logax'."
+        }
+      ],
+      "selection_reasons": [
+        "Selected grok:sharpened_binary (ocr_confidence=0.78, selection_score=0.85) as the highest-scoring OCR candidate.",
+        "Selection score combines OCR confidence, symbol preservation, math-token preservation, QA anchors, and peer agreement.",
+        "Best alternate was grok:grayscale_autocontrast (ocr_confidence=0.78, selection_score=0.83).",
+        "Rejected targeted repair actions because they lowered candidate quality.",
+        "Accepted split-only retry because it improved or matched split confidence with explicit line assignments."
+      ]
+    }
+  },
+  "normalization": {
+    "selected_question": {
+      "display_text": "Solve log_3 x + log_9 x = 12",
+      "canonical_text": "Solve log(base=3,arg=x) + log(base=9,arg=x) = 12",
+      "matcher_text": "Solve log(base=3,arg=x) + log(base=9,arg=x) = 12",
+      "content_type": "symbolic"
+    },
+    "selected_student_answer": {
+      "display_text": "log_3 x + log_3 x / log_3 9 = 12 log_3 x + log_3 x / 2 = 12 2log_3 x + log_3 x = 24 2log_3 x + log_3 x = 24 3log_3 x = 24 log_3 x = 24 / 3 log_3 x = 8 x = 3^8 x = 6561",
+      "canonical_text": "log(base=3,arg=x) + log(base=3,arg=x) / log(base=3,arg=9) = 12 log(base=3,arg=x) + log(base=3,arg=x) / 2 = 12 2log_3 x + log(base=3,arg=x) = 24 2log_3 x + log(base=3,arg=x) = 24 3log_3 x = 24 log(base=3,arg=x) = 24 / 3 log(base=3,arg=x) = 8 x = 3^8 x = 6561",
+      "matcher_text": "log(base=3,arg=x) + log(base=3,arg=x) / log(base=3,arg=9) = 12 log(base=3,arg=x) + log(base=3,arg=x) / 2 = 12 2log_3 x + log(base=3,arg=x) = 24 2log_3 x + log(base=3,arg=x) = 24 3log_3 x = 24 log(base=3,arg=x) = 24 / 3 log(base=3,arg=x) = 8 x = 3^8 x = 6561",
+      "content_type": "symbolic"
+    }
+  },
+  "preview": {
+    "request_id": "47cabc5bc4937509dc66eeaf90ed6a8887ec86a56393d754519847217ecf2309",
+    "extracted_question_text": "Solve log₃x + log₉x =12",
+    "extracted_student_answer": "log₃x + log₃x/log₃9 =12 log₃x + log₃x/2 =12 2log₃x + log₃x =24 2log₃x + log₃x =24 3log₃x =24 log₃x =24/3 log₃x =8 x=3⁸ x=6561",
+    "normalized_question_text": "Solve log_3 x + log_9 x = 12",
+    "normalized_student_answer": "log_3 x + log_3 x / log_3 9 = 12 log_3 x + log_3 x / 2 = 12 2log_3 x + log_3 x = 24 2log_3 x + log_3 x = 24 3log_3 x = 24 log_3 x = 24 / 3 log_3 x = 8 x = 3^8 x = 6561",
+    "canonical_question_text": "Solve log(base=3,arg=x) + log(base=9,arg=x) = 12",
+    "canonical_student_answer": "log(base=3,arg=x) + log(base=3,arg=x) / log(base=3,arg=9) = 12 log(base=3,arg=x) + log(base=3,arg=x) / 2 = 12 2log_3 x + log(base=3,arg=x) = 24 2log_3 x + log(base=3,arg=x) = 24 3log_3 x = 24 log(base=3,arg=x) = 24 / 3 log(base=3,arg=x) = 8 x = 3^8 x = 6561",
+    "math_extraction_profile_used": true,
+    "vision_confidence": 0.78,
+    "vision_warnings": [
+      "low_ocr_confidence",
+      "low_split_confidence",
+      "potential_symbol_ambiguity",
+      "ocr_engine_disagreement",
+      "unresolved_ocr_conflicts"
+    ],
+    "match_confidence": 0.7636,
+    "top1_top2_margin": 0.00979999999999992,
+    "auto_accept_eligible": false,
+    "auto_accept_reason": "blocked:vision_gate=False,match_gate=False,warnings=low_ocr_confidence,low_split_confidence,potential_symbol_ambiguity,ocr_engine_disagreement,unresolved_ocr_conflicts",
+    "content_type": "symbolic",
+    "recovery_applied": true,
+    "recovery_reason_codes": [
+      "split_retry_applied",
+      "low_ocr_confidence",
+      "low_split_confidence",
+      "potential_symbol_ambiguity",
+      "ocr_engine_disagreement",
+      "unresolved_ocr_conflicts",
+      "needs_review"
+    ],
+    "question_candidates": [
+      {
+        "text": "Solve log_3 x + log_9 x = 12",
+        "source": "raw",
+        "source_region": "document",
+        "source_variant": "sharpened_binary",
+        "retrieval_match_confidence": 0.7636,
+        "structure_score": 0.78,
+        "answer_consistency_score": 0.0,
+        "final_score": 0.78,
+        "selected": true,
+        "family_label": "logarithmic",
+        "ocr_distance": 0.0,
+        "hard_rejected": false,
+        "rejection_reason_codes": [],
+        "answer_signal_score": 0.0
+      }
+    ],
+    "top_alternatives": [
+      {
+        "question_id": "main|Mathematics 1014|2014|May_June|Paper_2|Variant_2|6(a)(ii)",
+        "match_confidence": 0.7636,
+        "question_text": "Hence solve log_10 (x + 3) = 0.",
+        "source_paper_reference": "Mathematics 1014/2014/May_June/Paper_2/Variant_2"
+      },
+      {
+        "question_id": "main|Mathematics 1014|2016|Oct_Nov|Paper_1|Variant_3|5(ii)",
+        "match_confidence": 0.7538,
+        "question_text": "Hence solve the equations log_2 (x y) = 9/5 and log_3 x - log_3 y = -6/3.",
+        "source_paper_reference": "Mathematics 1014/2016/Oct_Nov/Paper_1/Variant_3"
+      },
+      {
+        "question_id": "main|Mathematics 1014|2014|Oct_Nov|Paper_1|Variant_3|7",
+        "match_confidence": 0.7368,
+        "question_text": "Solve the equation log_5(x + 1) + log_5(x) = 2 - log_5(18) - log_5(9).",
+        "source_paper_reference": "Mathematics 1014/2014/Oct_Nov/Paper_1/Variant_3"
+      },
+      {
+        "question_id": "main|Mathematics 1014|2016|Oct_Nov|Paper_1|Variant_3|5(i)",
+        "match_confidence": 0.7368,
+        "question_text": "Given that log_2 (x y) = 9/5, show that log_3 x + log_3 y = 5/3.",
+        "source_paper_reference": "Mathematics 1014/2016/Oct_Nov/Paper_1/Variant_3"
+      }
+    ],
+    "debug_run_id": null
+  },
+  "retrieval_policy": {
+    "mode": "question_only",
+    "use_answer_hint": false,
+    "direct_question_id_allowed": false,
+    "question_id_ignored_for_preview": false,
+    "math_canonical_enabled": true,
+    "question_matcher_mode": "canonical",
+    "answer_matcher_mode": "canonical"
+  },
+  "probe_response": {
+    "match_confidence": 0.7636,
+    "top1_top2_margin": 0.00979999999999992,
+    "top_alternatives": [
+      {
+        "question_id": "main|Mathematics 1014|2014|May_June|Paper_2|Variant_2|6(a)(ii)",
+        "match_confidence": 0.7636,
+        "question_text": "Hence solve log_10 (x + 3) = 0.",
+        "source_paper_reference": "Mathematics 1014/2014/May_June/Paper_2/Variant_2"
+      },
+      {
+        "question_id": "main|Mathematics 1014|2016|Oct_Nov|Paper_1|Variant_3|5(ii)",
+        "match_confidence": 0.7538,
+        "question_text": "Hence solve the equations log_2 (x y) = 9/5 and log_3 x - log_3 y = -6/3.",
+        "source_paper_reference": "Mathematics 1014/2016/Oct_Nov/Paper_1/Variant_3"
+      },
+      {
+        "question_id": "main|Mathematics 1014|2014|Oct_Nov|Paper_1|Variant_3|7",
+        "match_confidence": 0.7368,
+        "question_text": "Solve the equation log_5(x + 1) + log_5(x) = 2 - log_5(18) - log_5(9).",
+        "source_paper_reference": "Mathematics 1014/2014/Oct_Nov/Paper_1/Variant_3"
+      },
+      {
+        "question_id": "main|Mathematics 1014|2016|Oct_Nov|Paper_1|Variant_3|5(i)",
+        "match_confidence": 0.7368,
+        "question_text": "Given that log_2 (x y) = 9/5, show that log_3 x + log_3 y = 5/3.",
+        "source_paper_reference": "Mathematics 1014/2016/Oct_Nov/Paper_1/Variant_3"
+      }
+    ]
+  },
+  "debug_trace": {
+    "enabled": true,
+    "request_raw": {
+      "subject": "Mathematics 1014",
+      "year": null,
+      "session": null,
+      "paper": null,
+      "variant": null,
+      "question_id": null,
+      "question_len": 28,
+      "student_answer_len": 167
+    },
+    "request_sanitized": {
+      "subject": "Mathematics 1014",
+      "year": null,
+      "session": null,
+      "paper": null,
+      "variant": null,
+      "question_id": null,
+      "question_len": 28,
+      "student_answer_len": 167
+    },
+    "timings_ms": {
+      "primary": 9589,
+      "total": 9589
+    },
+    "stages": [
+      {
+        "stage": "primary",
+        "data_source": "o_level_main_json",
+        "records_total": 12465,
+        "records_scoped": 2891,
+        "status": "running",
+        "match_confidence": 0.0,
+        "matched_question_id": null,
+        "reason": "records_scoped"
+      },
+      {
+        "stage": "primary_match",
+        "data_source": "o_level_main_json",
+        "records_total": 12465,
+        "records_scoped": 2891,
+        "status": "review_required",
+        "match_confidence": 0.7636,
+        "matched_question_id": "main|Mathematics 1014|2014|May_June|Paper_2|Variant_2|6(a)(ii)",
+        "reason": "matched"
+      }
+    ],
+    "final_decision": {
+      "status": "review_required",
+      "data_source": "o_level_main_json",
+      "fallback_used": false,
+      "primary_status": "review_required",
+      "primary_match_confidence": 0.7636,
+      "primary_data_source": "o_level_main_json",
+      "fallback_data_source": "oa_main_dataset",
+      "match_confidence": 0.7636,
+      "matched_question_id": "main|Mathematics 1014|2014|May_June|Paper_2|Variant_2|6(a)(ii)"
+    },
+    "source_order": {
+      "source_priority": "o_level_main_first",
+      "primary_data_source": "o_level_main_json",
+      "fallback_data_source": "oa_main_dataset"
+    },
+    "retrieval": {
+      "use_answer_hint": false,
+      "direct_question_id_allowed": false
+    },
+    "search_diagnostics": [
+      {
+        "search_method": "embedding_local",
+        "index_source": "o_level_main_json",
+        "use_answer_hint": false,
+        "query_subject": "Mathematics 1014",
+        "normalized_query_text": "Solve log(base=3,arg=x) + log(base=9,arg=x) = 12",
+        "index_version": 2,
+        "index_rebuilt": false,
+        "rebuild_reason": "up_to_date",
+        "records_scoped": 2891,
+        "top_k_searched": 50,
+        "query_embedding_ms": 0,
+        "similarity_search_ms": 3,
+        "rerank_ms": 4,
+        "final_search_score": 0.7636,
+        "top_search_candidates": [
+          {
+            "question_id": "main|Mathematics 1014|2014|May_June|Paper_2|Variant_2|6(a)(ii)",
+            "embedding_similarity": 0.8727,
+            "lexical_overlap": 0.5455,
+            "answer_hint_score": 0.0,
+            "answer_hint_used": false,
+            "final_score": 0.7636,
+            "question_text": "Hence solve log_10 (x + 3) = 0.",
+            "matcher_text": "Hence solve log(base=10,arg=x+3) = 0.",
+            "source_paper_reference": "Mathematics 1014/2014/May_June/Paper_2/Variant_2"
+          },
+          {
+            "question_id": "main|Mathematics 1014|2016|Oct_Nov|Paper_1|Variant_3|5(ii)",
+            "embedding_similarity": 0.8953,
+            "lexical_overlap": 0.4118,
+            "answer_hint_score": 0.0,
+            "answer_hint_used": false,
+            "final_score": 0.7538,
+            "question_text": "Hence solve the equations log_2 (x y) = 9/5 and log_3 x - log_3 y = -6/3.",
+            "matcher_text": "Hence solve the equations log(base=2,arg=xy) = 9 / 5 and log(base=3,arg=x) - log(base=3,arg=y) = - 6 / 3.",
+            "source_paper_reference": "Mathematics 1014/2016/Oct_Nov/Paper_1/Variant_3"
+          },
+          {
+            "question_id": "main|Mathematics 1014|2016|Oct_Nov|Paper_1|Variant_3|5(i)",
+            "embedding_similarity": 0.8757,
+            "lexical_overlap": 0.4,
+            "answer_hint_score": 0.0,
+            "answer_hint_used": false,
+            "final_score": 0.7368,
+            "question_text": "Given that log_2 (x y) = 9/5, show that log_3 x + log_3 y = 5/3.",
+            "matcher_text": "Given that log(base=2,arg=xy) = 9 / 5, show that log(base=3,arg=x) + log(base=3,arg=y) = 5 / 3.",
+            "source_paper_reference": "Mathematics 1014/2016/Oct_Nov/Paper_1/Variant_3"
+          },
+          {
+            "question_id": "main|Mathematics 1014|2014|Oct_Nov|Paper_1|Variant_3|7",
+            "embedding_similarity": 0.8682,
+            "lexical_overlap": 0.4286,
+            "answer_hint_score": 0.0,
+            "answer_hint_used": false,
+            "final_score": 0.7368,
+            "question_text": "Solve the equation log_5(x + 1) + log_5(x) = 2 - log_5(18) - log_5(9).",
+            "matcher_text": "Solve the equation log(base=5,arg=x+1) + log(base=5,arg=x) = 2 - log(base=5,arg=18) - log(base=5,arg=9) .",
+            "source_paper_reference": "Mathematics 1014/2014/Oct_Nov/Paper_1/Variant_3"
+          }
+        ],
+        "embedding_backend": "hash_fallback",
+        "embedding_model": "hash-token-384",
+        "search_total_ms": 151
+      }
+    ],
+    "grading": {
+      "source": "grok",
+      "model": "grok-4-1-fast-reasoning",
+      "error": null,
+      "correct_option": null,
+      "student_option": null
+    }
+  },
+  "run_id": "a9af76c2b17f45a8b0222c1b7513cd73",
+  "saved_at_unix": 1774442147,
+  "saved_at_iso": "2026-03-25T17:35:47+0500",
+  "hostname": "SERENITY"
+}

@@ -10,6 +10,7 @@
     "type-check": "tsc --noEmit",
     "setup:google": "ts-node src/setup-google-oauth.ts",
     "make-public": "ts-node src/make-files-public.ts",
+    "oa-grading:service": "node ./scripts/start-oa-grading-service.js",
     "qa-grading:service": "node ./scripts/start-qa-grading-service.js"
   },
   "keywords": [

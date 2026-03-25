@@ -1,0 +1,5 @@
+{
+  "question_raw": "Solve log_3 x + log_9 x = 12",
+  "answer_raw": "log_3 x + log_3 x / log_3 9 = 12\nlog_3 x + log_3 x / 2 = 12\n2log_3 x + log_3 x = 24\n3log_3 x = 24\nlog_3 x = 24 / 3\nlog_3 x = 8\nx = 3^8\nx = 6561",
+  "subject": "Math"
+}

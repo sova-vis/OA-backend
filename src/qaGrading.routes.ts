@@ -105,11 +105,15 @@ const upload = multer({
 const groqApiKey = (process.env.GROQ_API_KEY || '').trim();
 const groqModel = process.env.GROQ_MODEL || 'llama-3.3-70b-versatile';
 const groq = groqApiKey ? new Groq({ apiKey: groqApiKey }) : null;
-const qaServiceUrl = (process.env.QA_GRADING_SERVICE_URL || 'http://127.0.0.1:8001').trim();
+const oaServiceUrl = (
+  process.env.OA_GRADING_SERVICE_URL ||
+  process.env.QA_GRADING_SERVICE_URL ||
+  'http://127.0.0.1:8001'
+).trim();
 const nodeEnv = (process.env.NODE_ENV || '').trim().toLowerCase();
 
 function serviceUrl(path: string): string {
-  const base = qaServiceUrl.endsWith('/') ? qaServiceUrl.slice(0, -1) : qaServiceUrl;
+  const base = oaServiceUrl.endsWith('/') ? oaServiceUrl.slice(0, -1) : oaServiceUrl;
   return `${base}${path}`;
 }
 
@@ -118,18 +122,18 @@ function toServiceConnectionMessage(error: unknown): string {
   const lowered = message.toLowerCase();
   if (lowered.includes('econnrefused') || lowered.includes('fetch failed')) {
     const isLocalhostUrl =
-      qaServiceUrl.includes('127.0.0.1') ||
-      qaServiceUrl.includes('localhost');
+      oaServiceUrl.includes('127.0.0.1') ||
+      oaServiceUrl.includes('localhost');
 
     if (nodeEnv === 'production' && isLocalhostUrl) {
       return [
-        `Cannot connect to Q/A grading service at ${qaServiceUrl}.`,
+        `Cannot connect to OA grading service at ${oaServiceUrl}.`,
         'In production, localhost points to the same backend container only.',
-        'Set QA_GRADING_SERVICE_URL to a deployed Subject-Grading service URL, or deploy backend with an embedded sidecar process that is actually running on that port.',
+        'Set OA_GRADING_SERVICE_URL to a deployed Subject-Grading service URL, or deploy backend with an embedded sidecar process that is actually running on that port.',
       ].join(' ');
     }
 
-    return `Cannot connect to Q/A grading service at ${qaServiceUrl}. Start it with: cd OA-backend ; npm run qa-grading:service`;
+    return `Cannot connect to OA grading service at ${oaServiceUrl}. Start it with: cd OA-backend ; npm run oa-grading:service`;
   }
   return message;
 }
@@ -146,7 +150,7 @@ async function proxyJson<TRequest, TResponse>(path: string, payload: TRequest): 
   try {
     data = text ? JSON.parse(text) : {};
   } catch {
-    throw new Error(`Invalid JSON from QA grading service: ${text.slice(0, 300)}`);
+    throw new Error(`Invalid JSON from OA grading service: ${text.slice(0, 300)}`);
   }
 
   if (!response.ok) {
@@ -155,8 +159,8 @@ async function proxyJson<TRequest, TResponse>(path: string, payload: TRequest): 
         ? ((data as { detail: string }).detail || '').trim()
         : typeof (data as { error?: unknown }).error === 'string'
           ? ((data as { error: string }).error || '').trim()
-          : `QA grading service request failed with status ${response.status}`;
-    throw new Error(errorMessage || `QA grading service request failed with status ${response.status}`);
+          : `OA grading service request failed with status ${response.status}`;
+    throw new Error(errorMessage || `OA grading service request failed with status ${response.status}`);
   }
 
   return data as TResponse;
@@ -564,9 +568,10 @@ async function evaluateWithGroq(
 router.get('/health', (_req: Request, res: Response) => {
   return res.json({
     status: 'ok',
-    route: 'qa-grading',
+    feature: 'oa-grading',
+    route_aliases: ['/oa-grading', '/qa-grading'],
     groq_enabled: Boolean(groq),
-    qa_service_url: qaServiceUrl,
+    oa_service_url: oaServiceUrl,
   });
 });
 
@@ -624,13 +629,13 @@ router.post('/evaluate', async (req: Request, res: Response) => {
         })
       );
     } catch (serviceError) {
-      console.warn('Q/A typed proxy failed, using local fallback:', serviceError);
+      console.warn('OA grading typed proxy failed, using local fallback:', serviceError);
     }
 
     if (!markingSchemeAnswer) {
       return res.status(400).json({
         error:
-          'marking_scheme_answer is required for local grading fallback. Keep QA grading service running for full pipeline grading without manual mark scheme.',
+          'marking_scheme_answer is required for local grading fallback. Keep OA grading service running for full pipeline grading without manual mark scheme.',
       });
     }
 
@@ -663,7 +668,7 @@ router.post('/evaluate', async (req: Request, res: Response) => {
 
     return res.json(response);
   } catch (error) {
-    console.error('Q/A grading error:', error);
+    console.error('OA grading error:', error);
     return res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -702,7 +707,7 @@ router.post('/evaluate-from-image/preview', upload.single('file'), async (req: R
     const data = text ? JSON.parse(text) : {};
     return res.status(response.status).json(data as QaModeAPreviewResponse | Record<string, unknown>);
   } catch (error) {
-    console.error('Q/A grading preview proxy error:', error);
+    console.error('OA grading preview proxy error:', error);
     return res.status(500).json({
       error: toServiceConnectionMessage(error),
     });
@@ -730,7 +735,7 @@ router.post('/evaluate-from-image/confirm', async (req: Request, res: Response) 
       })
     );
   } catch (error) {
-    console.error('Q/A grading confirm proxy error:', error);
+    console.error('OA grading confirm proxy error:', error);
     return res.status(500).json({
       error: toServiceConnectionMessage(error),
     });

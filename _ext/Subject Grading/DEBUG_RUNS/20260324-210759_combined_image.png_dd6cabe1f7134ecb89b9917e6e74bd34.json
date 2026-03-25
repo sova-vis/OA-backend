@@ -1,0 +1,673 @@
+{
+  "endpoint": "/oa-level/evaluate-from-image/preview",
+  "filename": "combined_image.png",
+  "content_type": "image/png",
+  "size_bytes": 454157,
+  "page_number": 1,
+  "filters": {
+    "subject": "Mathematics 1014",
+    "year": null,
+    "session": null,
+    "paper": null,
+    "variant": null,
+    "question_id": "main|Chemistry 1011|2018|Oct_Nov|Paper_4|Variant_2|3(c)(v)"
+  },
+  "routing": {
+    "incoming_question_id": "main|Chemistry 1011|2018|Oct_Nov|Paper_4|Variant_2|3(c)(v)",
+    "effective_question_id": null,
+    "question_id_ignored_for_preview": true
+  },
+  "preprocess": {
+    "enabled": true,
+    "input_format": "PNG",
+    "profile_name": "balanced",
+    "original_width_px": 600,
+    "original_height_px": 895,
+    "output_width_px": 1800,
+    "output_height_px": 2685,
+    "operations": [
+      "profile:balanced",
+      "exif_transpose",
+      "grayscale",
+      "autocontrast:1",
+      "upscale:1800w",
+      "median:3",
+      "unsharp:r1.20_p125_t3"
+    ],
+    "output_content_type": "image/png",
+    "pdf_render_dpi": null,
+    "fallback_reason": null
+  },
+  "preprocess_variants": [
+    {
+      "profile_name": "balanced",
+      "content_type": "image/png",
+      "meta": {
+        "enabled": true,
+        "input_format": "PNG",
+        "profile_name": "balanced",
+        "original_width_px": 600,
+        "original_height_px": 895,
+        "output_width_px": 1800,
+        "output_height_px": 2685,
+        "operations": [
+          "profile:balanced",
+          "exif_transpose",
+          "grayscale",
+          "autocontrast:1",
+          "upscale:1800w",
+          "median:3",
+          "unsharp:r1.20_p125_t3"
+        ],
+        "output_content_type": "image/png",
+        "pdf_render_dpi": null,
+        "fallback_reason": null
+      }
+    },
+    {
+      "profile_name": "small_handwriting",
+      "content_type": "image/png",
+      "meta": {
+        "enabled": true,
+        "input_format": "PNG",
+        "profile_name": "small_handwriting",
+        "original_width_px": 600,
+        "original_height_px": 895,
+        "output_width_px": 2250,
+        "output_height_px": 3356,
+        "operations": [
+          "profile:small_handwriting",
+          "exif_transpose",
+          "grayscale",
+          "autocontrast:2",
+          "upscale:2250w",
+          "median:3",
+          "unsharp:r1.45_p165_t3"
+        ],
+        "output_content_type": "image/png",
+        "pdf_render_dpi": null,
+        "fallback_reason": null
+      }
+    }
+  ],
+  "regions": {
+    "question_region": {
+      "split_ratio": 0.6212,
+      "detection": "whitespace_gap",
+      "width_px": 1800,
+      "height_px": 2685
+    },
+    "answer_region": {
+      "split_ratio": 0.6212,
+      "detection": "whitespace_gap",
+      "width_px": 1800,
+      "height_px": 2685
+    }
+  },
+  "grok_vision": {
+    "question_text": "Solve log₂x+log₂x=12",
+    "student_answer": "A. log₂x + log₂x =12\nlog₂x + log₉x =12\nlog₂x + log₃x =12\n2log₂x + log₃x =14\nΔlog₂x + log₃x =24\n3log₃x =24\nlog₃x =24\n3\nlog₃x =8\nz =3^8\nX=6561",
+    "question_text_canonical": "Solve log(base=2,arg=x)+log(base=2,arg=x)=12",
+    "student_answer_canonical": "A. log(base=2,arg=x) + log(base=2,arg=x) =12\nlog(base=2,arg=x) + log(base=9,arg=x) =12\nlog(base=2,arg=x) + log(base=3,arg=x) =12\n2*log(base=2,arg=x) + log(base=3,arg=x) =14\nΔlog(base=2,arg=x) + log(base=3,arg=x) =24\n3*log(base=3,arg=x) =24\nlog(base=3,arg=x) =24\n3\nlog(base=3,arg=x) =8\nz =3^8\nX=6561",
+    "confidence": 0.75,
+    "reason": "ok",
+    "notes": "Uncertain 'Δ' symbol (possibly handwritten '2'); fraction represented as '24' stacked over '3' with bar (|PIPE|); bases like ₉ and ₃ potentially ambiguous handwriting; 'z =3^8' uses 'z' instead of 'x'; minor alignment and spacing from handwriting.",
+    "diag": {
+      "model": "grok-4-1-fast-reasoning",
+      "timeout_seconds": 90,
+      "subject": "Mathematics 1014",
+      "math_profile": true,
+      "focus": "both",
+      "region_label": "whole_page",
+      "elapsed_ms": 55362
+    },
+    "raw_response": "{\"id\":\"727ff009-cff0-9b19-aabb-c32e521aa689\",\"object\":\"chat.completion\",\"created\":1774368269,\"model\":\"grok-4-1-fast-reasoning\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"{\\\"question_text\\\": \\\"Solve log₂x+log₂x=12\\\", \\\"student_answer\\\": \\\"A. log₂x + log₂x =12\\\\nlog₂x + log₉x =12\\\\nlog₂x + log₃x =12\\\\n2log₂x + log₃x =14\\\\nΔlog₂x + log₃x =24\\\\n3log₃x =24\\\\nlog₃x =24\\\\n3\\\\nlog₃x =8\\\\nz =3^8\\\\nX=6561\\\", \\\"question_text_canonical\\\": \\\"Solve log(base=2,arg=x)+log(base=2,arg=x)=12\\\", \\\"student_answer_canonical\\\": \\\"A. log(base=2,arg=x) + log(base=2,arg=x) =12\\\\nlog(base=2,arg=x) + log(base=9,arg=x) =12\\\\nlog(base=2,arg=x) + log(base=3,arg=x) =12\\\\n2*log(base=2,arg=x) + log(base=3,arg=x) =14\\\\nΔlog(base=2,arg=x) + log(base=3,arg=x) =24\\\\n3*log(base=3,arg=x) =24\\\\nlog(base=3,arg=x) =24\\\\n3\\\\nlog(base=3,arg=x) =8\\\\nz =3^8\\\\nX=6561\\\", \\\"confidence\\\": 0.75, \\\"notes\\\": \\\"Uncertain 'Δ' symbol (possibly handwritten '2'); fraction represented as '24' stacked over '3' with bar (|PIPE|); bases like ₉ and ₃ potentially ambiguous handwriting; 'z =3^8' uses 'z' instead of 'x'; minor alignment and spacing from handwriting.\\\"}\",\"refusal\":null},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":684,\"completion_tokens\":361,\"total_tokens\":8169,\"prompt_tokens_details\":{\"text_tokens\":428,\"audio_tokens\":0,\"image_tokens\":256,\"cached_tokens\":683},\"completion_tokens_details\":{\"reasoning_tokens\":7124,\"audio_tokens\":0,\"accepted_prediction_tokens\":0,\"rejected_prediction_tokens\":0},\"num_sources_used\":0,\"cost_in_usd_ticks\":38278500},\"system_fingerprint\":\"fp_59fdf7f60c\"}"
+  },
+  "grok_vision_passes": [
+    {
+      "profile_name": "balanced",
+      "region_name": "whole_page",
+      "focus": "both",
+      "pass_type": "base",
+      "vision_confidence": 0.75,
+      "question_text": "Solve log₂x+log₂x=12",
+      "student_answer": "log₂x + log₂x =12 log₂x + log₉x =12 log₂x + log₃x =12 2log₂x + log₃x =14 Δlog₂x + log₃x =24 3log₃x =24 log₃x =24 3 log₃x =8 z =3^8 X=6561",
+      "question_text_canonical": "Solve log(base=2,arg=x)+log(base=2,arg=x)=12",
+      "student_answer_canonical": "A. log(base=2,arg=x) + log(base=2,arg=x) =12 log(base=2,arg=x) + log(base=9,arg=x) =12 log(base=2,arg=x) + log(base=3,arg=x) =12 2*log(base=2,arg=x) + log(base=3,arg=x) =14 Δlog(base=2,arg=x) + log(base=3,arg=x) =24 3*log(base=3,arg=x) =24 log(base=3,arg=x) =24 3 log(base=3,arg=x) =8 z =3^8 X=6561",
+      "warning_codes": [
+        "log_base_set_mismatch",
+        "vision_uncertainty_noted"
+      ],
+      "content_type": "symbolic",
+      "reason": "ok",
+      "notes": "Uncertain 'Δ' symbol (possibly handwritten '2'); fraction represented as '24' stacked over '3' with bar (|PIPE|); bases like ₉ and ₃ potentially ambiguous handwriting; 'z =3^8' uses 'z' instead of 'x'; minor alignment and spacing from handwriting.",
+      "diag": {
+        "model": "grok-4-1-fast-reasoning",
+        "timeout_seconds": 90,
+        "subject": "Mathematics 1014",
+        "math_profile": true,
+        "focus": "both",
+        "region_label": "whole_page",
+        "elapsed_ms": 55362
+      },
+      "variant_meta": {
+        "enabled": true,
+        "input_format": "PNG",
+        "profile_name": "balanced",
+        "original_width_px": 600,
+        "original_height_px": 895,
+        "output_width_px": 1800,
+        "output_height_px": 2685,
+        "operations": [
+          "profile:balanced",
+          "exif_transpose",
+          "grayscale",
+          "autocontrast:1",
+          "upscale:1800w",
+          "median:3",
+          "unsharp:r1.20_p125_t3"
+        ],
+        "output_content_type": "image/png",
+        "pdf_render_dpi": null,
+        "fallback_reason": null
+      }
+    },
+    {
+      "profile_name": "balanced",
+      "region_name": "question_region",
+      "focus": "question_only",
+      "pass_type": "question_retry",
+      "vision_confidence": 0.0,
+      "question_text": "O. Solve log3x + log9x =12",
+      "student_answer": "log3x + log2x =12 log3x + log2x =12 log9 log9 log2x + log3x =12 3 2log3x + log3x=24 2log3x + log3x=24 3log3x + log2x=24 3log3 x =24",
+      "question_text_canonical": "Solve log(base=3,arg=x) + log(base=9,arg=x) = 12",
+      "student_answer_canonical": null,
+      "warning_codes": [
+        "ambiguous_log_base_argument",
+        "canonical_math_missing",
+        "vision_uncertainty_noted"
+      ],
+      "content_type": "symbolic",
+      "reason": "ok",
+      "notes": "Handwritten and messy; first log base clearly 3, second base appears as '9' but typed as 'q' in some lines, possibly handwritten 9. Layout uncertain due to handwriting overlap.",
+      "diag": {
+        "model": "grok-4-1-fast-reasoning",
+        "timeout_seconds": 90,
+        "subject": "Mathematics 1014",
+        "math_profile": true,
+        "focus": "question_only",
+        "region_label": "question_region",
+        "elapsed_ms": 36183
+      },
+      "variant_meta": {
+        "enabled": true,
+        "input_format": "PNG",
+        "profile_name": "balanced",
+        "original_width_px": 600,
+        "original_height_px": 895,
+        "output_width_px": 1800,
+        "output_height_px": 2685,
+        "operations": [
+          "profile:balanced",
+          "exif_transpose",
+          "grayscale",
+          "autocontrast:1",
+          "upscale:1800w",
+          "median:3",
+          "unsharp:r1.20_p125_t3"
+        ],
+        "output_content_type": "image/png",
+        "pdf_render_dpi": null,
+        "fallback_reason": null
+      }
+    },
+    {
+      "profile_name": "small_handwriting",
+      "region_name": "question_region",
+      "focus": "question_only",
+      "pass_type": "question_retry",
+      "vision_confidence": 0.0,
+      "question_text": "Solve log3x+log9x =12",
+      "student_answer": "",
+      "question_text_canonical": "Q. Solve log(base=3,arg=x)+log(base=9,arg=x)=12",
+      "student_answer_canonical": null,
+      "warning_codes": [
+        "ambiguous_log_base_argument",
+        "missing_answer_text"
+      ],
+      "content_type": "symbolic",
+      "reason": "missing_answer",
+      "notes": null,
+      "diag": {
+        "model": "grok-4-1-fast-reasoning",
+        "timeout_seconds": 90,
+        "subject": "Mathematics 1014",
+        "math_profile": true,
+        "focus": "question_only",
+        "region_label": "question_region",
+        "elapsed_ms": 27381
+      },
+      "variant_meta": {
+        "enabled": true,
+        "input_format": "PNG",
+        "profile_name": "small_handwriting",
+        "original_width_px": 600,
+        "original_height_px": 895,
+        "output_width_px": 2250,
+        "output_height_px": 3356,
+        "operations": [
+          "profile:small_handwriting",
+          "exif_transpose",
+          "grayscale",
+          "autocontrast:2",
+          "upscale:2250w",
+          "median:3",
+          "unsharp:r1.45_p165_t3"
+        ],
+        "output_content_type": "image/png",
+        "pdf_render_dpi": null,
+        "fallback_reason": null
+      }
+    }
+  ],
+  "image_sha256": "8015f86a380daaf4423116d0f534fd5861f046a666242b652820eea8faad80a1",
+  "normalization": {
+    "selected_question": {
+      "display_text": "Solve log_2 x + log_2 x = 12",
+      "canonical_text": "Solve log(base=2,arg=x) + log(base=2,arg=x) = 12",
+      "matcher_text": "Solve log(base=2,arg=x) + log(base=2,arg=x) = 12",
+      "warning_codes": [
+        "log_base_set_mismatch",
+        "vision_uncertainty_noted"
+      ],
+      "content_type": "symbolic"
+    },
+    "selected_student_answer": {
+      "display_text": "log_2 x + log_2 x = 12 log_2 x + log_9 x = 12 log_2 x + log_3 x = 12 2log_2 x + log_3 x = 14 Δlog_2 x + log_3 x = 24 3log_3 x = 24 log_3 x = 24 3 log_3 x = 8 z = 3^8 X = 6561",
+      "canonical_text": "log(base=2,arg=x) + log(base=2,arg=x) = 12 log(base=2,arg=x) + log(base=9,arg=x) = 12 log(base=2,arg=x) + log(base=3,arg=x) = 12 2log_2 x + log(base=3,arg=x) = 14 Δlog_2 x + log(base=3,arg=x) = 24 3log_3 x = 24 log(base=3,arg=x) = 24 3 log(base=3,arg=x) = 8 z = 3^8 X = 6561",
+      "matcher_text": "log(base=2,arg=x) + log(base=2,arg=x) = 12 log(base=2,arg=x) + log(base=9,arg=x) = 12 log(base=2,arg=x) + log(base=3,arg=x) = 12 2log_2 x + log(base=3,arg=x) = 14 Δlog_2 x + log(base=3,arg=x) = 24 3log_3 x = 24 log(base=3,arg=x) = 24 3 log(base=3,arg=x) = 8 z = 3^8 X = 6561",
+      "content_type": "symbolic"
+    }
+  },
+  "recovery": {
+    "applied": true,
+    "reason_codes": [
+      "ambiguous_log_base_argument",
+      "canonical_math_missing",
+      "low_match_margin",
+      "low_vision_confidence",
+      "vision_uncertainty_noted",
+      "vision_warning_present",
+      "weak_match_confidence"
+    ],
+    "pass_count": 3,
+    "selection_reason_codes": [
+      "question_id_ignored_for_preview"
+    ],
+    "selected_candidate": {
+      "text": "Solve log_2 x + log_2 x = 12",
+      "source": "raw",
+      "source_region": "whole_page",
+      "source_variant": "balanced",
+      "retrieval_match_confidence": 0.7776,
+      "structure_score": 0.91,
+      "answer_consistency_score": 0.95,
+      "final_score": 0.7925,
+      "selected": true,
+      "family_label": "logarithmic",
+      "ocr_distance": 0.0,
+      "hard_rejected": false,
+      "rejection_reason_codes": [],
+      "answer_signal_score": 1.0
+    },
+    "best_image_grounded_candidate": {
+      "text": "Solve log_2 x + log_2 x = 12",
+      "source": "raw",
+      "source_region": "whole_page",
+      "source_variant": "balanced",
+      "retrieval_match_confidence": 0.7776,
+      "structure_score": 0.91,
+      "answer_consistency_score": 0.95,
+      "final_score": 0.7925,
+      "selected": false,
+      "family_label": "logarithmic",
+      "ocr_distance": 0.0,
+      "hard_rejected": false,
+      "rejection_reason_codes": [],
+      "answer_signal_score": 1.0
+    },
+    "question_candidates": [
+      {
+        "text": "Solve log_2 x + log_2 x = 12",
+        "source": "raw",
+        "source_region": "whole_page",
+        "source_variant": "balanced",
+        "retrieval_match_confidence": 0.7776,
+        "structure_score": 0.91,
+        "answer_consistency_score": 0.95,
+        "final_score": 0.7925,
+        "selected": true,
+        "family_label": "logarithmic",
+        "ocr_distance": 0.0,
+        "hard_rejected": false,
+        "rejection_reason_codes": [],
+        "answer_signal_score": 1.0
+      },
+      {
+        "text": "O. Solve log3x + log9x = 12",
+        "source": "retry",
+        "source_region": "question_region",
+        "source_variant": "balanced",
+        "retrieval_match_confidence": 0.5299,
+        "structure_score": 0.87,
+        "answer_consistency_score": 0.7957,
+        "final_score": 0.6487,
+        "selected": false,
+        "family_label": "logarithmic",
+        "ocr_distance": 0.0,
+        "hard_rejected": false,
+        "rejection_reason_codes": [],
+        "answer_signal_score": 0.9
+      },
+      {
+        "text": "Solve log3x + log9x = 12",
+        "source": "retry",
+        "source_region": "question_region",
+        "source_variant": "small_handwriting",
+        "retrieval_match_confidence": 0.5476,
+        "structure_score": 0.77,
+        "answer_consistency_score": 0.81,
+        "final_score": 0.6365,
+        "selected": false,
+        "family_label": "logarithmic",
+        "ocr_distance": 0.0,
+        "hard_rejected": false,
+        "rejection_reason_codes": [],
+        "answer_signal_score": 0.9
+      }
+    ]
+  },
+  "preview": {
+    "request_id": "8015f86a380daaf4423116d0f534fd5861f046a666242b652820eea8faad80a1",
+    "extracted_question_text": "Solve log₂x+log₂x=12",
+    "extracted_student_answer": "log₂x + log₂x =12 log₂x + log₉x =12 log₂x + log₃x =12 2log₂x + log₃x =14 Δlog₂x + log₃x =24 3log₃x =24 log₃x =24 3 log₃x =8 z =3^8 X=6561",
+    "normalized_question_text": "Solve log_2 x + log_2 x = 12",
+    "normalized_student_answer": "log_2 x + log_2 x = 12 log_2 x + log_9 x = 12 log_2 x + log_3 x = 12 2log_2 x + log_3 x = 14 Δlog_2 x + log_3 x = 24 3log_3 x = 24 log_3 x = 24 3 log_3 x = 8 z = 3^8 X = 6561",
+    "canonical_question_text": "Solve log(base=2,arg=x) + log(base=2,arg=x) = 12",
+    "canonical_student_answer": "log(base=2,arg=x) + log(base=2,arg=x) = 12 log(base=2,arg=x) + log(base=9,arg=x) = 12 log(base=2,arg=x) + log(base=3,arg=x) = 12 2log_2 x + log(base=3,arg=x) = 14 Δlog_2 x + log(base=3,arg=x) = 24 3log_3 x = 24 log(base=3,arg=x) = 24 3 log(base=3,arg=x) = 8 z = 3^8 X = 6561",
+    "math_extraction_profile_used": true,
+    "vision_confidence": 0.75,
+    "vision_warnings": [
+      "log_base_set_mismatch",
+      "vision_uncertainty_noted"
+    ],
+    "match_confidence": 0.7776,
+    "top1_top2_margin": 0.005299999999999971,
+    "auto_accept_eligible": false,
+    "auto_accept_reason": "blocked:vision_gate=False,match_gate=False,warnings=log_base_set_mismatch,vision_uncertainty_noted",
+    "content_type": "symbolic",
+    "recovery_applied": true,
+    "recovery_reason_codes": [
+      "ambiguous_log_base_argument",
+      "canonical_math_missing",
+      "low_match_margin",
+      "low_vision_confidence",
+      "vision_uncertainty_noted",
+      "vision_warning_present",
+      "weak_match_confidence"
+    ],
+    "question_candidates": [
+      {
+        "text": "Solve log_2 x + log_2 x = 12",
+        "source": "raw",
+        "source_region": "whole_page",
+        "source_variant": "balanced",
+        "retrieval_match_confidence": 0.7776,
+        "structure_score": 0.91,
+        "answer_consistency_score": 0.95,
+        "final_score": 0.7925,
+        "selected": true,
+        "family_label": "logarithmic",
+        "ocr_distance": 0.0,
+        "hard_rejected": false,
+        "rejection_reason_codes": [],
+        "answer_signal_score": 1.0
+      },
+      {
+        "text": "O. Solve log3x + log9x = 12",
+        "source": "retry",
+        "source_region": "question_region",
+        "source_variant": "balanced",
+        "retrieval_match_confidence": 0.5299,
+        "structure_score": 0.87,
+        "answer_consistency_score": 0.7957,
+        "final_score": 0.6487,
+        "selected": false,
+        "family_label": "logarithmic",
+        "ocr_distance": 0.0,
+        "hard_rejected": false,
+        "rejection_reason_codes": [],
+        "answer_signal_score": 0.9
+      },
+      {
+        "text": "Solve log3x + log9x = 12",
+        "source": "retry",
+        "source_region": "question_region",
+        "source_variant": "small_handwriting",
+        "retrieval_match_confidence": 0.5476,
+        "structure_score": 0.77,
+        "answer_consistency_score": 0.81,
+        "final_score": 0.6365,
+        "selected": false,
+        "family_label": "logarithmic",
+        "ocr_distance": 0.0,
+        "hard_rejected": false,
+        "rejection_reason_codes": [],
+        "answer_signal_score": 0.9
+      }
+    ],
+    "top_alternatives": [
+      {
+        "question_id": "main|Mathematics 1014|2017|Oct_Nov|Paper_2|Variant_2|4",
+        "match_confidence": 0.7776,
+        "question_text": "Solve the simultaneous equations log_4(x) + log_2(y) = 2 and log_2(y) - log_4(x) = 7/4.",
+        "source_paper_reference": "Mathematics 1014/2017/Oct_Nov/Paper_2/Variant_2"
+      },
+      {
+        "question_id": "main|Mathematics 1014|2018|Oct_Nov|Paper_2|Variant_3|6",
+        "match_confidence": 0.7723,
+        "question_text": "Solve the simultaneous equations log_2 x + log_3 y = 2, and log x - log y = 1/2.",
+        "source_paper_reference": "Mathematics 1014/2018/Oct_Nov/Paper_2/Variant_3"
+      },
+      {
+        "question_id": "main|Mathematics 1014|2012|Oct_Nov|Paper_2|Variant_3|11(b)",
+        "match_confidence": 0.7432,
+        "question_text": "Solve log_y 2 = 3 – log_y 256.",
+        "source_paper_reference": "Mathematics 1014/2012/Oct_Nov/Paper_2/Variant_3"
+      }
+    ],
+    "debug_run_id": null
+  },
+  "retrieval_policy": {
+    "mode": "question_only",
+    "use_answer_hint": false,
+    "direct_question_id_allowed": false,
+    "question_id_ignored_for_preview": true,
+    "retrieval_signal_present": true,
+    "math_canonical_enabled": true,
+    "question_matcher_mode": "canonical",
+    "answer_matcher_mode": "canonical"
+  },
+  "probe_response": {
+    "match_confidence": 0.7776,
+    "top1_top2_margin": 0.005299999999999971,
+    "top_alternatives": [
+      {
+        "question_id": "main|Mathematics 1014|2017|Oct_Nov|Paper_2|Variant_2|4",
+        "match_confidence": 0.7776,
+        "question_text": "Solve the simultaneous equations log_4(x) + log_2(y) = 2 and log_2(y) - log_4(x) = 7/4.",
+        "source_paper_reference": "Mathematics 1014/2017/Oct_Nov/Paper_2/Variant_2"
+      },
+      {
+        "question_id": "main|Mathematics 1014|2018|Oct_Nov|Paper_2|Variant_3|6",
+        "match_confidence": 0.7723,
+        "question_text": "Solve the simultaneous equations log_2 x + log_3 y = 2, and log x - log y = 1/2.",
+        "source_paper_reference": "Mathematics 1014/2018/Oct_Nov/Paper_2/Variant_3"
+      },
+      {
+        "question_id": "main|Mathematics 1014|2012|Oct_Nov|Paper_2|Variant_3|11(b)",
+        "match_confidence": 0.7432,
+        "question_text": "Solve log_y 2 = 3 – log_y 256.",
+        "source_paper_reference": "Mathematics 1014/2012/Oct_Nov/Paper_2/Variant_3"
+      }
+    ],
+    "retrieval_signal_present": true
+  },
+  "debug_trace": {
+    "enabled": true,
+    "request_raw": {
+      "subject": "Mathematics 1014",
+      "year": null,
+      "session": null,
+      "paper": null,
+      "variant": null,
+      "question_id": null,
+      "question_len": 28,
+      "student_answer_len": 174
+    },
+    "request_sanitized": {
+      "subject": "Mathematics 1014",
+      "year": null,
+      "session": null,
+      "paper": null,
+      "variant": null,
+      "question_id": null,
+      "question_len": 28,
+      "student_answer_len": 174
+    },
+    "timings_ms": {
+      "primary": 11558,
+      "total": 11558
+    },
+    "stages": [
+      {
+        "stage": "primary",
+        "data_source": "o_level_main_json",
+        "records_total": 12465,
+        "records_scoped": 2891,
+        "status": "running",
+        "match_confidence": 0.0,
+        "matched_question_id": null,
+        "reason": "records_scoped"
+      },
+      {
+        "stage": "primary_match",
+        "data_source": "o_level_main_json",
+        "records_total": 12465,
+        "records_scoped": 2891,
+        "status": "review_required",
+        "match_confidence": 0.7776,
+        "matched_question_id": "main|Mathematics 1014|2017|Oct_Nov|Paper_2|Variant_2|4",
+        "reason": "matched"
+      }
+    ],
+    "final_decision": {
+      "status": "review_required",
+      "data_source": "o_level_main_json",
+      "fallback_used": false,
+      "primary_status": "review_required",
+      "primary_match_confidence": 0.7776,
+      "primary_data_source": "o_level_main_json",
+      "fallback_data_source": "oa_main_dataset",
+      "match_confidence": 0.7776,
+      "matched_question_id": "main|Mathematics 1014|2017|Oct_Nov|Paper_2|Variant_2|4"
+    },
+    "source_order": {
+      "source_priority": "o_level_main_first",
+      "primary_data_source": "o_level_main_json",
+      "fallback_data_source": "oa_main_dataset"
+    },
+    "retrieval": {
+      "use_answer_hint": false,
+      "direct_question_id_allowed": false
+    },
+    "search_diagnostics": [
+      {
+        "search_method": "embedding_local",
+        "index_source": "o_level_main_json",
+        "use_answer_hint": false,
+        "query_subject": "Mathematics 1014",
+        "normalized_query_text": "Solve log(base=2,arg=x) + log(base=2,arg=x) = 12",
+        "index_version": 2,
+        "index_rebuilt": false,
+        "rebuild_reason": "up_to_date",
+        "records_scoped": 2891,
+        "top_k_searched": 50,
+        "query_embedding_ms": 0,
+        "similarity_search_ms": 2,
+        "rerank_ms": 4,
+        "final_search_score": 0.7776,
+        "top_search_candidates": [
+          {
+            "question_id": "main|Mathematics 1014|2017|Oct_Nov|Paper_2|Variant_2|4",
+            "embedding_similarity": 0.9225,
+            "lexical_overlap": 0.4286,
+            "answer_hint_score": 0.0,
+            "answer_hint_used": false,
+            "final_score": 0.7776,
+            "question_text": "Solve the simultaneous equations log_4(x) + log_2(y) = 2 and log_2(y) - log_4(x) = 7/4.",
+            "matcher_text": "Solve the simultaneous equations log(base=4,arg=x) + log(base=2,arg=y) = 2 and log(base=2,arg=y) - log(base=4,arg=x) = 7 / 4.",
+            "source_paper_reference": "Mathematics 1014/2017/Oct_Nov/Paper_2/Variant_2"
+          },
+          {
+            "question_id": "main|Mathematics 1014|2018|Oct_Nov|Paper_2|Variant_3|6",
+            "embedding_similarity": 0.9154,
+            "lexical_overlap": 0.4286,
+            "answer_hint_score": 0.0,
+            "answer_hint_used": false,
+            "final_score": 0.7723,
+            "question_text": "Solve the simultaneous equations log_2 x + log_3 y = 2, and log x - log y = 1/2.",
+            "matcher_text": "Solve the simultaneous equations log(base=2,arg=x) + log(base=3,arg=y) = 2, and log x - log y = 1 / 2.",
+            "source_paper_reference": "Mathematics 1014/2018/Oct_Nov/Paper_2/Variant_3"
+          },
+          {
+            "question_id": "main|Mathematics 1014|2012|Oct_Nov|Paper_2|Variant_3|11(b)",
+            "embedding_similarity": 0.8575,
+            "lexical_overlap": 0.5,
+            "answer_hint_score": 0.0,
+            "answer_hint_used": false,
+            "final_score": 0.7432,
+            "question_text": "Solve log_y 2 = 3 – log_y 256.",
+            "matcher_text": "Solve log(base=y,arg=2) = 3 – log(base=y,arg=256).",
+            "source_paper_reference": "Mathematics 1014/2012/Oct_Nov/Paper_2/Variant_3"
+          },
+          {
+            "question_id": "main|Mathematics 1014|2014|Oct_Nov|Paper_1|Variant_3|7",
+            "embedding_similarity": 0.8627,
+            "lexical_overlap": 0.4615,
+            "answer_hint_score": 0.0,
+            "answer_hint_used": false,
+            "final_score": 0.7394,
+            "question_text": "Solve the equation log_5(x + 1) + log_5(x) = 2 - log_5(18) - log_5(9).",
+            "matcher_text": "Solve the equation log(base=5,arg=x+1) + log(base=5,arg=x) = 2 - log(base=5,arg=18) - log(base=5,arg=9) .",
+            "source_paper_reference": "Mathematics 1014/2014/Oct_Nov/Paper_1/Variant_3"
+          }
+        ],
+        "embedding_backend": "hash_fallback",
+        "embedding_model": "hash-token-384",
+        "search_total_ms": 144
+      }
+    ],
+    "grading": {
+      "source": "grok",
+      "model": "grok-4-1-fast-reasoning",
+      "error": null,
+      "correct_option": null,
+      "student_option": null
+    }
+  },
+  "run_id": "dd6cabe1f7134ecb89b9917e6e74bd34",
+  "saved_at_unix": 1774368479,
+  "saved_at_iso": "2026-03-24T21:07:59+0500",
+  "hostname": "SERENITY"
+}
