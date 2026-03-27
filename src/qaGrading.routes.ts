@@ -1,6 +1,9 @@
 import { Router, Request, Response } from 'express';
 import Groq from 'groq-sdk';
 import multer from 'multer';
+import { spawn } from 'child_process';
+import fs from 'fs';
+import path from 'path';
 
 type GradeLabel = 'fully_correct' | 'partially_correct' | 'weak';
 type StatusLabel = 'accepted' | 'review_required' | 'failed';
@@ -111,10 +114,139 @@ const oaServiceUrl = (
   'http://127.0.0.1:8001'
 ).trim();
 const nodeEnv = (process.env.NODE_ENV || '').trim().toLowerCase();
+const autoStartOaServiceSetting = (
+  process.env.AUTO_START_OA_GRADING_SERVICE ||
+  process.env.AUTO_START_QA_GRADING_SERVICE ||
+  ''
+).trim().toLowerCase();
+const shouldAutoStartOaService = autoStartOaServiceSetting !== 'false';
+let oaServiceLaunchPromise: Promise<void> | null = null;
 
 function serviceUrl(path: string): string {
   const base = oaServiceUrl.endsWith('/') ? oaServiceUrl.slice(0, -1) : oaServiceUrl;
   return `${base}${path}`;
+}
+
+function isLocalOaServiceUrl(): boolean {
+  try {
+    const normalized = oaServiceUrl.endsWith('/') ? oaServiceUrl.slice(0, -1) : oaServiceUrl;
+    const parsed = new URL(normalized);
+    return parsed.hostname === '127.0.0.1' || parsed.hostname === 'localhost';
+  } catch {
+    return oaServiceUrl.includes('127.0.0.1') || oaServiceUrl.includes('localhost');
+  }
+}
+
+function getOaServicePort(): string {
+  try {
+    const normalized = oaServiceUrl.endsWith('/') ? oaServiceUrl.slice(0, -1) : oaServiceUrl;
+    const parsed = new URL(normalized);
+    if (parsed.port) return parsed.port;
+  } catch {
+    // Fall through to default
+  }
+  return '8001';
+}
+
+function isOaConnectionRefused(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const message = (error.message || '').toLowerCase();
+  if (message.includes('econnrefused') || message.includes('fetch failed')) {
+    return true;
+  }
+
+  const candidate = error as Error & { cause?: unknown };
+  const causeCode =
+    typeof candidate.cause === 'object' &&
+    candidate.cause !== null &&
+    'code' in (candidate.cause as Record<string, unknown>)
+      ? String((candidate.cause as Record<string, unknown>).code || '').toUpperCase()
+      : '';
+
+  return causeCode === 'ECONNREFUSED';
+}
+
+async function isOaServiceReachable(): Promise<boolean> {
+  try {
+    const response = await fetch(serviceUrl('/oa-level/health'), {
+      method: 'GET',
+      signal: AbortSignal.timeout(1500),
+    });
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
+async function waitForOaServiceReady(timeoutMs: number): Promise<boolean> {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    if (await isOaServiceReachable()) {
+      return true;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 800));
+  }
+  return false;
+}
+
+async function ensureOaServiceRunning(): Promise<void> {
+  if (!shouldAutoStartOaService || !isLocalOaServiceUrl()) {
+    return;
+  }
+
+  if (await isOaServiceReachable()) {
+    return;
+  }
+
+  if (!oaServiceLaunchPromise) {
+    oaServiceLaunchPromise = (async () => {
+      const launcherScriptPath = path.join(process.cwd(), 'scripts', 'start-oa-grading-service.js');
+      if (!fs.existsSync(launcherScriptPath)) {
+        throw new Error(`OA grading launcher script not found at ${launcherScriptPath}`);
+      }
+
+      const port = getOaServicePort();
+
+      const child = spawn(process.execPath, [launcherScriptPath], {
+        cwd: process.cwd(),
+        detached: true,
+        stdio: 'ignore',
+        windowsHide: true,
+        env: {
+          ...process.env,
+          OA_GRADING_SERVICE_PORT: port,
+          QA_GRADING_SERVICE_PORT: port,
+        },
+      });
+
+      child.on('error', (error) => {
+        console.error('Failed to launch OA grading sidecar:', error);
+      });
+
+      child.unref();
+      const ready = await waitForOaServiceReady(45000);
+      if (!ready) {
+        throw new Error(`OA grading service did not become ready at ${oaServiceUrl} after auto-start`);
+      }
+    })().finally(() => {
+      oaServiceLaunchPromise = null;
+    });
+  }
+
+  await oaServiceLaunchPromise;
+}
+
+async function fetchOaService(pathname: string, init: RequestInit): Promise<globalThis.Response> {
+  try {
+    return await fetch(serviceUrl(pathname), init);
+  } catch (error) {
+    if (!isOaConnectionRefused(error)) {
+      throw error;
+    }
+
+    await ensureOaServiceRunning();
+    return await fetch(serviceUrl(pathname), init);
+  }
 }
 
 function toServiceConnectionMessage(error: unknown): string {
@@ -139,7 +271,7 @@ function toServiceConnectionMessage(error: unknown): string {
 }
 
 async function proxyJson<TRequest, TResponse>(path: string, payload: TRequest): Promise<TResponse> {
-  const response = await fetch(serviceUrl(path), {
+  const response = await fetchOaService(path, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
@@ -698,7 +830,7 @@ router.post('/evaluate-from-image/preview', upload.single('file'), async (req: R
       formData.append('year', String(year));
     }
 
-    const response = await fetch(serviceUrl('/oa-level/evaluate-from-image/preview'), {
+    const response = await fetchOaService('/oa-level/evaluate-from-image/preview', {
       method: 'POST',
       body: formData,
     });

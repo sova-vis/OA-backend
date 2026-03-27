@@ -564,9 +564,28 @@ async function ragRetrieval(
       return { ...empty, error: error?.message || "RPC failed" };
     }
 
-    const all = (data as PastPaperChunk[]).sort(
-      (a, b) => b.similarity - a.similarity
-    );
+    // HYBRID RE-RANKING: Combine embedding similarity with lexical overlap
+    // This helps surface exact matching questions even if embedding similarity is slightly lower
+    const rerankedData = (data as PastPaperChunk[]).map((chunk) => {
+      const lexicalScore = lexicalOverlapScore(question, chunk.content || "");
+      // Hybrid score: 60% embedding + 40% lexical (weighted towards semantic but lexical helps exact matches)
+      const hybridScore = chunk.similarity * 0.6 + lexicalScore * 0.4;
+      // Slight boost for recent years (2023+)
+      const yearBoost = chunk.year >= 2023 ? 0.02 : 0;
+      return {
+        ...chunk,
+        originalSimilarity: chunk.similarity,
+        lexicalScore,
+        similarity: Math.min(1, hybridScore + yearBoost), // Use hybrid as the new similarity
+      };
+    });
+
+    const all = rerankedData.sort((a, b) => b.similarity - a.similarity);
+
+    console.log(`[RAG] Hybrid re-ranking applied. Top 3 matches:`);
+    all.slice(0, 3).forEach((c, i) => {
+      console.log(`  ${i + 1}. ${c.subject} ${c.year} - embed: ${((c as any).originalSimilarity * 100).toFixed(1)}%, lexical: ${((c as any).lexicalScore * 100).toFixed(1)}%, hybrid: ${(c.similarity * 100).toFixed(1)}%`);
+    });
 
     if (!all.length || (all[0]?.similarity || 0) <= 0) {
       const local = await localFallbackRetrieval(question, subjectFilter, yearFilter, matchCount);
@@ -927,6 +946,251 @@ interface RagDecision {
   shouldSearch: boolean;
   followUpDetected: boolean;
   reason: string;
+}
+
+// -- INTELLIGENT QUERY ANALYSIS (LLM-BASED) ----------------------------------
+interface IntelligentQueryAnalysis {
+  isLogicalQuestion: boolean;
+  needsRetrieval: boolean;
+  searchQuery: string;
+  reasoning: string;
+  questionType: "factual_exam" | "conceptual" | "conversational" | "followup";
+  confidence: number;
+}
+
+function isProbablyLogicalQuestion(question: string): boolean {
+  const normalized = question.trim();
+  if (!normalized) return false;
+
+  const words = normalized.split(/\s+/).filter(Boolean);
+  if (words.length === 1) {
+    const token = words[0].toLowerCase();
+    // Single-word subject/topic or filler inputs are not actionable questions.
+    if (!hasExplicitTaskVerb(token) && !/[?]/.test(token)) {
+      return false;
+    }
+  }
+
+  if (words.length <= 2 && !hasExplicitTaskVerb(normalized) && !/[?]/.test(normalized)) {
+    return false;
+  }
+
+  if (/^(hi|hello|hey|hmm|ok|okay|yo|sup|bro|test|null|none|asdf|qwerty|idk)$/i.test(normalized)) {
+    return false;
+  }
+
+  return true;
+}
+
+async function analyzeQueryIntelligently(
+  question: string,
+  history: HistoryMessage[]
+): Promise<IntelligentQueryAnalysis> {
+  const historyContext = history.length > 0
+    ? `\nRecent conversation:\n${history.slice(-4).map(h => `${h.role}: ${h.content.slice(0, 200)}`).join('\n')}`
+    : "";
+
+  // Detect if this looks like an exact past paper question (specific numbers, structured format)
+  const hasSpecificNumbers = /\b\d{2,}\s*(students?|people|marks?|metres?|seconds?|kg|cm|mm|m\/s|N|J|W)\b/i.test(question);
+  const hasStructuredData = /\b(given|all\s+students|x\s+students|total|are\s+given\s+below)\b/i.test(question);
+  const looksLikePastPaper = hasSpecificNumbers && (hasStructuredData || question.length > 150);
+
+  const prompt = `You are analyzing a student's question to decide the best way to answer it.
+
+Student question: "${question}"${historyContext}
+
+Analyze this question and respond with ONLY this JSON (no markdown, no extra text):
+{
+  "isLogicalQuestion": true/false,
+  "needsRetrieval": true/false,
+  "searchQuery": "optimized search query if retrieval needed, otherwise empty string",
+  "reasoning": "brief 1-sentence explanation",
+  "questionType": "factual_exam" | "conceptual" | "conversational" | "followup",
+  "confidence": 0.0-1.0
+}
+
+Decision rules:
+- isLogicalQuestion=false for incomplete, nonsense, one-word, greeting-only, or unclear prompts.
+- If isLogicalQuestion=false then needsRetrieval=false.
+- needsRetrieval=true for ANY of these:
+  * Questions with specific numerical data (looks like a past paper question)
+  * Mark scheme requests or past paper references
+  * Exam-style structured problems with given data
+  * Questions that might be copied from actual exam papers
+  * Clearly-asked exam/curriculum questions with enough detail
+- needsRetrieval=false ONLY for:
+  * Vague or incomplete prompts (for example: "physics", "mcq", "help")
+  * Pure conceptual explanations ("what is X", "explain the concept of Y")
+  * Follow-ups to previous answers
+  * Conversational queries
+- IMPORTANT: If a question has specific numbers and structured data, it's likely from a past paper - set needsRetrieval=true
+- searchQuery: Extract the core topic for searching
+- questionType: "factual_exam" for exam questions with specific data, "conceptual" for general understanding
+- confidence: How confident you are`;
+
+  try {
+    const completion = await groq.chat.completions.create({
+      model: GROQ_MODEL,
+      messages: [{ role: "user", content: prompt }],
+      max_tokens: 200,
+      temperature: 0.1,
+    });
+
+    const response = completion.choices[0]?.message?.content || "";
+    const cleaned = response.replace(/```json\s*/gi, "").replace(/```\s*$/g, "").trim();
+    const match = cleaned.match(/\{[\s\S]*\}/);
+
+    if (match) {
+      const parsed = JSON.parse(match[0]);
+      // Override: if it looks like a past paper question, always retrieve
+      const forceRetrieval = looksLikePastPaper;
+      const heuristicLogical = isProbablyLogicalQuestion(question);
+      const llmLogical = Boolean(parsed.isLogicalQuestion);
+      const isLogicalQuestion = heuristicLogical && llmLogical;
+      return {
+        isLogicalQuestion,
+        needsRetrieval: isLogicalQuestion && (forceRetrieval || Boolean(parsed.needsRetrieval)),
+        searchQuery: String(parsed.searchQuery || question).trim(),
+        reasoning: forceRetrieval
+          ? "Question has specific numerical data - likely from past paper"
+          : String(parsed.reasoning || ""),
+        questionType: forceRetrieval ? "factual_exam" : (parsed.questionType || "conceptual"),
+        confidence: Math.max(0, Math.min(1, Number(parsed.confidence) || 0.5)),
+      };
+    }
+  } catch (err) {
+    console.error("[RAG] analyzeQueryIntelligently error:", err);
+  }
+
+  // Fallback to simple heuristics if LLM fails
+  const heuristicLogical = isProbablyLogicalQuestion(question);
+  return {
+    isLogicalQuestion: heuristicLogical,
+    needsRetrieval:
+      heuristicLogical &&
+      (looksLikePastPaper || hasExplicitTaskVerb(question) || /\b(marks?|paper|exam|scheme)\b/i.test(question)),
+    searchQuery: question.trim(),
+    reasoning: "Fallback: LLM analysis failed",
+    questionType: looksLikePastPaper ? "factual_exam" : "conceptual",
+    confidence: 0.3,
+  };
+}
+
+async function generateClarificationAnswer(
+  userInput: string,
+  history: HistoryMessage[],
+  style: AnswerStyle,
+  answerMode: AnswerMode
+): Promise<{ answer: string; markingPoints: Array<{ point: string; marks: number }>; commonMistakes: string[] } | null> {
+  return generateDirectAnswer(
+    `The user wrote: "${userInput}". This is not a complete academic question. Reply briefly and politely: ask them to provide a clear question, topic, level, and (if needed) paper/year/marks. Give 2 short examples of good question formats.`,
+    history,
+    { ...style, detailLevel: "short", preferHeadings: false },
+    answerMode
+  );
+}
+
+// -- POST-RETRIEVAL RELEVANCE EVALUATION (LLM-BASED) -------------------------
+interface RetrievalRelevanceResult {
+  isRelevant: boolean;
+  relevanceScore: number;
+  reasoning: string;
+  shouldUseRAG: boolean;
+  refinedAnswer: string | null;
+}
+
+async function evaluateRetrievalRelevance(
+  question: string,
+  retrievedChunks: PastPaperChunk[],
+  queryAnalysis: IntelligentQueryAnalysis
+): Promise<RetrievalRelevanceResult> {
+  if (retrievedChunks.length === 0) {
+    return {
+      isRelevant: false,
+      relevanceScore: 0,
+      reasoning: "No content retrieved",
+      shouldUseRAG: false,
+      refinedAnswer: null,
+    };
+  }
+
+  // Take top 3 chunks for relevance evaluation
+  const topChunks = retrievedChunks.slice(0, 3);
+  const avgSimilarity = topChunks.reduce((s, c) => s + c.similarity, 0) / topChunks.length;
+  const bestSimilarity = Math.max(...topChunks.map(c => c.similarity));
+
+  // If similarity is high enough (>0.55), trust the embedding and use RAG
+  // This handles cases where exact past paper questions are copied
+  if (bestSimilarity >= 0.55) {
+    console.log(`[RAG] High similarity match (${(bestSimilarity * 100).toFixed(0)}%) - using RAG without LLM evaluation`);
+    return {
+      isRelevant: true,
+      relevanceScore: bestSimilarity,
+      reasoning: `High similarity match found (${(bestSimilarity * 100).toFixed(0)}%)`,
+      shouldUseRAG: true,
+      refinedAnswer: null,
+    };
+  }
+
+  const chunksPreview = topChunks
+    .map((c, i) => `[${i + 1}] (sim: ${(c.similarity * 100).toFixed(0)}%) ${c.content.slice(0, 300)}...`)
+    .join("\n\n");
+
+  const prompt = `Evaluate if retrieved past paper content is relevant to this student question.
+
+QUESTION: "${question}"
+
+RETRIEVED CONTENT:
+${chunksPreview}
+
+Respond with ONLY this JSON:
+{
+  "isRelevant": true/false,
+  "relevanceScore": 0.0-1.0,
+  "reasoning": "brief explanation",
+  "shouldUseRAG": true/false
+}
+
+Rules:
+- isRelevant=true: Content is about the same topic or similar question type
+- shouldUseRAG=true: If content provides useful context, marking schemes, or examples
+- shouldUseRAG=false: ONLY if content is completely unrelated to the question topic
+- Be lenient: Even partially related content can help ground the answer`;
+
+  try {
+    const completion = await groq.chat.completions.create({
+      model: GROQ_MODEL,
+      messages: [{ role: "user", content: prompt }],
+      max_tokens: 150,
+      temperature: 0.1,
+    });
+
+    const response = completion.choices[0]?.message?.content || "";
+    const cleaned = response.replace(/```json\s*/gi, "").replace(/```\s*$/g, "").trim();
+    const match = cleaned.match(/\{[\s\S]*\}/);
+
+    if (match) {
+      const parsed = JSON.parse(match[0]);
+      return {
+        isRelevant: Boolean(parsed.isRelevant),
+        relevanceScore: Math.max(0, Math.min(1, Number(parsed.relevanceScore) || 0)),
+        reasoning: String(parsed.reasoning || ""),
+        shouldUseRAG: Boolean(parsed.shouldUseRAG),
+        refinedAnswer: null,
+      };
+    }
+  } catch (err) {
+    console.error("[RAG] evaluateRetrievalRelevance error:", err);
+  }
+
+  // Fallback: use similarity threshold (reuse avgSimilarity calculated above)
+  return {
+    isRelevant: avgSimilarity >= 0.4,
+    relevanceScore: avgSimilarity,
+    reasoning: "Fallback: using similarity threshold",
+    shouldUseRAG: avgSimilarity >= 0.4,
+    refinedAnswer: null,
+  };
 }
 
 function evaluateRagDecision(
@@ -1709,7 +1973,29 @@ function requiresHeadlineForTask(question: string): boolean {
   return /\bheadline\b|school\s+magazine|write\s+an\s+article/i.test(question);
 }
 
+function isSubjectOnlyPrompt(question: string): boolean {
+  const normalized = question.toLowerCase().trim();
+  if (!normalized) return false;
+
+  const words = normalized.split(/\s+/).filter(Boolean);
+  if (words.length > 4) return false;
+
+  const hasSubjectCue = /\b(chemistry|physics|mathematics|maths|math|english|islamiyat|pakistan\s+studies)\b/.test(
+    normalized
+  );
+  if (!hasSubjectCue) return false;
+
+  const hasExplicitExamCue =
+    /\b(question\s*\d+|q\.?\s*\d+|paper\s*\d+|variant\s*\d+|mark\s*scheme|past\s*paper|\d+\s*marks?)\b/i.test(
+      normalized
+    );
+
+  return !hasExplicitExamCue && !hasExplicitTaskVerb(normalized);
+}
+
 function isLikelyExamPrompt(question: string): boolean {
+  if (isSubjectOnlyPrompt(question)) return false;
+
   return (
     hasExplicitTaskVerb(question) ||
     /\b(o\s*-?level|igcse|gcse|cambridge|past\s*paper|mark\s*scheme|marks?|question\s*\d+|paper\s*\d+|variant|syllabus|topic)\b/i.test(
@@ -1734,6 +2020,7 @@ function inferAnswerStyle(
   const directedWriting = isDirectedWritingTask(question);
   const requiresHeadline = requiresHeadlineForTask(question);
   const likelyExamPrompt = isLikelyExamPrompt(question);
+  const broadSubjectPrompt = isSubjectOnlyPrompt(question);
 
   if (answerMode === "mark_scheme_only") {
     return {
@@ -1752,12 +2039,26 @@ function inferAnswerStyle(
     /\b(how\s+are\s+you|who\s+are\s+you|what\s+can\s+you\s+do|tell\s+me\s+about\s+yourself|thank\s+you|thanks)\b/i.test(
       question
     );
+  const openEndedLongQuery =
+    question.trim().split(/\s+/).filter(Boolean).length >= 16 ||
+    /\b(explain in detail|discuss|analy[sz]e|evaluate|elaborate|open ended|broadly|comprehensive)\b/i.test(
+      question
+    );
+
+  if (broadSubjectPrompt) {
+    return {
+      detailLevel: wantsShort ? "short" : "long",
+      responseShape: directedWriting ? "directed_writing" : "standard",
+      requiresHeadline,
+      preferHeadings: false,
+    };
+  }
 
   return {
-    detailLevel: wantsShort || conversationalTone || isSimplePrompt(question) ? "short" : "long",
+    detailLevel: wantsShort ? "short" : "long",
     responseShape: directedWriting ? "directed_writing" : "standard",
     requiresHeadline,
-    preferHeadings: likelyExamPrompt,
+    preferHeadings: likelyExamPrompt || openEndedLongQuery,
   };
 }
 
@@ -2058,7 +2359,10 @@ function enforceMarkdownStructure(answer: string, style: AnswerStyle): string {
 
   const intro = deduped.slice(0, 2).join(" ") || plain;
   const points = deduped.slice(2, 8);
-  const summary = deduped[deduped.length - 1] || intro;
+  const summaryCandidate = deduped[deduped.length - 1] || intro;
+  const summary = points.includes(summaryCandidate) || intro.includes(summaryCandidate)
+    ? ""
+    : summaryCandidate;
   const profile = detectHeadingProfile(plain);
 
   if (profile === "conceptual" && deduped.length <= 2) {
@@ -2066,35 +2370,24 @@ function enforceMarkdownStructure(answer: string, style: AnswerStyle): string {
   }
 
   if (profile === "quantitative") {
-    return `## Given
-${intro}
-
-## Working
-${points.length ? points.join("\n\n") : plain}
-
-## Final Answer
-${summary}`;
+    const body = points.length ? points.join("\n\n") : plain;
+    return `${intro}\n\n${body}${summary ? `\n\n${summary}` : ""}`
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
   }
 
   if (profile === "comparison") {
-    return `## Comparison Focus
-${intro}
-
-## Key Differences
-${(points.length ? points : [plain]).map((p) => `- ${p}`).join("\n")}
-
-## Exam Tip
-Use explicit comparison words such as "whereas", "however", and "in contrast".
-
-## Quick Summary
-${summary}`;
+    const lines = points.length ? points : [plain];
+    return `${intro}\n\n${lines.map((p) => `- ${p}`).join("\n")}${summary ? `\n\n${summary}` : ""}`
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
   }
 
   if (profile === "definition") {
     return `${intro}\n\n${points.length ? points.join("\n\n") : plain}\n\n${summary}`;
   }
 
-  return `${intro}\n\n${points.length ? points.join("\n\n") : plain}\n\n${summary}`;
+  return `${intro}\n\n${points.length ? points.join("\n\n") : plain}${summary ? `\n\n${summary}` : ""}`.trim();
 }
 
 function buildFallbackAnswer(style: AnswerStyle): string {
@@ -2718,7 +3011,8 @@ async function generateDirectAnswer(
     questionTypeInfo.questionType === "followup_elaborate" ||
     questionTypeInfo.questionType === "followup_example";
   const suppressRubricArrays = followUpMode && answerMode !== "mark_scheme_only";
-  const broadStudyPrompt = isBroadConversationPrompt(question);
+  const broadStudyPrompt =
+    isBroadConversationPrompt(question) || isSubjectOnlyPrompt(question);
   const baseFormatInstruction = followUpMode
     ? "- Continue naturally from the ongoing conversation and add new detail without repetition."
     : buildFormatInstruction(style, answerMode);
@@ -2926,6 +3220,55 @@ interface SourceSummary {
   sourceNote: string;
 }
 
+function extractQuestionPreviewFromChunk(chunk: PastPaperChunk | undefined): string | undefined {
+  if (!chunk?.content) return undefined;
+
+  const questionBody = extractQuestionBody(chunk.content)?.replace(/\s+/g, " ").trim();
+  if (questionBody) {
+    const candidate = questionBody.length > 380 ? `${questionBody.slice(0, 380).trim()}...` : questionBody;
+    if (isUsableQuestionPreview(candidate)) return candidate;
+  }
+
+  const inlineQuestion = chunk.content.match(
+    /Question\s+\d+[^\]]*\]\s*([\s\S]*?)(?=\s*Mark\s*Scheme\s*:|$)/i
+  )?.[1]?.replace(/\s+/g, " ").trim();
+  if (inlineQuestion) {
+    const candidate = inlineQuestion.length > 380 ? `${inlineQuestion.slice(0, 380).trim()}...` : inlineQuestion;
+    if (isUsableQuestionPreview(candidate)) return candidate;
+  }
+
+  const compact = chunk.content.replace(/\s+/g, " ").trim();
+  if (!compact) return undefined;
+  const sanitized = compact
+    .replace(/Subject:\s*[^\n]+?\s+Year:\s*\d{4}\s*\|\s*Session:\s*[^\n]+?\s+\|\s*Paper:\s*[^\n]+?\s+\|\s*Variant:\s*[^\n]+?/i, "")
+    .replace(/Topic:\s*[^\n]+/i, "")
+    .replace(/Question\s+\d+[^\]]*\]/i, "")
+    .replace(/Mark\s*Scheme\s*:\s*[\s\S]*$/i, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const previewSource = sanitized || compact;
+  const preview = previewSource.length > 300 ? `${previewSource.slice(0, 300).trim()}...` : previewSource;
+  return isUsableQuestionPreview(preview) ? preview : undefined;
+}
+
+function isUsableQuestionPreview(text: string | undefined): boolean {
+  const normalized = (text || "").replace(/\s+/g, " ").trim();
+  if (!normalized) return false;
+
+  const words = normalized.split(" ").filter(Boolean);
+  if (words.length < 6) return false;
+
+  if (/subject:|session:|paper:|variant:|mark scheme:/i.test(normalized)) {
+    return false;
+  }
+
+  const alphaChars = (normalized.match(/[a-z]/gi) || []).length;
+  if (alphaChars < 24) return false;
+
+  return true;
+}
+
 function humanizePaperToken(value?: string): string {
   if (!value) return "?";
   return value
@@ -2951,34 +3294,54 @@ function buildQuestionRef(citation: Citation): string {
   return q ? `Question ${q}` : `Question ${sub}`;
 }
 
-function formatCitationReference(c: Citation): string {
+function formatCitationReference(
+  c: Citation,
+  options?: { includeQuestionRef?: boolean }
+): string {
   const paper = humanizePaperToken(c.paper);
-  const variant = humanizePaperToken(c.variant);
   const session = humanizeSessionToken(c.session);
-  const questionRef = buildQuestionRef(c);
+  const includeQuestionRef = Boolean(options?.includeQuestionRef);
+  const questionRef = includeQuestionRef ? buildQuestionRef(c) : "";
   const questionSuffix = questionRef ? `, ${questionRef}` : "";
-  return `${c.subject}, ${c.year} ${session}, Paper ${paper}, Variant ${variant}${questionSuffix}`;
+  return `${c.year} ${session}, Paper ${paper}${questionSuffix}`;
+}
+
+function shouldExposeQuestionDetails(similarity?: number): boolean {
+  if (!Number.isFinite(Number(similarity))) return false;
+  return Number(similarity) >= 0.8;
 }
 
 function buildSourceSummary(
   citations: Citation[],
   nearbyReferences: Citation[] = [],
-  reason?: string
+  reason?: string,
+  closestNearbyQuestionText?: string
 ): SourceSummary {
   if (citations.length > 0) {
     const primary = citations[0];
+    const includeQuestionRef = shouldExposeQuestionDetails(primary.similarity);
     return {
       sourceType: "past_paper",
-      sourceNote: `A similar question appeared in ${formatCitationReference(primary)}.`,
+      sourceNote: `A similar past-paper question appeared in ${formatCitationReference(
+        primary,
+        { includeQuestionRef }
+      )}.`,
     };
   }
 
   if (nearbyReferences.length > 0) {
     const nearby = nearbyReferences[0];
+    const includeQuestionRef = shouldExposeQuestionDetails(nearby.similarity);
+    const questionSnippet = includeQuestionRef && closestNearbyQuestionText
+      ? ` Closest matched question: "${closestNearbyQuestionText}".`
+      : "";
     return {
       sourceType: "nearby_only",
       sourceNote:
-        `I found related past paper material (closest match: ${formatCitationReference(nearby)}), but it was not a strong enough exact match to treat as a direct source.`,
+        `A related past-paper question appeared in ${formatCitationReference(
+          nearby,
+          { includeQuestionRef }
+        )}, but the similarity was not high enough to treat it as an exact source.${questionSnippet} I answered using general exam guidance.`,
     };
   }
 
@@ -3092,16 +3455,81 @@ router.post("/query", async (req: Request, res: Response) => {
       } as RagQueryResponse);
     }
 
-    // STAGE B - RAG DECISION (conversation-aware)
+    // STAGE B - INTELLIGENT QUERY ANALYSIS (LLM-based decision)
+    console.log("[RAG] Running intelligent query analysis...");
+    const queryAnalysis = await analyzeQueryIntelligently(normalizedQuestion, history);
+    console.log(`[RAG] Query analysis: logical=${queryAnalysis.isLogicalQuestion}, needsRetrieval=${queryAnalysis.needsRetrieval}, type=${queryAnalysis.questionType}, confidence=${queryAnalysis.confidence.toFixed(2)}, reasoning="${queryAnalysis.reasoning}"`);
+
+    if (!queryAnalysis.isLogicalQuestion) {
+      console.log("[RAG] Query is not a logical/complete question; skipping retrieval and asking for clarification");
+      const clarification = await generateClarificationAnswer(
+        normalizedQuestion,
+        history,
+        style,
+        resolved.answerMode
+      );
+
+      const answerText =
+        clarification?.answer ||
+        "Please send a clear question so I can help properly. Example: 'Explain electrolysis in O-Level Chemistry with one example.'";
+
+      const developerTrace: DeveloperTrace = {
+        intent,
+        answer_mode: resolved.answerMode,
+        should_search_rag: false,
+        followup_detected: false,
+        decision_reason: "query_not_logical_or_complete",
+        history_turns: history.length,
+      };
+      logDeveloperTrace(developerTrace);
+
+      return res.json({
+        type: "exam_question",
+        answer: answerText,
+        marking_points: [],
+        common_mistakes: [],
+        citations: [],
+        source_type: "none",
+        resolved_question: resolvedQuestionForClient,
+        developer_trace: developerTrace,
+        retrieval: buildDiagnostics(
+          null,
+          "general",
+          undefined,
+          "Skipped retrieval: input is not a complete logical question"
+        ),
+      } as RagQueryResponse);
+    }
+
+    // Also check the rule-based decision for mark scheme requests (those always need retrieval)
     const ragDecision = evaluateRagDecision(
       normalizedQuestion,
       history,
       resolved.answerMode
     );
-    const shouldRunRetrieval = ragDecision.shouldSearch;
+
+    const followUpDetectedByRules = ragDecision.followUpDetected;
+    const followUpDetectedByLlm = queryAnalysis.questionType === "followup";
+    const followUpDetected = followUpDetectedByRules || followUpDetectedByLlm;
+    const explicitNewTopic =
+      hasExplicitNewTopicCue(normalizedQuestion) ||
+      isWhatAboutNewTopic(normalizedQuestion);
+    const explicitTaskVerb = hasExplicitTaskVerb(normalizedQuestion);
+    const shouldSkipRetrievalForFollowUp =
+      resolved.answerMode !== "mark_scheme_only" &&
+      followUpDetected &&
+      !explicitNewTopic &&
+      !explicitTaskVerb;
+
+    // Use intelligent analysis for retrieval decision, but override for mark scheme requests
+    const shouldRunRetrieval =
+      resolved.answerMode === "mark_scheme_only" || // Always retrieve for mark schemes
+      (!shouldSkipRetrievalForFollowUp &&
+        (queryAnalysis.needsRetrieval || // LLM says retrieval needed
+          (ragDecision.shouldSearch && queryAnalysis.confidence < 0.7))); // Low confidence + rule says yes = retrieve
 
     if (!shouldRunRetrieval) {
-      console.log("[RAG] Follow-up detected; skipping retrieval and answering from conversation context");
+      console.log(`[RAG] Intelligent decision: skipping retrieval (${queryAnalysis.reasoning})`);
       const direct = await generateDirectAnswer(
         normalizedQuestion,
         history,
@@ -3110,15 +3538,17 @@ router.post("/query", async (req: Request, res: Response) => {
       );
 
       if (!direct) {
-        return res.status(500).json({ error: "Failed to generate follow-up answer" });
+        return res.status(500).json({ error: "Failed to generate answer" });
       }
 
       const developerTrace: DeveloperTrace = {
         intent,
         answer_mode: resolved.answerMode,
         should_search_rag: false,
-        followup_detected: ragDecision.followUpDetected,
-        decision_reason: ragDecision.reason,
+        followup_detected: followUpDetected,
+        decision_reason: shouldSkipRetrievalForFollowUp
+          ? "followup_detected_context_continuation"
+          : `intelligent_analysis: ${queryAnalysis.reasoning}`,
         history_turns: history.length,
       };
       logDeveloperTrace(developerTrace);
@@ -3136,17 +3566,23 @@ router.post("/query", async (req: Request, res: Response) => {
           null,
           "general",
           undefined,
-          "Follow-up detected; retrieval skipped"
+          shouldSkipRetrievalForFollowUp
+            ? "Follow-up detected; continued from conversation context"
+            : `Intelligent skip: ${queryAnalysis.reasoning}`
         ),
       } as RagQueryResponse);
     }
 
+    // Use the LLM-optimized search query instead of raw question
+    const optimizedSearchQuery = queryAnalysis.searchQuery || retrievalQuestion;
+    console.log(`[RAG] Using optimized search query: "${optimizedSearchQuery}"`);
+
     const rewritten = rewriteQueryForRag(
-      retrievalQuestion,
+      optimizedSearchQuery, // Use optimized query instead of raw retrievalQuestion
       normalizedQuestion,
       history
     );
-    const ragQuery = rewritten.query || retrievalQuestion;
+    const ragQuery = rewritten.query || optimizedSearchQuery;
 
     if (rewritten.usedHistory) {
       resolvedQuestionForClient = ragQuery;
@@ -3156,7 +3592,7 @@ router.post("/query", async (req: Request, res: Response) => {
     // STAGE C - SUBJECT INFERENCE
     const subjectKeyword =
       inferSubjectFromQuestion(ragQuery) ||
-      inferSubjectFromQuestion(retrievalQuestion) ||
+      inferSubjectFromQuestion(optimizedSearchQuery) ||
       inferSubjectFromQuestion(normalizedQuestion);
     const subjectFilter =
       filters?.subject ||
@@ -3167,8 +3603,8 @@ router.post("/query", async (req: Request, res: Response) => {
       intent,
       answer_mode: resolved.answerMode,
       should_search_rag: true,
-      followup_detected: ragDecision.followUpDetected,
-      decision_reason: ragDecision.reason,
+      followup_detected: followUpDetected,
+      decision_reason: `intelligent_analysis: ${queryAnalysis.reasoning}`,
       history_turns: history.length,
       retrieval_query: ragQuery,
       retrieval_query_rewritten: rewritten.usedHistory,
@@ -3246,13 +3682,17 @@ router.post("/query", async (req: Request, res: Response) => {
             "nearby"
           )
         : [];
+    const closestNearbyQuestionText = extractQuestionPreviewFromChunk(
+      ragResult.nearbyChunks[0]
+    );
 
     // Check if retrieval failed completely
     if (/(unavailable|cohere)/i.test(ragResult.error || "")) {
       const source = buildSourceSummary(
         [],
         nearbyRefs,
-        "This did not come from past papers because retrieval is temporarily unavailable."
+        "This did not come from past papers because retrieval is temporarily unavailable.",
+        closestNearbyQuestionText
       );
       logDeveloperTrace(developerTrace);
       return res.json({
@@ -3266,6 +3706,60 @@ router.post("/query", async (req: Request, res: Response) => {
         nearby_references: nearbyRefs.length > 0 ? nearbyRefs : undefined,
         retrieval: buildDiagnostics(ragResult, "general", effectiveSubjectFilter, ragResult.error),
       } as RagQueryResponse);
+    }
+
+    // STAGE E - INTELLIGENT RELEVANCE EVALUATION (LLM-based)
+    // After retrieval, evaluate if the content actually helps answer the question
+    const chunksToEvaluate = ragResult.chunks.length > 0
+      ? ragResult.chunks
+      : ragResult.nearbyChunks.slice(0, 5);
+
+    console.log("[RAG] Running intelligent relevance evaluation...");
+    const relevanceEval = await evaluateRetrievalRelevance(
+      normalizedQuestion,
+      chunksToEvaluate,
+      queryAnalysis
+    );
+    console.log(`[RAG] Relevance evaluation: isRelevant=${relevanceEval.isRelevant}, score=${relevanceEval.relevanceScore.toFixed(2)}, shouldUseRAG=${relevanceEval.shouldUseRAG}, reasoning="${relevanceEval.reasoning}"`);
+
+    // If LLM says content is not relevant, fall back to direct answer
+    if (!relevanceEval.shouldUseRAG && resolved.answerMode !== "mark_scheme_only") {
+      console.log(`[RAG] Intelligent decision: retrieved content not relevant, using direct answer`);
+      const direct = await generateDirectAnswer(
+        retrievalQuestion,
+        history,
+        style,
+        resolved.answerMode
+      );
+
+      if (direct) {
+        const source = buildSourceSummary(
+          [],
+          nearbyRefs,
+          `Intelligent fallback: ${relevanceEval.reasoning}`,
+          closestNearbyQuestionText
+        );
+        logDeveloperTrace(developerTrace);
+        return res.json({
+          type: "exam_question",
+          answer: direct.answer,
+          marking_points: [],
+          common_mistakes: [],
+          citations: [],
+          low_confidence: false, // Direct answer is confident since we chose it intelligently
+          nearby_references: nearbyRefs.length > 0 ? nearbyRefs : undefined,
+          source_note: source.sourceNote,
+          source_type: source.sourceType,
+          resolved_question: resolvedQuestionForClient,
+          developer_trace: developerTrace,
+          retrieval: buildDiagnostics(
+            ragResult,
+            "general",
+            effectiveSubjectFilter,
+            `Intelligent fallback: ${relevanceEval.reasoning}`
+          ),
+        } as RagQueryResponse);
+      }
     }
 
     const reliable = hasReliableContext(ragResult, Boolean(effectiveSubjectFilter));
@@ -3297,7 +3791,8 @@ router.post("/query", async (req: Request, res: Response) => {
         const source = buildSourceSummary(
           rescueCitations,
           nearbyRefs,
-          "Answer grounded using nearby past-paper context."
+          "Answer grounded using nearby past-paper context.",
+          closestNearbyQuestionText
         );
 
         logDeveloperTrace(developerTrace);
@@ -3328,7 +3823,8 @@ router.post("/query", async (req: Request, res: Response) => {
         const source = buildSourceSummary(
           [],
           nearbyRefs,
-          "This did not come from any exact past paper because similarity was below the reliability threshold for marking-scheme extraction."
+          "This did not come from any exact past paper because similarity was below the reliability threshold for marking-scheme extraction.",
+          closestNearbyQuestionText
         );
 
         logDeveloperTrace(developerTrace);
@@ -3365,7 +3861,7 @@ router.post("/query", async (req: Request, res: Response) => {
         resolved.answerMode
       );
       if (direct) {
-        const source = buildSourceSummary([], nearbyRefs);
+        const source = buildSourceSummary([], nearbyRefs, undefined, closestNearbyQuestionText);
         logDeveloperTrace(developerTrace);
         return res.json({
           type: "exam_question",
@@ -3415,7 +3911,7 @@ router.post("/query", async (req: Request, res: Response) => {
           direct.commonMistakes = [];
         }
 
-        const source = buildSourceSummary([], nearbyRefs);
+        const source = buildSourceSummary([], nearbyRefs, undefined, closestNearbyQuestionText);
 
         logDeveloperTrace(developerTrace);
         return res.json({
@@ -3451,7 +3947,7 @@ router.post("/query", async (req: Request, res: Response) => {
       examAnswer.commonMistakes = [];
     }
 
-    const source = buildSourceSummary(citations, nearbyRefs);
+    const source = buildSourceSummary(citations, nearbyRefs, undefined, closestNearbyQuestionText);
 
     const avgSim =
       ragResult.scores.reduce((s, v) => s + v, 0) / (ragResult.scores.length || 1);

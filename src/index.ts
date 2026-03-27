@@ -27,6 +27,16 @@ const autoStartOaServiceSetting = (
 ).trim().toLowerCase();
 const shouldAutoStartOaService = autoStartOaServiceSetting !== 'false';
 
+function isLocalOaServiceUrl(): boolean {
+  try {
+    const normalized = oaServiceUrl.endsWith('/') ? oaServiceUrl.slice(0, -1) : oaServiceUrl;
+    const parsed = new URL(normalized);
+    return parsed.hostname === '127.0.0.1' || parsed.hostname === 'localhost';
+  } catch {
+    return oaServiceUrl.includes('127.0.0.1') || oaServiceUrl.includes('localhost');
+  }
+}
+
 async function isOaServiceReachable(): Promise<boolean> {
   try {
     const base = oaServiceUrl.endsWith('/') ? oaServiceUrl.slice(0, -1) : oaServiceUrl;
@@ -43,6 +53,11 @@ async function isOaServiceReachable(): Promise<boolean> {
 async function ensureOaServiceSidecar(): Promise<void> {
   if (!shouldAutoStartOaService) {
     console.log('OA grading sidecar auto-start is disabled by AUTO_START_OA_GRADING_SERVICE=false.');
+    return;
+  }
+
+  if (!isLocalOaServiceUrl()) {
+    console.log(`OA grading service is configured as remote (${oaServiceUrl}); skipping local sidecar auto-start.`);
     return;
   }
 
@@ -159,8 +174,7 @@ app.get('/', (_req: Request, res: Response) => {
 app.listen(PORT, () => {
   console.log(`Backend server running on http://localhost:${PORT}`);
   console.log(`Health check: http://localhost:${PORT}/health`);
-
-  void ensureOaServiceSidecar();
+  console.log('OA grading sidecar startup is handled by /qa-grading on-demand checks.');
 });
 
 export default app;

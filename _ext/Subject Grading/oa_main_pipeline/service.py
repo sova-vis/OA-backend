@@ -34,6 +34,40 @@ class _SourceSpec:
     debug_stage: str
 
 
+def _normalize_subject_filter(subject: Optional[str]) -> Optional[str]:
+    if not subject:
+        return None
+
+    raw = subject.strip()
+    if not raw:
+        return None
+
+    normalized = "".join(
+        ch if ch.isalnum() else " "
+        for ch in raw.casefold()
+    )
+    normalized = " ".join(normalized.split())
+
+    alias_map = {
+        "chemistry": "Chemistry 1011",
+        "chem": "Chemistry 1011",
+        "english": "English 1012",
+        "eng": "English 1012",
+        "islamiyat": "Islamiyat 1013",
+        "islamic studies": "Islamiyat 1013",
+        "mathematics": "Mathematics 1014",
+        "math": "Mathematics 1014",
+        "maths": "Mathematics 1014",
+        "pakistan studies": "Pakistan Studies 1015",
+        "pak studies": "Pakistan Studies 1015",
+        "pst": "Pakistan Studies 1015",
+        "physics": "Physics 1016",
+        "phy": "Physics 1016",
+    }
+
+    return alias_map.get(normalized, raw)
+
+
 class OALevelEvaluatorService:
     """Question match + answer evaluation service with configurable source order."""
 
@@ -397,7 +431,7 @@ class OALevelEvaluatorService:
         return EvaluateRequest(
             question=(request.question or "").strip(),
             student_answer=(request.student_answer or "").strip(),
-            subject=_clean_text(request.subject),
+            subject=_normalize_subject_filter(_clean_text(request.subject)),
             year=year_value,
             session=_clean_text(request.session),
             paper=_clean_text(request.paper),
