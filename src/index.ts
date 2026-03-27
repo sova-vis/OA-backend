@@ -11,6 +11,7 @@ import papersRoutes from './papers.routes';
 import ragRoutes from './rag.routes';
 import contentRoutes from './content.routes';
 import qaGradingRoutes from './qaGrading.routes';
+import paperTrackingRoutes from './paperTracking.routes';
 
 const app: Express = express();
 const PORT = process.env.PORT || 3001;
@@ -155,6 +156,9 @@ app.use('/content', contentRoutes);
 
 // RAG API
 app.use('/rag', ragRoutes);
+
+// User paper tracking API
+app.use('/tracking', paperTrackingRoutes);
 
 // OA grading API
 app.use('/oa-grading', qaGradingRoutes);

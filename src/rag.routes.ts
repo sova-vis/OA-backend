@@ -2799,6 +2799,31 @@ function buildFallbackMarkingPointsFromContext(
   return selected.map((point) => ({ point, marks: perPointMarks }));
 }
 
+function hasUsableMarkSchemeText(text: string | undefined): boolean {
+  const normalized = (text || "").replace(/\s+/g, " ").trim();
+  if (!normalized) return false;
+  if (normalized.length < 20) return false;
+  if (/^\(mark scheme text unavailable/i.test(normalized)) return false;
+  return true;
+}
+
+function getTrustedMarkSchemePointsFromChunks(
+  chunks: PastPaperChunk[],
+  style: AnswerStyle
+): Array<{ point: string; marks: number }> {
+  if (!chunks.length) return [];
+  const contextChunks = mergeSplitChunksForContext(chunks, 12);
+  const expectedMarks = contextChunks.find(
+    (chunk) => Number.isFinite(chunk.marks) && Number(chunk.marks) > 0
+  )?.marks;
+
+  return buildFallbackMarkingPointsFromContext(
+    contextChunks,
+    expectedMarks,
+    style
+  );
+}
+
 async function createStructuredCompletion(messages: any[], maxTokens: number): Promise<any> {
   const baseRequest = {
     messages,
@@ -2838,6 +2863,13 @@ async function generateExamAnswer(
   if (chunks.length === 0) return null;
 
   const contextChunks = mergeSplitChunksForContext(chunks, 12);
+  const hasMarkSchemeContext = contextChunks.some((chunk) =>
+    hasUsableMarkSchemeText(chunk.markSchemePart)
+  );
+
+  if (answerMode === "mark_scheme_only" && !hasMarkSchemeContext) {
+    return null;
+  }
 
   const expectedMarks = contextChunks.find(
     (chunk) => Number.isFinite(chunk.marks) && Number(chunk.marks) > 0
@@ -3896,6 +3928,41 @@ router.post("/query", async (req: Request, res: Response) => {
     );
 
     if (!examAnswer) {
+      if (resolved.answerMode === "mark_scheme_only") {
+        const trustedPoints = getTrustedMarkSchemePointsFromChunks(
+          ragResult.chunks,
+          style
+        );
+
+        const source = buildSourceSummary([], nearbyRefs, undefined, closestNearbyQuestionText);
+        const markSchemeAnswer = trustedPoints.length
+          ? buildMarkSchemeOnlyAnswer(retrievalQuestion, trustedPoints)
+          : "## Marking Scheme\nI could not find a reliable past-paper marking scheme for this question, so I cannot provide an exact marking scheme.";
+
+        logDeveloperTrace(developerTrace);
+        return res.json({
+          type: "exam_question",
+          answer: markSchemeAnswer,
+          marking_points: trustedPoints,
+          common_mistakes: [],
+          citations: [],
+          low_confidence: !trustedPoints.length,
+          nearby_references: nearbyRefs.length > 0 ? nearbyRefs : undefined,
+          source_note: source.sourceNote,
+          source_type: source.sourceType,
+          resolved_question: resolvedQuestionForClient,
+          developer_trace: developerTrace,
+          retrieval: buildDiagnostics(
+            ragResult,
+            "nearby",
+            effectiveSubjectFilter,
+            trustedPoints.length
+              ? "Built mark scheme from retrieved context"
+              : "Answer synthesis failed and no reliable mark-scheme points found"
+          ),
+        } as RagQueryResponse);
+      }
+
       const direct = await generateDirectAnswer(
         retrievalQuestion,
         history,
@@ -3903,13 +3970,6 @@ router.post("/query", async (req: Request, res: Response) => {
         resolved.answerMode
       );
       if (direct) {
-        if (resolved.answerMode === "mark_scheme_only") {
-          direct.answer = buildMarkSchemeOnlyAnswer(
-            retrievalQuestion,
-            direct.markingPoints
-          );
-          direct.commonMistakes = [];
-        }
 
         const source = buildSourceSummary([], nearbyRefs, undefined, closestNearbyQuestionText);
 
@@ -3940,9 +4000,40 @@ router.post("/query", async (req: Request, res: Response) => {
     const citations = buildCitations(ragResult.chunks).slice(0, 1);
 
     if (resolved.answerMode === "mark_scheme_only") {
+      const trustedPoints = getTrustedMarkSchemePointsFromChunks(
+        ragResult.chunks,
+        style
+      );
+
+      if (!trustedPoints.length) {
+        const source = buildSourceSummary([], nearbyRefs, undefined, closestNearbyQuestionText);
+        logDeveloperTrace(developerTrace);
+        return res.json({
+          type: "exam_question",
+          answer:
+            "## Marking Scheme\nI could not find a reliable past-paper marking scheme for this question, so I cannot provide an exact marking scheme.",
+          marking_points: [],
+          common_mistakes: [],
+          citations: [],
+          low_confidence: true,
+          nearby_references: nearbyRefs.length > 0 ? nearbyRefs : undefined,
+          source_note: source.sourceNote,
+          source_type: source.sourceType,
+          resolved_question: resolvedQuestionForClient,
+          developer_trace: developerTrace,
+          retrieval: buildDiagnostics(
+            ragResult,
+            "nearby",
+            effectiveSubjectFilter,
+            "No reliable mark-scheme points in retrieved context"
+          ),
+        } as RagQueryResponse);
+      }
+
+      examAnswer.markingPoints = trustedPoints;
       examAnswer.answer = buildMarkSchemeOnlyAnswer(
         retrievalQuestion,
-        examAnswer.markingPoints
+        trustedPoints
       );
       examAnswer.commonMistakes = [];
     }
