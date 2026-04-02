@@ -13,11 +13,6 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import numpy as np
 
-try:  # pragma: no cover - dependency is optional in tests
-    from sentence_transformers import SentenceTransformer
-except Exception:  # pragma: no cover - fallback covers missing dependency
-    SentenceTransformer = None  # type: ignore[assignment]
-
 from .config import PipelineConfig
 from .question_matcher import MatchResult, matcher_text_for_subject, rerank_search_results, tokenize
 from .schemas import DataSourceLabel, QuestionRecord
@@ -74,6 +69,10 @@ class _HashingEmbedder:
 
 class _SentenceTransformerEmbedder:
     def __init__(self, model_name: str) -> None:
+        try:  # pragma: no cover - dependency is optional in tests
+            from sentence_transformers import SentenceTransformer
+        except Exception as exc:  # pragma: no cover - fallback covers missing dependency
+            raise RuntimeError("sentence-transformers is unavailable") from exc
         self._model = SentenceTransformer(model_name)
         self.backend_name = "sentence_transformers"
         self.resolved_model_name = model_name
@@ -449,12 +448,11 @@ class SearchIndexManager:
             if backend == "hash":
                 self._embedder = _HashingEmbedder()
                 return self._embedder
-            if SentenceTransformer is not None:
-                try:
-                    self._embedder = _SentenceTransformerEmbedder(self.config.embed_model)
-                    return self._embedder
-                except Exception:
-                    pass
+            try:
+                self._embedder = _SentenceTransformerEmbedder(self.config.embed_model)
+                return self._embedder
+            except Exception:
+                pass
             self._embedder = _HashingEmbedder()
             return self._embedder
 
