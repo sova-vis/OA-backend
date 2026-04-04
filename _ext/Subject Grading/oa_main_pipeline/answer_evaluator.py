@@ -11,6 +11,7 @@ from typing import Any, List, Literal, Sequence
 import requests
 
 from .config import PipelineConfig
+from .content_normalization import fold_unicode_numeric_forms
 from .schemas import GradeLabel
 
 GROK_CHAT_URL = "https://api.x.ai/v1/chat/completions"
@@ -65,7 +66,8 @@ class EvaluationResult:
 
 
 def _normalize_text(text: str) -> str:
-    lowered = (text or "").casefold()
+    folded = fold_unicode_numeric_forms(str(text or ""))
+    lowered = folded.casefold()
     cleaned = _NON_ALNUM_RE.sub(" ", lowered)
     return _SPACE_RE.sub(" ", cleaned).strip()
 

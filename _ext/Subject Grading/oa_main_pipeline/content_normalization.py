@@ -58,6 +58,7 @@ _SUPERSCRIPT_DIGITS = {
     "\u2078": "8",
     "\u2079": "9",
 }
+_UNICODE_DIGIT_FOR_MATCH: dict[str, str] = {**_SUBSCRIPT_DIGITS, **_SUPERSCRIPT_DIGITS}
 _DISPLAY_LOG_BASE_RE = re.compile(r"\blog_(\d+)\b", re.IGNORECASE)
 _DISPLAY_LOG_INLINE_RE = re.compile(r"log_(\d+)(?=([A-Za-z(]))", re.IGNORECASE)
 _ASCII_BASE_COLLISION_RE = re.compile(r"\blog_(\d+)(?=(\d))", re.IGNORECASE)
@@ -91,6 +92,13 @@ _LOG_FAMILY_RE = re.compile(r"(?<![A-Za-z])(?:log|ln)", re.IGNORECASE)
 
 def _coalesce_spaces(text: str) -> str:
     return " ".join(str(text or "").split()).strip()
+
+
+def fold_unicode_numeric_forms(text: str) -> str:
+    """Map Unicode subscript/superscript digits to ASCII for token matching (e.g. H₂O vs H2O, cm³ vs cm3)."""
+    if not text:
+        return ""
+    return "".join(_UNICODE_DIGIT_FOR_MATCH.get(ch, ch) for ch in text)
 
 
 def _replace_common_mojibake(text: str) -> str:
