@@ -59,6 +59,14 @@ _SUPERSCRIPT_DIGITS = {
     "\u2079": "9",
 }
 _UNICODE_DIGIT_FOR_MATCH: dict[str, str] = {**_SUBSCRIPT_DIGITS, **_SUPERSCRIPT_DIGITS}
+# Unicode hyphens/minus signs → ASCII hyphen-minus (matcher / JSON alignment).
+_UNICODE_HYPHEN_MINUS_CHARS: frozenset[str] = frozenset(
+    "\u2010\u2011\u2012\u2013\u2014\u2015\u2212\uFE58\uFE63\uFF0D"
+)
+# NBSP and similar → normal space for tokenization.
+_UNICODE_SPACE_LIKE_CHARS: frozenset[str] = frozenset(
+    "\u00A0\u202F\u2007\u2009\u200A\u2060\uFEFF"
+)
 _DISPLAY_LOG_BASE_RE = re.compile(r"\blog_(\d+)\b", re.IGNORECASE)
 _DISPLAY_LOG_INLINE_RE = re.compile(r"log_(\d+)(?=([A-Za-z(]))", re.IGNORECASE)
 _ASCII_BASE_COLLISION_RE = re.compile(r"\blog_(\d+)(?=(\d))", re.IGNORECASE)
@@ -99,6 +107,52 @@ def fold_unicode_numeric_forms(text: str) -> str:
     if not text:
         return ""
     return "".join(_UNICODE_DIGIT_FOR_MATCH.get(ch, ch) for ch in text)
+
+
+def _fold_hyphens_and_unicode_spaces(text: str) -> str:
+    """Map Unicode hyphens/minus and space-like characters to ASCII (safe for math input pretreatment)."""
+    if not text:
+        return ""
+    out: List[str] = []
+    for ch in text:
+        if ch in _UNICODE_HYPHEN_MINUS_CHARS:
+            out.append("-")
+        elif ch in _UNICODE_SPACE_LIKE_CHARS:
+            out.append(" ")
+        else:
+            out.append(ch)
+    return "".join(out)
+
+
+def fold_plaintext_science_symbols(text: str) -> str:
+    """Map common Unicode science/operators to ASCII for matching OCR to JSON (idempotent on ASCII).
+
+    Middle dot (·) → period (hydrate dot in chemistry). May rarely affect prose; v1 tradeoff.
+    """
+    if not text:
+        return ""
+    out: List[str] = []
+    for ch in text:
+        if ch in _UNICODE_HYPHEN_MINUS_CHARS:
+            out.append("-")
+        elif ch in _UNICODE_SPACE_LIKE_CHARS:
+            out.append(" ")
+        elif ch == "\u00d7":  # ×
+            out.append("*")
+        elif ch == "\u00f7":  # ÷
+            out.append("/")
+        elif ch == "\u2192":  # →
+            out.extend(("-", ">",))
+        elif ch == "\u00b7":  # ·
+            out.append(".")
+        else:
+            out.append(ch)
+    return "".join(out)
+
+
+def fold_math_matcher_input(text: str) -> str:
+    """Normalize hyphens/spaces before math visual pipeline (does not map ×÷→· to protect log/superscript logic)."""
+    return _fold_hyphens_and_unicode_spaces(_coalesce_spaces(text or ""))
 
 
 def _replace_common_mojibake(text: str) -> str:
@@ -310,12 +364,16 @@ def build_subject_matcher_text(
     canonical_text: Optional[str] = None,
 ) -> str:
     if is_mathematics_subject(subject):
+        pretreated = fold_math_matcher_input(text)
         return normalize_math_text_result(
-            text,
+            pretreated,
             canonical_text=canonical_text,
             enable_canonical=True,
         ).matcher_text
-    return _coalesce_spaces(text or "")
+    raw = _coalesce_spaces(text or "")
+    raw = fold_unicode_numeric_forms(raw)
+    raw = fold_plaintext_science_symbols(raw)
+    return raw
 
 
 def _build_generic_matcher(display_text: str) -> str:
