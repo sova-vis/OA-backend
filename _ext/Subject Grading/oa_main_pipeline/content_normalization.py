@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 import unicodedata
 from dataclasses import dataclass
@@ -96,6 +97,57 @@ _GENERIC_MATCHER_RE = re.compile(r"[^A-Za-z0-9\s]+")
 _SPACE_RE = re.compile(r"\s+")
 _FUNCTION_EXPR_RE = re.compile(r"\b(?:f|g|h|fg|gf)\s*\(", re.IGNORECASE)
 _LOG_FAMILY_RE = re.compile(r"(?<![A-Za-z])(?:log|ln)", re.IGNORECASE)
+# Canonical log(base=10,arg=…) in matcher strings → spoken-style log base 10 <arg> (Mathematics only).
+_MATCHER_CANONICAL_LOG_ANY_BASE_RE = re.compile(
+    r"log\s*\(\s*base\s*=\s*([^,()]+?)\s*,\s*argz?\s*=\s*([^)]+?)\s*\)",
+    re.IGNORECASE,
+)
+
+
+def _env_matcher_fold_bare_log_default() -> bool:
+    raw = (os.getenv("OA_MATCHER_FOLD_BARE_LOG_TO_BASE10") or "").strip().lower()
+    if raw in {"0", "false", "no", "off"}:
+        return False
+    if raw in {"1", "true", "yes", "on"}:
+        return True
+    return True
+
+
+def _apply_mathematics_common_log_matcher_fold(
+    matcher_text: str,
+    *,
+    fold_bare_log: bool | None = None,
+) -> str:
+    """Mathematics matcher only: align lg, bare log (optional), and log(base=10,…) with log base 10 … tokens.
+
+    Does not alter ln. Does not map log_a / log_3 / non-10 bases to base 10. Idempotent on log base 10.
+    """
+    if fold_bare_log is None:
+        fold_bare_log = _env_matcher_fold_bare_log_default()
+
+    matcher = str(matcher_text or "")
+    if not matcher:
+        return matcher
+
+    def _canonical_base10_sub(match: re.Match[str]) -> str:
+        base = re.sub(r"\s+", "", match.group(1))
+        if base != "10":
+            return match.group(0)
+        arg = _compact_math_fragment(match.group(2))
+        return f"log base 10 {arg}" if arg else "log base 10"
+
+    matcher = _MATCHER_CANONICAL_LOG_ANY_BASE_RE.sub(_canonical_base10_sub, matcher)
+    matcher = re.sub(r"(?<![A-Za-z])lg\b", "log base 10", matcher, flags=re.IGNORECASE)
+
+    if fold_bare_log:
+        matcher = re.sub(
+            r"(?<![A-Za-z])log(?!\s+base\b)(?!_)(?=\s|\(|$)(?!\s*\(\s*base\s*=)",
+            "log base 10",
+            matcher,
+            flags=re.IGNORECASE,
+        )
+
+    return _MATCHER_SPACE_RE.sub(" ", matcher).strip()
 
 
 def _coalesce_spaces(text: str) -> str:
@@ -365,11 +417,12 @@ def build_subject_matcher_text(
 ) -> str:
     if is_mathematics_subject(subject):
         pretreated = fold_math_matcher_input(text)
-        return normalize_math_text_result(
+        matcher = normalize_math_text_result(
             pretreated,
             canonical_text=canonical_text,
             enable_canonical=True,
         ).matcher_text
+        return _apply_mathematics_common_log_matcher_fold(matcher)
     raw = _coalesce_spaces(text or "")
     raw = fold_unicode_numeric_forms(raw)
     raw = fold_plaintext_science_symbols(raw)
@@ -443,11 +496,14 @@ def normalize_content_text_result(
         warnings = list(math_result.warning_codes)
         if content_type == "science_notation":
             warnings = sorted(set(warnings) | set(_science_warning_codes(original, math_result.display_text)))
+        matcher_out = math_result.matcher_text
+        if is_mathematics_subject(subject):
+            matcher_out = _apply_mathematics_common_log_matcher_fold(matcher_out)
         return ContentTextResult(
             original_text=original,
             display_text=math_result.display_text,
             canonical_text=math_result.canonical_text,
-            matcher_text=math_result.matcher_text,
+            matcher_text=matcher_out,
             warning_codes=warnings,
             content_type=content_type,
         )

@@ -44,8 +44,8 @@ class ExtractionPipeline:
         if self._owns_azure_client and hasattr(self.azure_client, "close"):
             self.azure_client.close()
 
-    def extract(self, input_path: str) -> ExtractionResult:
-        document = load_document(input_path, self.settings)
+    def extract(self, input_path: str, *, page_number: int | None = None) -> ExtractionResult:
+        document = load_document(input_path, self.settings, page_number=page_number)
         variants = build_variants(document, self.settings)
         variant_pages = {variant.name: variant.pages for variant in variants}
 
@@ -255,9 +255,9 @@ class ExtractionPipeline:
         return any(flag.code in ambiguity_flags for flag in provisional_result.flags)
 
 
-def extract_qa(input_path: str) -> ExtractionResult:
+def extract_qa(input_path: str, *, page_number: int | None = None) -> ExtractionResult:
     pipeline = ExtractionPipeline()
     try:
-        return pipeline.extract(input_path)
+        return pipeline.extract(input_path, page_number=page_number)
     finally:
         pipeline.close()

@@ -73,7 +73,10 @@ class PipelineConfig:
         default_factory=lambda: _env_bool("OA_SEARCH_AUTO_REBUILD", True)
     )
     matcher_revision: str = field(
-        default_factory=lambda: _env_text("OA_MATCHER_REVISION", "3")
+        default_factory=lambda: _env_text("OA_MATCHER_REVISION", "4")
+    )
+    matcher_fold_bare_log_to_base10: bool = field(
+        default_factory=lambda: _env_bool("OA_MATCHER_FOLD_BARE_LOG_TO_BASE10", True)
     )
     pair_summary_filename: str = "pair_extraction_summary.json"
     qp_extracted_filename: str = "qp_extracted.json"
