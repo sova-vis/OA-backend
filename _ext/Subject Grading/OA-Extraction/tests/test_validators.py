@@ -49,6 +49,46 @@ def test_math_log_base_mismatch_is_flagged() -> None:
     assert "potential_log_base_mismatch" in {flag.code for flag in flags}
 
 
+def test_fraction_or_chain_ambiguity_flags_run_on_garbled_log_proof_line() -> None:
+    garbled = (
+        "Answer: log (9) = log (3^2) = 2log (3) log (4) log (2^2) 2log (2) = log (3) = log_2 (3) log (2)"
+    )
+    flags = validate_extraction(
+        whole_text_raw=f"Show that log_4 9 = log_2 3\n{garbled}",
+        question_raw="Show that log_4 9 = log_2 3",
+        answer_raw=garbled,
+        subject=SubjectLabel.MATH,
+        confidence=build_confidence(0.95, 0.95, 0.95),
+        settings=_settings(),
+    )
+    assert "potential_fraction_or_chain_ambiguity" in {flag.code for flag in flags}
+
+
+def test_fraction_or_chain_ambiguity_not_flagged_when_division_explicit() -> None:
+    answer = r"\frac{\log 9}{\log 4} = \frac{\log 3}{\log 2} = \log_2 3"
+    flags = validate_extraction(
+        whole_text_raw=f"Show that log_4 9 = log_2 3\n{answer}",
+        question_raw="Show that log_4 9 = log_2 3",
+        answer_raw=answer,
+        subject=SubjectLabel.MATH,
+        confidence=build_confidence(0.95, 0.95, 0.95),
+        settings=_settings(),
+    )
+    assert "potential_fraction_or_chain_ambiguity" not in {flag.code for flag in flags}
+
+
+def test_fraction_or_chain_ambiguity_not_flagged_for_short_log_equation() -> None:
+    flags = validate_extraction(
+        whole_text_raw="Solve log_2 x = 3\nx = 8",
+        question_raw="Solve log_2 x = 3",
+        answer_raw="x = 8",
+        subject=SubjectLabel.MATH,
+        confidence=build_confidence(0.95, 0.95, 0.95),
+        settings=_settings(),
+    )
+    assert "potential_fraction_or_chain_ambiguity" not in {flag.code for flag in flags}
+
+
 def test_subject_specific_english_punctuation_loss_is_flagged() -> None:
     flags = validate_extraction(
         whole_text_raw='Explain the phrase "to be or not to be',

@@ -12,6 +12,10 @@ def ocr_system_prompt() -> str:
         "You perform faithful OCR for handwritten academic question-answer material. "
         "Return schema-valid JSON only. Preserve reading order, line boundaries, punctuation, "
         "equation layout, symbols, subscripts, superscripts, fractions, radicals, and log bases. "
+        "For fractions and stacked division, transcribe using either LaTeX \\frac{numerator}{denominator} "
+        "or parenthesized division (numerator)/(denominator); never interleave numerator and denominator "
+        "tokens without / or \\frac. Prefer one main equality chain per line; if a chain wraps, continue "
+        "on the next line without merging fraction parts into one run-on line. "
         "Do not solve, summarize, classify, or clean the text."
     )
 
@@ -26,7 +30,8 @@ def ocr_user_prompt(page_count: int, variant_name: str) -> str:
         f"{page_note} This OCR pass is for the `{variant_name}` image variant. "
         "Return one page object per image with page_number, full_text, ordered lines, per-page OCR confidence, "
         "and uncertain spans. Mark uncertain spans when handwriting, subscripts, superscripts, or operators are ambiguous. "
-        "Be especially careful with log bases, exponents, division bars, variable names, and question/answer markers."
+        "Be especially careful with log bases, exponents, division bars, variable names, and question/answer markers. "
+        "When you see horizontal fraction bars, emit \\frac{...}{...} or (top)/(bottom) so numerator and denominator stay explicit."
     )
 
 
@@ -46,6 +51,8 @@ def split_classification_user_prompt(full_text: str, indexed_lines: str) -> str:
         "- Keep whole_text_raw faithful to the selected OCR candidate.\n"
         "- Separate question_raw from answer_raw.\n"
         "- Preserve math notation exactly as much as possible, including log bases, powers, radicals, fractions, and subscripts.\n"
+        "- Keep fraction structure explicit: use \\frac{a}{b} or (a)/(b); do not merge lines in a way that drops division between "
+        "numerator and denominator. Join multi-line answers with newlines between steps.\n"
         "- If question or answer is missing, return an empty string and reduce split confidence.\n"
         "- Confidence values must be numeric between 0 and 1.\n\n"
         "Selected OCR full text:\n"

@@ -44,8 +44,8 @@ class ExtractionPipeline:
         if self._owns_azure_client and hasattr(self.azure_client, "close"):
             self.azure_client.close()
 
-    def extract(self, input_path: str, *, page_number: int | None = None) -> ExtractionResult:
-        document = load_document(input_path, self.settings, page_number=page_number)
+    def extract(self, input_path: str) -> ExtractionResult:
+        document = load_document(input_path, self.settings)
         variants = build_variants(document, self.settings)
         variant_pages = {variant.name: variant.pages for variant in variants}
 
@@ -70,7 +70,7 @@ class ExtractionPipeline:
         if self._should_use_azure_fallback(document.input_type, provisional_result):
             if self.azure_client.is_available:
                 try:
-                    azure_candidate = self.azure_client.analyze_path(document.source_path, page_number=page_number)
+                    azure_candidate = self.azure_client.analyze_path(document.source_path)
                 except Exception as exc:
                     selection_reasons.append(f"Azure fallback OCR failed and was skipped: {exc}")
                 else:
@@ -166,7 +166,6 @@ class ExtractionPipeline:
             diagnostics.selection_reasons.append(
                 "Accepted split-only retry because it improved or matched split confidence with explicit line assignments."
             )
-            diagnostics.split_retry_applied = True
             return structured.model_copy(
                 update={
                     "whole_text_raw": selected_candidate.full_text,
@@ -251,13 +250,14 @@ class ExtractionPipeline:
             "potential_equation_structure_loss",
             "potential_symbol_ambiguity",
             "potential_log_base_mismatch",
+            "potential_fraction_or_chain_ambiguity",
         }
         return any(flag.code in ambiguity_flags for flag in provisional_result.flags)
 
 
-def extract_qa(input_path: str, *, page_number: int | None = None) -> ExtractionResult:
+def extract_qa(input_path: str) -> ExtractionResult:
     pipeline = ExtractionPipeline()
     try:
-        return pipeline.extract(input_path, page_number=page_number)
+        return pipeline.extract(input_path)
     finally:
         pipeline.close()
