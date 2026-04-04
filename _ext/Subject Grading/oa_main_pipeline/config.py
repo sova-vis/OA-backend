@@ -72,6 +72,9 @@ class PipelineConfig:
     search_auto_rebuild: bool = field(
         default_factory=lambda: _env_bool("OA_SEARCH_AUTO_REBUILD", True)
     )
+    matcher_revision: str = field(
+        default_factory=lambda: _env_text("OA_MATCHER_REVISION", "1")
+    )
     pair_summary_filename: str = "pair_extraction_summary.json"
     qp_extracted_filename: str = "qp_extracted.json"
     ms_extracted_filename: str = "ms_extracted.json"
