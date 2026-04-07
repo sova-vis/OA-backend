@@ -70,7 +70,7 @@ class ExtractionPipeline:
         if self._should_use_azure_fallback(document.input_type, provisional_result):
             if self.azure_client.is_available:
                 try:
-                    azure_candidate = self.azure_client.analyze_path(document.source_path, page_number=page_number)
+                    azure_candidate = self.azure_client.analyze_path(document.source_path)
                 except Exception as exc:
                     selection_reasons.append(f"Azure fallback OCR failed and was skipped: {exc}")
                 else:
@@ -166,7 +166,6 @@ class ExtractionPipeline:
             diagnostics.selection_reasons.append(
                 "Accepted split-only retry because it improved or matched split confidence with explicit line assignments."
             )
-            diagnostics.split_retry_applied = True
             return structured.model_copy(
                 update={
                     "whole_text_raw": selected_candidate.full_text,
@@ -251,6 +250,7 @@ class ExtractionPipeline:
             "potential_equation_structure_loss",
             "potential_symbol_ambiguity",
             "potential_log_base_mismatch",
+            "potential_fraction_or_chain_ambiguity",
         }
         return any(flag.code in ambiguity_flags for flag in provisional_result.flags)
 

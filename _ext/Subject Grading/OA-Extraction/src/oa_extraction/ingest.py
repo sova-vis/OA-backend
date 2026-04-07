@@ -15,7 +15,12 @@ SUPPORTED_IMAGE_MIME_TYPES = {
 }
 
 
-def load_document(input_path: str | Path, settings: Settings, page_number: int | None = None) -> DocumentInput:
+def load_document(
+    input_path: str | Path,
+    settings: Settings,
+    *,
+    page_number: int | None = None,
+) -> DocumentInput:
     path = Path(input_path)
     if not path.exists():
         raise InputDocumentError("Input file does not exist.", path=str(path))
@@ -25,6 +30,11 @@ def load_document(input_path: str | Path, settings: Settings, page_number: int |
     suffix = path.suffix.lower()
     if suffix == ".pdf":
         return _load_pdf(path, settings, page_number=page_number)
+    if page_number is not None and page_number != 1:
+        raise InputDocumentError(
+            "page_number is only supported for PDF inputs; use 1 or omit for images.",
+            path=str(path),
+        )
     return _load_image(path, settings)
 
 
@@ -59,14 +69,12 @@ def _load_pdf(path: Path, settings: Settings, *, page_number: int | None = None)
             raise InputDocumentError("PDF has no pages.", path=str(path))
 
         if page_number is not None:
-            if int(page_number) < 1:
-                raise InputDocumentError("PDF page_number must be >= 1.", path=str(path))
-            if int(page_number) > int(document.page_count):
+            if page_number < 1 or page_number > document.page_count:
                 raise InputDocumentError(
-                    f"PDF page_number {page_number} exceeds page count {document.page_count}.",
+                    f"PDF page_number must be between 1 and {document.page_count} (got {page_number}).",
                     path=str(path),
                 )
-            page_indices = [int(page_number) - 1]
+            page_indices = [page_number - 1]
         else:
             page_indices = list(range(document.page_count))
 
@@ -99,3 +107,4 @@ def _load_pdf(path: Path, settings: Settings, *, page_number: int | None = None)
         return DocumentInput(input_type="pdf", source_path=path, pages=tuple(pages))
     finally:
         document.close()
+

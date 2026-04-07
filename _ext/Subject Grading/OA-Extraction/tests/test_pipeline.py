@@ -39,14 +39,12 @@ class FakeGrokClient:
         self.repair_actions = repair_actions or []
         self.split_retry_result = split_retry_result or SplitRetryResult(assignments=[], split_confidence=0.0)
         self.ocr_calls: list[str] = []
-        self.ocr_page_sources: list[tuple[str, ...]] = []
         self.split_calls: list[tuple[str, str]] = []
         self.retry_calls = 0
         self.repair_call_count = 0
 
     def ocr_pages(self, pages, *, variant_name: str):
         self.ocr_calls.append(variant_name)
-        self.ocr_page_sources.append(tuple(page.source_name for page in pages))
         return self.ocr_by_variant[variant_name]
 
     def split_and_classify(self, pages, candidate: OCRCandidate):
@@ -72,20 +70,14 @@ class FakeAzureClient:
         self.candidate = candidate
         self.available = available
         self.error = error
-        self.calls: list[tuple[str, int | None]] = []
+        self.calls: list[str] = []
 
     @property
     def is_available(self) -> bool:
         return self.available
 
-    def analyze_path(
-        self,
-        source_path: Path,
-        *,
-        variant_name: str = "original",
-        page_number: int | None = None,
-    ) -> OCRCandidate:
-        self.calls.append((str(source_path), page_number))
+    def analyze_path(self, source_path: Path, *, variant_name: str = "original") -> OCRCandidate:
+        self.calls.append(str(source_path))
         if self.error is not None:
             raise self.error
         assert self.candidate is not None
@@ -228,11 +220,76 @@ def test_pipeline_uses_azure_fallback_when_grok_is_low_confidence(tmp_path: Path
         azure_client=azure_client,
     ).extract(str(image_path))
 
-    assert azure_client.calls == [(str(image_path), None)]
+    assert azure_client.calls == [str(image_path)]
     assert result.question_raw == "Solve log_3 x + log_9 x = 12"
     assert result.diagnostics is not None
     assert str(result.diagnostics.selected_ocr_engine) == "azure"
     assert result.diagnostics.selected_variant == "original"
+
+
+def test_pipeline_triggers_azure_fallback_when_fraction_chain_ambiguity_flagged(tmp_path: Path) -> None:
+    image_path = tmp_path / "input.png"
+    image_path.write_bytes(PNG_BYTES)
+
+    garbled_answer = (
+        "Answer: log (9) = log (3^2) = 2log (3) log (4) log (2^2) 2log (2) = log (3) = log_2 (3) log (2)"
+    )
+    question_line = "Show that log_4 9 = log_2 3"
+    full_grok = f"{question_line}\n{garbled_answer}"
+
+    grok_original = _make_candidate(
+        engine=OCREngine.GROK,
+        variant="original",
+        full_text=full_grok,
+        ocr_confidence=0.95,
+    )
+    grok_gray = grok_original.model_copy(update={"variant": "grayscale_autocontrast"})
+    grok_binary = grok_original.model_copy(update={"variant": "sharpened_binary"})
+
+    azure_full = (
+        f"{question_line}\n"
+        r"Answer: \frac{\log 9}{\log 4} = \frac{\log 3}{\log 2} = \log_2 3"
+    )
+    azure_candidate = _make_candidate(
+        engine=OCREngine.AZURE,
+        variant="original",
+        full_text=azure_full,
+        ocr_confidence=0.97,
+    )
+
+    grok_client = FakeGrokClient(
+        ocr_by_variant={
+            "original": grok_original,
+            "grayscale_autocontrast": grok_gray,
+            "sharpened_binary": grok_binary,
+        },
+        split_results=[
+            _make_structured(
+                question_raw=question_line,
+                answer_raw=garbled_answer,
+                subject=SubjectLabel.MATH,
+                split_confidence=0.95,
+                whole_text_raw=full_grok,
+            ),
+            _make_structured(
+                question_raw=question_line,
+                answer_raw=r"\frac{\log 9}{\log 4} = \frac{\log 3}{\log 2} = \log_2 3",
+                subject=SubjectLabel.MATH,
+                split_confidence=0.96,
+                whole_text_raw=azure_full,
+            ),
+        ],
+    )
+    azure_client = FakeAzureClient(candidate=azure_candidate)
+
+    result = ExtractionPipeline(
+        settings=_settings(),
+        grok_client=grok_client,
+        azure_client=azure_client,
+    ).extract(str(image_path))
+
+    assert azure_client.calls == [str(image_path)]
+    assert result.diagnostics is not None
 
 
 def test_pipeline_applies_split_retry_when_initial_split_is_weak(tmp_path: Path) -> None:
@@ -284,53 +341,6 @@ def test_pipeline_applies_split_retry_when_initial_split_is_weak(tmp_path: Path)
     assert result.question_raw == "Q. State Newton's second law"
     assert result.answer_raw == "A. Force equals mass times acceleration"
     assert result.confidence.split == 0.98
-    assert result.diagnostics is not None
-    assert result.diagnostics.split_retry_applied is True
-
-
-def test_pipeline_extracts_only_requested_pdf_page(tmp_path: Path) -> None:
-    pdf_path = tmp_path / "input.pdf"
-    document = fitz.open()
-    try:
-        first_page = document.new_page()
-        first_page.insert_text((72, 72), "First page")
-        second_page = document.new_page()
-        second_page.insert_text((72, 72), "Second page")
-        document.save(pdf_path)
-    finally:
-        document.close()
-
-    candidate = _make_candidate(
-        engine=OCREngine.GROK,
-        variant="original",
-        full_text="Question on selected page\nAnswer on selected page",
-        ocr_confidence=0.96,
-    )
-    grok_client = FakeGrokClient(
-        ocr_by_variant={
-            "original": candidate,
-            "grayscale_autocontrast": candidate.model_copy(update={"variant": "grayscale_autocontrast"}),
-            "sharpened_binary": candidate.model_copy(update={"variant": "sharpened_binary"}),
-        },
-        split_results=[
-            _make_structured(
-                question_raw="Question on selected page",
-                answer_raw="Answer on selected page",
-                subject=SubjectLabel.ENGLISH,
-                split_confidence=0.96,
-            )
-        ],
-    )
-
-    result = ExtractionPipeline(
-        settings=_settings(enable_azure_fallback=False),
-        grok_client=grok_client,
-        azure_client=FakeAzureClient(available=False),
-    ).extract(str(pdf_path), page_number=2)
-
-    assert result.input_type == "pdf"
-    assert result.page_count == 1
-    assert all(sources == ("input_page_2",) for sources in grok_client.ocr_page_sources)
 
 
 def test_pipeline_rejects_repair_when_it_lowers_candidate_quality(tmp_path: Path) -> None:

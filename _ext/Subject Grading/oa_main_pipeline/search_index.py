@@ -13,11 +13,6 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import numpy as np
 
-try:  # pragma: no cover - dependency is optional in tests
-    from sentence_transformers import SentenceTransformer
-except Exception:  # pragma: no cover - fallback covers missing dependency
-    SentenceTransformer = None  # type: ignore[assignment]
-
 from .config import PipelineConfig
 from .question_matcher import MatchResult, matcher_text_for_subject, rerank_search_results, tokenize
 from .schemas import DataSourceLabel, QuestionRecord
@@ -74,6 +69,10 @@ class _HashingEmbedder:
 
 class _SentenceTransformerEmbedder:
     def __init__(self, model_name: str) -> None:
+        try:  # pragma: no cover - dependency is optional in tests
+            from sentence_transformers import SentenceTransformer
+        except Exception as exc:  # pragma: no cover - fallback covers missing dependency
+            raise RuntimeError("sentence-transformers is unavailable") from exc
         self._model = SentenceTransformer(model_name)
         self.backend_name = "sentence_transformers"
         self.resolved_model_name = model_name
@@ -154,6 +153,7 @@ class SearchIndexManager:
             "index_version": self._loaded[source].manifest.get("index_version"),
             "embedding_backend": self._loaded[source].manifest.get("embedding_backend"),
             "embedding_model": self._loaded[source].manifest.get("embed_model_resolved"),
+            "matcher_revision": self._loaded[source].manifest.get("matcher_revision"),
         }
 
     def search(
@@ -199,6 +199,7 @@ class SearchIndexManager:
                     "top_search_candidates": [],
                     "embedding_backend": build_state.get("embedding_backend"),
                     "embedding_model": build_state.get("embedding_model"),
+                    "matcher_revision": build_state.get("matcher_revision"),
                     "search_total_ms": int((time.perf_counter() - search_started) * 1000),
                 },
             )
@@ -264,6 +265,7 @@ class SearchIndexManager:
                 "top_search_candidates": candidate_debug[: self.config.top_alternatives],
                 "embedding_backend": build_state.get("embedding_backend"),
                 "embedding_model": build_state.get("embedding_model"),
+                "matcher_revision": build_state.get("matcher_revision"),
                 "search_total_ms": int((time.perf_counter() - search_started) * 1000),
             },
         )
@@ -339,6 +341,8 @@ class SearchIndexManager:
             return True, "embed_model_resolved_changed"
         if str(manifest.get("embedding_backend") or "") != getattr(embedder, "backend_name", ""):
             return True, "embedding_backend_changed"
+        if str(manifest.get("matcher_revision") or "") != str(self.config.matcher_revision):
+            return True, "matcher_revision_changed"
         if int(manifest.get("index_version") or 0) != 2:
             return True, "index_version_changed"
         return False, "up_to_date"
@@ -364,6 +368,7 @@ class SearchIndexManager:
             "embed_model_requested": self.config.embed_model,
             "embed_model_resolved": getattr(embedder, "resolved_model_name", self.config.embed_model),
             "embedding_backend": getattr(embedder, "backend_name", "unknown"),
+            "matcher_revision": str(self.config.matcher_revision),
         }
 
         records_lines = [
@@ -449,12 +454,11 @@ class SearchIndexManager:
             if backend == "hash":
                 self._embedder = _HashingEmbedder()
                 return self._embedder
-            if SentenceTransformer is not None:
-                try:
-                    self._embedder = _SentenceTransformerEmbedder(self.config.embed_model)
-                    return self._embedder
-                except Exception:
-                    pass
+            try:
+                self._embedder = _SentenceTransformerEmbedder(self.config.embed_model)
+                return self._embedder
+            except Exception:
+                pass
             self._embedder = _HashingEmbedder()
             return self._embedder
 

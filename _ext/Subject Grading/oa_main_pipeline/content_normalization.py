@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 import unicodedata
 from dataclasses import dataclass
@@ -58,6 +59,15 @@ _SUPERSCRIPT_DIGITS = {
     "\u2078": "8",
     "\u2079": "9",
 }
+_UNICODE_DIGIT_FOR_MATCH: dict[str, str] = {**_SUBSCRIPT_DIGITS, **_SUPERSCRIPT_DIGITS}
+# Unicode hyphens/minus signs → ASCII hyphen-minus (matcher / JSON alignment).
+_UNICODE_HYPHEN_MINUS_CHARS: frozenset[str] = frozenset(
+    "\u2010\u2011\u2012\u2013\u2014\u2015\u2212\uFE58\uFE63\uFF0D"
+)
+# NBSP and similar → normal space for tokenization.
+_UNICODE_SPACE_LIKE_CHARS: frozenset[str] = frozenset(
+    "\u00A0\u202F\u2007\u2009\u200A\u2060\uFEFF"
+)
 _DISPLAY_LOG_BASE_RE = re.compile(r"\blog_(\d+)\b", re.IGNORECASE)
 _DISPLAY_LOG_INLINE_RE = re.compile(r"log_(\d+)(?=([A-Za-z(]))", re.IGNORECASE)
 _ASCII_BASE_COLLISION_RE = re.compile(r"\blog_(\d+)(?=(\d))", re.IGNORECASE)
@@ -87,10 +97,114 @@ _GENERIC_MATCHER_RE = re.compile(r"[^A-Za-z0-9\s]+")
 _SPACE_RE = re.compile(r"\s+")
 _FUNCTION_EXPR_RE = re.compile(r"\b(?:f|g|h|fg|gf)\s*\(", re.IGNORECASE)
 _LOG_FAMILY_RE = re.compile(r"(?<![A-Za-z])(?:log|ln)", re.IGNORECASE)
+# Canonical log(base=10,arg=…) in matcher strings → spoken-style log base 10 <arg> (Mathematics only).
+_MATCHER_CANONICAL_LOG_ANY_BASE_RE = re.compile(
+    r"log\s*\(\s*base\s*=\s*([^,()]+?)\s*,\s*argz?\s*=\s*([^)]+?)\s*\)",
+    re.IGNORECASE,
+)
+
+
+def _env_matcher_fold_bare_log_default() -> bool:
+    raw = (os.getenv("OA_MATCHER_FOLD_BARE_LOG_TO_BASE10") or "").strip().lower()
+    if raw in {"0", "false", "no", "off"}:
+        return False
+    if raw in {"1", "true", "yes", "on"}:
+        return True
+    return True
+
+
+def _apply_mathematics_common_log_matcher_fold(
+    matcher_text: str,
+    *,
+    fold_bare_log: bool | None = None,
+) -> str:
+    """Mathematics matcher only: align lg, bare log (optional), and log(base=10,…) with log base 10 … tokens.
+
+    Does not alter ln. Does not map log_a / log_3 / non-10 bases to base 10. Idempotent on log base 10.
+    """
+    if fold_bare_log is None:
+        fold_bare_log = _env_matcher_fold_bare_log_default()
+
+    matcher = str(matcher_text or "")
+    if not matcher:
+        return matcher
+
+    def _canonical_base10_sub(match: re.Match[str]) -> str:
+        base = re.sub(r"\s+", "", match.group(1))
+        if base != "10":
+            return match.group(0)
+        arg = _compact_math_fragment(match.group(2))
+        return f"log base 10 {arg}" if arg else "log base 10"
+
+    matcher = _MATCHER_CANONICAL_LOG_ANY_BASE_RE.sub(_canonical_base10_sub, matcher)
+    matcher = re.sub(r"(?<![A-Za-z])lg\b", "log base 10", matcher, flags=re.IGNORECASE)
+
+    if fold_bare_log:
+        matcher = re.sub(
+            r"(?<![A-Za-z])log(?!\s+base\b)(?!_)(?=\s|\(|$)(?!\s*\(\s*base\s*=)",
+            "log base 10",
+            matcher,
+            flags=re.IGNORECASE,
+        )
+
+    return _MATCHER_SPACE_RE.sub(" ", matcher).strip()
 
 
 def _coalesce_spaces(text: str) -> str:
     return " ".join(str(text or "").split()).strip()
+
+
+def fold_unicode_numeric_forms(text: str) -> str:
+    """Map Unicode subscript/superscript digits to ASCII for token matching (e.g. H₂O vs H2O, cm³ vs cm3)."""
+    if not text:
+        return ""
+    return "".join(_UNICODE_DIGIT_FOR_MATCH.get(ch, ch) for ch in text)
+
+
+def _fold_hyphens_and_unicode_spaces(text: str) -> str:
+    """Map Unicode hyphens/minus and space-like characters to ASCII (safe for math input pretreatment)."""
+    if not text:
+        return ""
+    out: List[str] = []
+    for ch in text:
+        if ch in _UNICODE_HYPHEN_MINUS_CHARS:
+            out.append("-")
+        elif ch in _UNICODE_SPACE_LIKE_CHARS:
+            out.append(" ")
+        else:
+            out.append(ch)
+    return "".join(out)
+
+
+def fold_plaintext_science_symbols(text: str) -> str:
+    """Map common Unicode science/operators to ASCII for matching OCR to JSON (idempotent on ASCII).
+
+    Middle dot (·) → period (hydrate dot in chemistry). May rarely affect prose; v1 tradeoff.
+    """
+    if not text:
+        return ""
+    out: List[str] = []
+    for ch in text:
+        if ch in _UNICODE_HYPHEN_MINUS_CHARS:
+            out.append("-")
+        elif ch in _UNICODE_SPACE_LIKE_CHARS:
+            out.append(" ")
+        elif ch == "\u00d7":  # ×
+            out.append("*")
+        elif ch == "\u00f7":  # ÷
+            out.append("/")
+        elif ch == "\u2192":  # →
+            out.extend(("-", ">",))
+        elif ch == "\u00b7":  # ·
+            out.append(".")
+        else:
+            out.append(ch)
+    return "".join(out)
+
+
+def fold_math_matcher_input(text: str) -> str:
+    """Normalize hyphens/spaces before math visual pipeline (does not map ×÷→· to protect log/superscript logic)."""
+    return _fold_hyphens_and_unicode_spaces(_coalesce_spaces(text or ""))
 
 
 def _replace_common_mojibake(text: str) -> str:
@@ -302,12 +416,17 @@ def build_subject_matcher_text(
     canonical_text: Optional[str] = None,
 ) -> str:
     if is_mathematics_subject(subject):
-        return normalize_math_text_result(
-            text,
+        pretreated = fold_math_matcher_input(text)
+        matcher = normalize_math_text_result(
+            pretreated,
             canonical_text=canonical_text,
             enable_canonical=True,
         ).matcher_text
-    return _coalesce_spaces(text or "")
+        return _apply_mathematics_common_log_matcher_fold(matcher)
+    raw = _coalesce_spaces(text or "")
+    raw = fold_unicode_numeric_forms(raw)
+    raw = fold_plaintext_science_symbols(raw)
+    return raw
 
 
 def _build_generic_matcher(display_text: str) -> str:
@@ -377,11 +496,14 @@ def normalize_content_text_result(
         warnings = list(math_result.warning_codes)
         if content_type == "science_notation":
             warnings = sorted(set(warnings) | set(_science_warning_codes(original, math_result.display_text)))
+        matcher_out = math_result.matcher_text
+        if is_mathematics_subject(subject):
+            matcher_out = _apply_mathematics_common_log_matcher_fold(matcher_out)
         return ContentTextResult(
             original_text=original,
             display_text=math_result.display_text,
             canonical_text=math_result.canonical_text,
-            matcher_text=math_result.matcher_text,
+            matcher_text=matcher_out,
             warning_codes=warnings,
             content_type=content_type,
         )

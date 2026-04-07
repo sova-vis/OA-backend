@@ -31,3 +31,6 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+  "integration: live API calls (skipped without credentials)",
+]

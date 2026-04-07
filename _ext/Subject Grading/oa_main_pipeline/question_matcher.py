@@ -8,7 +8,11 @@ from dataclasses import dataclass
 from typing import Dict, List, Optional, Sequence, Tuple
 
 from .config import PipelineConfig
-from .content_normalization import build_subject_matcher_text
+from .content_normalization import (
+    build_subject_matcher_text,
+    fold_plaintext_science_symbols,
+    fold_unicode_numeric_forms,
+)
 from .schemas import MatchAlternative, QuestionRecord, StatusLabel
 
 _NON_ALNUM_RE = re.compile(r"[^a-z0-9\s]+", re.IGNORECASE)
@@ -21,7 +25,9 @@ _MCQ_OPTION_RE = re.compile(
 
 
 def normalize_text(text: str) -> str:
-    lowered = (text or "").casefold()
+    folded = fold_unicode_numeric_forms(str(text or ""))
+    folded = fold_plaintext_science_symbols(folded)
+    lowered = folded.casefold()
     cleaned = _NON_ALNUM_RE.sub(" ", lowered)
     return _MULTISPACE_RE.sub(" ", cleaned).strip()
 

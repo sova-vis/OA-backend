@@ -249,6 +249,16 @@ def _math_flags(
             )
         )
 
+    if _has_potential_fraction_or_chain_ambiguity(answer_raw):
+        flags.append(
+            _flag(
+                "potential_fraction_or_chain_ambiguity",
+                FlagSeverity.WARNING,
+                "Detected a long log-heavy equality chain on one line without explicit division or \\frac; "
+                "OCR may have interleaved numerator and denominator.",
+            )
+        )
+
     return flags
 
 
@@ -322,6 +332,42 @@ def _has_symbol_ambiguity(text: str) -> bool:
     has_zero_family = "0" in text and "O" in text
     has_one_family = "1" in text and bool(re.search(r"[Il]", text))
     return has_zero_family or has_one_family
+
+
+def _math_log_like_token_count(line: str) -> int:
+    """Count log/ln tokens typical of handwritten math OCR (including coefficients like 2log(...))."""
+    patterns = [
+        r"(?<![\w.])log\s*\(",  # log (9), Answer: log (
+        r"(?<![\w.])log\s*_\s*",  # log_2, log _ 2
+        r"(?<=\d)log\s*\(",  # 2log (3)
+        r"(?<![\w.])ln\s*\(",  # ln(x)
+    ]
+    total = 0
+    for pattern in patterns:
+        total += len(re.findall(pattern, line, flags=re.IGNORECASE))
+    return total
+
+
+def _line_suggests_fraction_linearization_issue(line: str) -> bool:
+    stripped = line.strip()
+    if len(stripped) < 24:
+        return False
+    if stripped.count("=") < 2:
+        return False
+    if _math_log_like_token_count(stripped) < 3:
+        return False
+    lower = stripped.lower()
+    if r"\frac" in lower:
+        return False
+    if "/" in stripped:
+        return False
+    return True
+
+
+def _has_potential_fraction_or_chain_ambiguity(answer_raw: str) -> bool:
+    if not answer_raw or not answer_raw.strip():
+        return False
+    return any(_line_suggests_fraction_linearization_issue(line) for line in answer_raw.splitlines())
 
 
 def _dedupe_flags(flags: list[ValidationFlag]) -> list[ValidationFlag]:
