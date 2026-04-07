@@ -13,8 +13,8 @@ export interface UserProfile {
 export const users: UserProfile[] = [
   {
     id: 'admin-1',
-    email: 'admin@propel.com',
-    password: 'SuperSecretAdmin123', // In production, hash this!
+    email: 'sovavis2025@gmail.com',
+    password: 'ChangeThisAdminPassword123!', // In production, hash this!
     name: 'Admin',
     role: 'admin',
   },

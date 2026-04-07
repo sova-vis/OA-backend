@@ -17,6 +17,16 @@ const supabaseAdmin = createClient(
     }
 );
 
+class ServiceError extends Error {
+    statusCode: number;
+
+    constructor(message: string, statusCode = 500) {
+        super(message);
+        this.name = 'ServiceError';
+        this.statusCode = statusCode;
+    }
+}
+
 function splitName(name: string) {
     const parts = name.trim().split(/\s+/).filter(Boolean);
     if (parts.length === 0) {
@@ -59,31 +69,142 @@ async function createClerkTeacher(email: string, password: string, name: string)
 
     if (!response.ok) {
         const message = payload?.errors?.[0]?.long_message || payload?.errors?.[0]?.message || 'Failed to create Clerk user';
-        throw new Error(message);
+        const lowered = String(message).toLowerCase();
+        if (lowered.includes('breach') || lowered.includes('password') || lowered.includes('invalid')) {
+            throw new ServiceError(message, 400);
+        }
+        throw new ServiceError(message, 500);
     }
 
     return payload;
 }
 
-export const createTeacherAccount = async (email: string, password: string, name: string) => {
-    const clerkUser = await createClerkTeacher(email, password, name);
+async function getClerkUserByEmail(email: string) {
+    const secretKey = process.env.CLERK_SECRET_KEY;
 
-    const { error: profileError } = await supabaseAdmin
+    if (!secretKey) {
+        throw new ServiceError('CLERK_SECRET_KEY is not configured', 500);
+    }
+
+    const query = new URLSearchParams({ email_address: email });
+    const response = await fetch(`https://api.clerk.com/v1/users?${query.toString()}`, {
+        method: 'GET',
+        headers: {
+            Authorization: `Bearer ${secretKey}`,
+        },
+    });
+
+    const payload = await response.json() as any;
+    if (!response.ok) {
+        const message = payload?.errors?.[0]?.long_message || payload?.errors?.[0]?.message || 'Failed to query Clerk user';
+        throw new ServiceError(message, 500);
+    }
+
+    if (Array.isArray(payload) && payload.length > 0) {
+        return payload[0];
+    }
+
+    return null;
+}
+
+async function updateClerkUserRoleToTeacher(userId: string) {
+    const secretKey = process.env.CLERK_SECRET_KEY;
+
+    if (!secretKey) {
+        throw new ServiceError('CLERK_SECRET_KEY is not configured', 500);
+    }
+
+    const response = await fetch(`https://api.clerk.com/v1/users/${userId}/metadata`, {
+        method: 'PATCH',
+        headers: {
+            Authorization: `Bearer ${secretKey}`,
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+            public_metadata: { role: 'teacher' },
+        }),
+    });
+
+    const payload = await response.json() as any;
+    if (!response.ok) {
+        const message = payload?.errors?.[0]?.long_message || payload?.errors?.[0]?.message || 'Failed to update Clerk user metadata';
+        throw new ServiceError(message, 500);
+    }
+
+    return payload;
+}
+
+async function upsertTeacherProfileNoConstraint(email: string, name: string, clerkUserId: string) {
+    const normalizedEmail = email.trim().toLowerCase();
+
+    const { data: byEmail, error: lookupError } = await supabaseAdmin
         .from('profiles')
-        .upsert({
-            clerk_id: clerkUser.id,
-            email,
+        .select('*')
+        .eq('email', normalizedEmail)
+        .maybeSingle();
+
+    if (lookupError) {
+        throw lookupError;
+    }
+
+    if (byEmail) {
+        const { error: updateError } = await supabaseAdmin
+            .from('profiles')
+            .update({
+                clerk_id: clerkUserId,
+                full_name: name,
+                role: 'teacher',
+                onboarding_complete: true,
+            })
+            .eq('email', normalizedEmail);
+
+        if (updateError) {
+            throw updateError;
+        }
+
+        return;
+    }
+
+    const { error: createError } = await supabaseAdmin
+        .from('profiles')
+        .insert({
+            clerk_id: clerkUserId,
+            email: normalizedEmail,
             full_name: name,
             role: 'teacher',
             level: 'N/A',
             onboarding_complete: true,
-        }, {
-            onConflict: 'clerk_id',
         });
 
-    if (profileError) {
-        throw profileError;
+    if (createError) {
+        throw createError;
     }
+}
+
+export const createTeacherAccount = async (email: string, password: string, name: string) => {
+    let clerkUser: any;
+
+    try {
+        clerkUser = await createClerkTeacher(email, password, name);
+    } catch (error: any) {
+        const message = String(error?.message || 'Failed to create Clerk user').toLowerCase();
+        if (message.includes('already') || message.includes('exists') || message.includes('taken')) {
+            const existingUser = await getClerkUserByEmail(email.trim().toLowerCase());
+            if (!existingUser?.id) {
+                throw error;
+            }
+            clerkUser = existingUser;
+        } else {
+            throw error;
+        }
+    }
+
+    if (!clerkUser?.id) {
+        throw new ServiceError('Failed to resolve Clerk teacher user', 500);
+    }
+
+    await updateClerkUserRoleToTeacher(clerkUser.id);
+    await upsertTeacherProfileNoConstraint(email, name, clerkUser.id);
 
     return {
         id: clerkUser.id,

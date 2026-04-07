@@ -6,6 +6,7 @@ export interface AuthenticatedRequest extends Request {
     userId: string;
     clerkId: string;
     token: string;
+    claims?: Record<string, unknown>;
   };
 }
 
@@ -119,6 +120,7 @@ export async function clerkAuth(
       userId: clerkId,
       clerkId,
       token,
+      claims: verified.payload as Record<string, unknown>,
     };
 
     next();

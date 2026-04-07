@@ -12,6 +12,7 @@ import ragRoutes from './rag.routes';
 import contentRoutes from './content.routes';
 import qaGradingRoutes from './qaGrading.routes';
 import paperTrackingRoutes from './paperTracking.routes';
+import mentoringRoutes from './mentoring.routes';
 
 const app: Express = express();
 const PORT = process.env.PORT || 3001;
@@ -159,6 +160,9 @@ app.use('/rag', ragRoutes);
 
 // User paper tracking API
 app.use('/tracking', paperTrackingRoutes);
+
+// Teacher-student meetings and chat API
+app.use('/mentoring', mentoringRoutes);
 
 // OA grading API
 app.use('/oa-grading', qaGradingRoutes);
