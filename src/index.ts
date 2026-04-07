@@ -119,19 +119,42 @@ async function ensureOaServiceSidecar(): Promise<void> {
 }
 
 // CORS configuration - allow both local development and production
+function normalizeOrigin(origin: string): string {
+  return origin.trim().replace(/\/+$/, '');
+}
+
 const configuredOrigins = (process.env.FRONTEND_URL || '')
   .split(',')
-  .map((origin) => origin.trim())
+  .map((origin) => normalizeOrigin(origin))
   .filter(Boolean);
 
-const allowedOrigins = Array.from(new Set([
-  'http://localhost:3000',
-  ...configuredOrigins,
-]));
+const allowedOrigins = new Set(
+  ['http://localhost:3000', ...configuredOrigins].map((origin) => normalizeOrigin(origin))
+);
+
+function isAllowedOrigin(origin: string): boolean {
+  const normalizedOrigin = normalizeOrigin(origin);
+  if (allowedOrigins.has(normalizedOrigin)) {
+    return true;
+  }
+
+  // Allow Vercel preview deployments for this project namespace.
+  try {
+    const parsed = new URL(normalizedOrigin);
+    const host = parsed.hostname.toLowerCase();
+    if (host.endsWith('.sova-vis-projects.vercel.app')) {
+      return true;
+    }
+  } catch {
+    // Ignore malformed origins and reject below.
+  }
+
+  return false;
+}
 
 app.use(cors({
   origin: (origin, callback) => {
-    if (!origin || allowedOrigins.includes(origin)) {
+    if (!origin || isAllowedOrigin(origin)) {
       callback(null, true);
       return;
     }
