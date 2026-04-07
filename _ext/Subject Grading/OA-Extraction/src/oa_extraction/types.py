@@ -117,6 +117,26 @@ class RepairAction(BaseModel):
     rationale: str
 
 
+class MathAnswerRefineResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    refined_answer: str = Field(description="Re-transcribed answer only, with explicit fractions.")
+    confidence: float = Field(ge=0.0, le=1.0, description="Confidence in the refined transcription.")
+    rationale: str = Field(default="", description="Brief note on what was fixed or left unchanged.")
+
+
+class MathAnswerRefineDiagnostics(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    applied: bool = Field(description="Whether answer_raw was replaced with the refined string.")
+    confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+    rationale: str = ""
+    skipped_reason: str | None = Field(
+        default=None,
+        description="Why refine was skipped or not applied (e.g. disabled, below threshold, error).",
+    )
+
+
 class ExtractionDiagnostics(BaseModel):
     model_config = ConfigDict(extra="forbid", use_enum_values=True)
 
@@ -127,6 +147,7 @@ class ExtractionDiagnostics(BaseModel):
     repair_actions: list[RepairAction] = Field(default_factory=list)
     selection_reasons: list[str] = Field(default_factory=list)
     split_retry_applied: bool = False
+    math_answer_refine: MathAnswerRefineDiagnostics | None = None
 
 
 class ExtractionResult(BaseModel):

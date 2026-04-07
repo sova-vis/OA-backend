@@ -12,6 +12,7 @@ from oa_extraction.types import (
     LineAssignment,
     LineOCR,
     LineTarget,
+    MathAnswerRefineResult,
     OCRCandidate,
     OCREngine,
     RepairAction,
@@ -33,15 +34,18 @@ class FakeGrokClient:
         split_results: list[StructuredExtraction],
         repair_actions: list[RepairAction] | None = None,
         split_retry_result: SplitRetryResult | None = None,
+        math_refine_result: MathAnswerRefineResult | None = None,
     ) -> None:
         self.ocr_by_variant = ocr_by_variant
         self.split_results = list(split_results)
         self.repair_actions = repair_actions or []
         self.split_retry_result = split_retry_result or SplitRetryResult(assignments=[], split_confidence=0.0)
+        self.math_refine_result = math_refine_result
         self.ocr_calls: list[str] = []
         self.split_calls: list[tuple[str, str]] = []
         self.retry_calls = 0
         self.repair_call_count = 0
+        self.refine_math_calls = 0
 
     def ocr_pages(self, pages, *, variant_name: str):
         self.ocr_calls.append(variant_name)
@@ -60,6 +64,12 @@ class FakeGrokClient:
     def repair_disagreements(self, pages, candidate: OCRCandidate, disagreements):
         self.repair_call_count += 1
         return self.repair_actions
+
+    def refine_math_answer(self, pages, *, question_raw: str, answer_raw: str):
+        self.refine_math_calls += 1
+        if self.math_refine_result is None:
+            raise AssertionError("Unexpected refine_math_answer call")
+        return self.math_refine_result
 
     def close(self):
         return None
@@ -87,7 +97,13 @@ class FakeAzureClient:
         return None
 
 
-def _settings(*, enable_azure_fallback: bool = True, enable_targeted_repair: bool = True) -> Settings:
+def _settings(
+    *,
+    enable_azure_fallback: bool = True,
+    enable_targeted_repair: bool = True,
+    enable_math_answer_refine: bool = False,
+    math_answer_refine_min_confidence: float = 0.85,
+) -> Settings:
     return Settings(
         api_key="test-key",
         base_url="https://api.x.ai/v1",
@@ -108,6 +124,8 @@ def _settings(*, enable_azure_fallback: bool = True, enable_targeted_repair: boo
         engine_disagreement_threshold=0.08,
         repair_confidence_threshold=0.85,
         selection_score_margin=0.05,
+        enable_math_answer_refine=enable_math_answer_refine,
+        math_answer_refine_min_confidence=math_answer_refine_min_confidence,
     )
 
 
@@ -341,6 +359,8 @@ def test_pipeline_applies_split_retry_when_initial_split_is_weak(tmp_path: Path)
     assert result.question_raw == "Q. State Newton's second law"
     assert result.answer_raw == "A. Force equals mass times acceleration"
     assert result.confidence.split == 0.98
+    assert result.diagnostics is not None
+    assert result.diagnostics.split_retry_applied is True
 
 
 def test_pipeline_rejects_repair_when_it_lowers_candidate_quality(tmp_path: Path) -> None:
@@ -555,3 +575,180 @@ def test_fixture_oa1_recovers_expected_math_notation() -> None:
     assert result.diagnostics is not None
     assert str(result.diagnostics.selected_ocr_engine) == "azure"
     assert len(result.diagnostics.ocr_candidates) >= 4
+
+
+def test_pipeline_applies_math_answer_refine_when_enabled(tmp_path: Path) -> None:
+    image_path = tmp_path / "input.png"
+    image_path.write_bytes(PNG_BYTES)
+
+    garbled_answer = (
+        "Answer: log (9) = log (3^2) = 2log (3) log (4) log (2^2) 2log (2) = log (3) = log_2 (3) log (2)"
+    )
+    question_line = "Show that log_4 9 = log_2 3"
+    full_text = f"{question_line}\n{garbled_answer}"
+    refined = r"\frac{\log 9}{\log 4} = \frac{\log 3}{\log 2} = \log_2 3"
+
+    candidate = _make_candidate(
+        engine=OCREngine.GROK,
+        variant="original",
+        full_text=full_text,
+        ocr_confidence=0.96,
+    )
+    grok_client = FakeGrokClient(
+        ocr_by_variant={
+            "original": candidate,
+            "grayscale_autocontrast": candidate.model_copy(update={"variant": "grayscale_autocontrast"}),
+            "sharpened_binary": candidate.model_copy(update={"variant": "sharpened_binary"}),
+        },
+        split_results=[
+            _make_structured(
+                question_raw=question_line,
+                answer_raw=garbled_answer,
+                subject=SubjectLabel.MATH,
+                split_confidence=0.95,
+                whole_text_raw=full_text,
+            ),
+            _make_structured(
+                question_raw=question_line,
+                answer_raw=garbled_answer,
+                subject=SubjectLabel.MATH,
+                split_confidence=0.95,
+                whole_text_raw=full_text,
+            ),
+        ],
+        math_refine_result=MathAnswerRefineResult(
+            refined_answer=refined,
+            confidence=0.92,
+            rationale="explicit fractions",
+        ),
+    )
+
+    result = ExtractionPipeline(
+        settings=_settings(enable_azure_fallback=False, enable_math_answer_refine=True),
+        grok_client=grok_client,
+        azure_client=FakeAzureClient(available=False),
+    ).extract(str(image_path))
+
+    assert grok_client.refine_math_calls == 1
+    assert result.answer_raw == refined
+    assert result.diagnostics is not None
+    assert result.diagnostics.math_answer_refine is not None
+    assert result.diagnostics.math_answer_refine.applied is True
+    assert result.diagnostics.math_answer_refine.confidence == 0.92
+
+
+def test_pipeline_skips_math_answer_refine_when_disabled(tmp_path: Path) -> None:
+    image_path = tmp_path / "input.png"
+    image_path.write_bytes(PNG_BYTES)
+
+    garbled_answer = (
+        "Answer: log (9) = log (3^2) = 2log (3) log (4) log (2^2) 2log (2) = log (3) = log_2 (3) log (2)"
+    )
+    question_line = "Show that log_4 9 = log_2 3"
+    full_text = f"{question_line}\n{garbled_answer}"
+
+    candidate = _make_candidate(
+        engine=OCREngine.GROK,
+        variant="original",
+        full_text=full_text,
+        ocr_confidence=0.96,
+    )
+    grok_client = FakeGrokClient(
+        ocr_by_variant={
+            "original": candidate,
+            "grayscale_autocontrast": candidate.model_copy(update={"variant": "grayscale_autocontrast"}),
+            "sharpened_binary": candidate.model_copy(update={"variant": "sharpened_binary"}),
+        },
+        split_results=[
+            _make_structured(
+                question_raw=question_line,
+                answer_raw=garbled_answer,
+                subject=SubjectLabel.MATH,
+                split_confidence=0.95,
+                whole_text_raw=full_text,
+            ),
+            _make_structured(
+                question_raw=question_line,
+                answer_raw=garbled_answer,
+                subject=SubjectLabel.MATH,
+                split_confidence=0.95,
+                whole_text_raw=full_text,
+            ),
+        ],
+        math_refine_result=MathAnswerRefineResult(refined_answer="should-not-apply", confidence=0.99, rationale=""),
+    )
+
+    result = ExtractionPipeline(
+        settings=_settings(enable_azure_fallback=False, enable_math_answer_refine=False),
+        grok_client=grok_client,
+        azure_client=FakeAzureClient(available=False),
+    ).extract(str(image_path))
+
+    assert grok_client.refine_math_calls == 0
+    assert result.answer_raw == garbled_answer
+    assert result.diagnostics is not None
+    assert result.diagnostics.math_answer_refine is None
+
+
+def test_pipeline_rejects_low_confidence_math_answer_refine(tmp_path: Path) -> None:
+    image_path = tmp_path / "input.png"
+    image_path.write_bytes(PNG_BYTES)
+
+    garbled_answer = (
+        "Answer: log (9) = log (3^2) = 2log (3) log (4) log (2^2) 2log (2) = log (3) = log_2 (3) log (2)"
+    )
+    question_line = "Show that log_4 9 = log_2 3"
+    full_text = f"{question_line}\n{garbled_answer}"
+
+    candidate = _make_candidate(
+        engine=OCREngine.GROK,
+        variant="original",
+        full_text=full_text,
+        ocr_confidence=0.96,
+    )
+    grok_client = FakeGrokClient(
+        ocr_by_variant={
+            "original": candidate,
+            "grayscale_autocontrast": candidate.model_copy(update={"variant": "grayscale_autocontrast"}),
+            "sharpened_binary": candidate.model_copy(update={"variant": "sharpened_binary"}),
+        },
+        split_results=[
+            _make_structured(
+                question_raw=question_line,
+                answer_raw=garbled_answer,
+                subject=SubjectLabel.MATH,
+                split_confidence=0.95,
+                whole_text_raw=full_text,
+            ),
+            _make_structured(
+                question_raw=question_line,
+                answer_raw=garbled_answer,
+                subject=SubjectLabel.MATH,
+                split_confidence=0.95,
+                whole_text_raw=full_text,
+            ),
+        ],
+        math_refine_result=MathAnswerRefineResult(
+            refined_answer=r"\frac{9}{4}",
+            confidence=0.40,
+            rationale="unsure",
+        ),
+    )
+
+    result = ExtractionPipeline(
+        settings=_settings(
+            enable_azure_fallback=False,
+            enable_math_answer_refine=True,
+            math_answer_refine_min_confidence=0.85,
+        ),
+        grok_client=grok_client,
+        azure_client=FakeAzureClient(available=False),
+    ).extract(str(image_path))
+
+    assert grok_client.refine_math_calls == 1
+    assert result.answer_raw == garbled_answer
+    assert result.diagnostics is not None
+    assert result.diagnostics.math_answer_refine is not None
+    assert result.diagnostics.math_answer_refine.applied is False
+    assert result.diagnostics.math_answer_refine.skipped_reason == "below_confidence_threshold"
+    assert any("below confidence threshold" in r for r in result.diagnostics.selection_reasons)

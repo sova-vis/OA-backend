@@ -12,11 +12,14 @@ from .types import (
     ExtractionDiagnostics,
     ExtractionResult,
     LineTarget,
+    MathAnswerRefineDiagnostics,
     OCRCandidate,
     RepairAction,
     StructuredExtraction,
+    SubjectLabel,
 )
 from .validators import (
+    answer_may_need_math_structure_refine,
     build_confidence,
     needs_review,
     normalize_text,
@@ -117,6 +120,8 @@ class ExtractionPipeline:
         if structured.split_confidence < self.settings.grok_fallback_split_threshold:
             structured = self._retry_split_if_helpful(selected_pages, selected_candidate, structured, diagnostics)
 
+        structured = self._maybe_refine_math_answer(selected_pages, structured, diagnostics)
+
         return self._finalize_extraction(
             input_type=document.input_type,
             page_count=document.page_count,
@@ -163,6 +168,7 @@ class ExtractionPipeline:
             return structured
 
         if split_retry.split_confidence >= structured.split_confidence:
+            diagnostics.split_retry_applied = True
             diagnostics.selection_reasons.append(
                 "Accepted split-only retry because it improved or matched split confidence with explicit line assignments."
             )
@@ -177,6 +183,61 @@ class ExtractionPipeline:
             )
 
         diagnostics.selection_reasons.append("Rejected split-only retry because it did not improve split confidence.")
+        return structured
+
+    def _maybe_refine_math_answer(
+        self,
+        selected_pages,
+        structured: StructuredExtraction,
+        diagnostics: ExtractionDiagnostics,
+    ) -> StructuredExtraction:
+        if not self.settings.enable_math_answer_refine:
+            return structured
+        if structured.subject != SubjectLabel.MATH:
+            return structured
+        if not normalize_text(structured.answer_raw).strip():
+            return structured
+        if not answer_may_need_math_structure_refine(structured.answer_raw):
+            return structured
+
+        try:
+            refined = self.grok_client.refine_math_answer(
+                selected_pages,
+                question_raw=structured.question_raw,
+                answer_raw=structured.answer_raw,
+            )
+        except Exception as exc:
+            diagnostics.selection_reasons.append(f"Math answer refine skipped after error: {exc}")
+            diagnostics.math_answer_refine = MathAnswerRefineDiagnostics(
+                applied=False,
+                confidence=None,
+                rationale="",
+                skipped_reason=str(exc),
+            )
+            return structured
+
+        threshold = self.settings.math_answer_refine_min_confidence
+        if refined.confidence >= threshold:
+            diagnostics.selection_reasons.append(
+                f"Math answer structure refine applied (confidence {refined.confidence:.2f})."
+            )
+            diagnostics.math_answer_refine = MathAnswerRefineDiagnostics(
+                applied=True,
+                confidence=refined.confidence,
+                rationale=refined.rationale,
+                skipped_reason=None,
+            )
+            return structured.model_copy(update={"answer_raw": refined.refined_answer})
+
+        diagnostics.selection_reasons.append(
+            f"Math answer refine below confidence threshold ({refined.confidence:.2f} < {threshold:.2f})."
+        )
+        diagnostics.math_answer_refine = MathAnswerRefineDiagnostics(
+            applied=False,
+            confidence=refined.confidence,
+            rationale=refined.rationale,
+            skipped_reason="below_confidence_threshold",
+        )
         return structured
 
     def _materialize_retry_assignment(self, candidate: OCRCandidate, split_retry) -> tuple[str, str]:

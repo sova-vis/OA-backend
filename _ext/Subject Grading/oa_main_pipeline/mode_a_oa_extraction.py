@@ -144,6 +144,11 @@ def serialize_oa_extraction(result: ExtractionResult) -> dict[str, Any]:
                 "disagreement_spans": [span.model_dump(mode="json") for span in diagnostics.disagreement_spans],
                 "repair_actions": [action.model_dump(mode="json") for action in diagnostics.repair_actions],
                 "selection_reasons": list(diagnostics.selection_reasons),
+                "math_answer_refine": (
+                    diagnostics.math_answer_refine.model_dump(mode="json")
+                    if diagnostics.math_answer_refine is not None
+                    else None
+                ),
             }
             if diagnostics is not None
             else None

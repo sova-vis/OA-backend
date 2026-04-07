@@ -370,6 +370,11 @@ def _has_potential_fraction_or_chain_ambiguity(answer_raw: str) -> bool:
     return any(_line_suggests_fraction_linearization_issue(line) for line in answer_raw.splitlines())
 
 
+def answer_may_need_math_structure_refine(answer_raw: str) -> bool:
+    """True when the answer matches the same heuristic as potential_fraction_or_chain_ambiguity (Phase 3 refine trigger)."""
+    return _has_potential_fraction_or_chain_ambiguity(answer_raw)
+
+
 def _dedupe_flags(flags: list[ValidationFlag]) -> list[ValidationFlag]:
     seen: set[str] = set()
     deduped: list[ValidationFlag] = []

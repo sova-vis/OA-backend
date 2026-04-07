@@ -70,6 +70,8 @@ class Settings:
     azure_poll_interval_seconds: float = 1.0
     image_detail: str = "high"
     max_image_size_bytes: int = 20 * 1024 * 1024
+    enable_math_answer_refine: bool = False
+    math_answer_refine_min_confidence: float = 0.85
 
     @classmethod
     def from_env(cls, start_dir: Path | None = None) -> "Settings":
@@ -103,4 +105,6 @@ class Settings:
             engine_disagreement_threshold=_get_env_float("OA_ENGINE_DISAGREEMENT_THRESHOLD", 0.08),
             repair_confidence_threshold=_get_env_float("OA_REPAIR_CONFIDENCE_THRESHOLD", 0.85),
             selection_score_margin=_get_env_float("OA_SELECTION_SCORE_MARGIN", 0.05),
+            enable_math_answer_refine=_get_env_bool("OA_ENABLE_MATH_ANSWER_REFINE", False),
+            math_answer_refine_min_confidence=_get_env_float("OA_MATH_ANSWER_REFINE_MIN_CONFIDENCE", 0.85),
         )
