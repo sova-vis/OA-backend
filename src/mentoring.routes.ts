@@ -98,6 +98,34 @@ async function hasTeacherConflict(teacherClerkId: string, start: Date, end: Date
   return Array.isArray(data) && data.length > 0;
 }
 
+async function hasParticipantConflict(
+  column: 'teacher_clerk_id' | 'student_clerk_id',
+  clerkId: string,
+  start: Date,
+  end: Date,
+  ignoreMeetingId?: string
+) {
+  let query = supabase
+    .from('mentoring_meetings')
+    .select('id')
+    .eq(column, clerkId)
+    .in('status', ['pending', 'accepted', 'scheduled'])
+    .lt('start_time', end.toISOString())
+    .gt('end_time', start.toISOString());
+
+  if (ignoreMeetingId) {
+    query = query.neq('id', ignoreMeetingId);
+  }
+
+  const { data, error } = await query;
+
+  if (error) {
+    throw error;
+  }
+
+  return Array.isArray(data) && data.length > 0;
+}
+
 router.get('/teachers', clerkAuth, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const callerId = req.auth?.clerkId;
@@ -215,12 +243,36 @@ router.post('/meetings/request', clerkAuth, requireRole('student'), async (req: 
     const preferredStart = parseUtcDate(body.preferred_start_time);
     const preferredEnd = parseUtcDate(body.preferred_end_time);
 
-    if ((preferredStart && !preferredEnd) || (!preferredStart && preferredEnd)) {
-      return res.status(400).json({ error: 'Both preferred_start_time and preferred_end_time are required together' });
+    if (!preferredStart || !preferredEnd) {
+      return res.status(400).json({ error: 'preferred_start_time and preferred_end_time are required' });
     }
 
-    if (preferredStart && preferredEnd && preferredStart >= preferredEnd) {
+    if (preferredStart >= preferredEnd) {
       return res.status(400).json({ error: 'preferred_end_time must be after preferred_start_time' });
+    }
+
+    if (preferredStart <= new Date()) {
+      return res.status(400).json({ error: 'preferred_start_time must be in the future' });
+    }
+
+    const teacherConflict = await hasParticipantConflict(
+      'teacher_clerk_id',
+      body.teacher_clerk_id,
+      preferredStart,
+      preferredEnd
+    );
+    if (teacherConflict) {
+      return res.status(409).json({ error: 'Teacher already has another requested/scheduled meeting in that time range' });
+    }
+
+    const studentConflict = await hasParticipantConflict(
+      'student_clerk_id',
+      studentClerkId,
+      preferredStart,
+      preferredEnd
+    );
+    if (studentConflict) {
+      return res.status(409).json({ error: 'You already have another requested/scheduled meeting in that time range' });
     }
 
     const meetingPayload: Record<string, unknown> = {
@@ -231,10 +283,8 @@ router.post('/meetings/request', clerkAuth, requireRole('student'), async (req: 
       status: 'pending',
     };
 
-    if (preferredStart && preferredEnd) {
-      meetingPayload.start_time = preferredStart.toISOString();
-      meetingPayload.end_time = preferredEnd.toISOString();
-    }
+    meetingPayload.start_time = preferredStart.toISOString();
+    meetingPayload.end_time = preferredEnd.toISOString();
 
     const { data, error } = await supabase
       .from('mentoring_meetings')
