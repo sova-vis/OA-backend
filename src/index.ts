@@ -120,7 +120,10 @@ async function ensureOaServiceSidecar(): Promise<void> {
 
 // CORS configuration - allow both local development and production
 function normalizeOrigin(origin: string): string {
-  return origin.trim().replace(/\/+$/, '');
+  return origin
+    .trim()
+    .replace(/^['"]+|['"]+$/g, '')
+    .replace(/\/+$/, '');
 }
 
 const configuredOrigins = (process.env.FRONTEND_URL || '')
@@ -142,6 +145,9 @@ function isAllowedOrigin(origin: string): boolean {
   try {
     const parsed = new URL(normalizedOrigin);
     const host = parsed.hostname.toLowerCase();
+    if (host.endsWith('.vercel.app')) {
+      return true;
+    }
     if (host.endsWith('.sova-vis-projects.vercel.app')) {
       return true;
     }
