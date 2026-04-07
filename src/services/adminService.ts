@@ -28,10 +28,20 @@ class ServiceError extends Error {
 }
 
 function getClerkSecretKey(): string {
-    const raw = process.env.CLERK_SECRET_KEY || process.env.CLERK_API_KEY || '';
+    const candidates = [
+        process.env.CLERK_SECRET_KEY,
+        process.env.CLERK_API_KEY,
+        process.env.CLERK_SECRET,
+        process.env.CLERK_KEY,
+        process.env.SECRET_KEY,
+    ];
+    const raw = candidates.find((value) => typeof value === 'string' && value.trim()) || '';
     const normalized = raw.trim().replace(/^['\"]+|['\"]+$/g, '');
     if (!normalized) {
-        throw new ServiceError('Clerk secret key is not configured. Set CLERK_SECRET_KEY (or CLERK_API_KEY).', 500);
+        throw new ServiceError(
+            'Clerk secret key is not configured. Set one of: CLERK_SECRET_KEY, CLERK_API_KEY, CLERK_SECRET, CLERK_KEY.',
+            500
+        );
     }
     return normalized;
 }
