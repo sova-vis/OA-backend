@@ -376,6 +376,15 @@ router.patch('/meetings/:meetingId', clerkAuth, async (req: AuthenticatedRequest
       if (!allowedStatuses.includes(body.status)) {
         return res.status(400).json({ error: 'Invalid status value' });
       }
+
+      if (body.status === 'scheduled') {
+        const hasIncomingStartAndEnd = typeof body.start_time === 'string' && typeof body.end_time === 'string';
+        const hasExistingStartAndEnd = Boolean(existing.start_time && existing.end_time);
+        if (!hasIncomingStartAndEnd && !hasExistingStartAndEnd) {
+          return res.status(400).json({ error: 'start_time and end_time are required before scheduling' });
+        }
+      }
+
       updatePayload.status = body.status;
     }
 
@@ -441,6 +450,57 @@ router.patch('/meetings/:meetingId', clerkAuth, async (req: AuthenticatedRequest
   } catch (error: any) {
     console.error('Failed to update meeting:', error);
     return res.status(500).json({ error: error.message || 'Failed to update meeting' });
+  }
+});
+
+router.delete('/meetings/:meetingId', clerkAuth, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const callerId = req.auth?.clerkId;
+    if (!callerId) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    const caller = await getProfileByClerkId(callerId);
+    if (!caller) {
+      return res.status(404).json({ error: 'Profile not found' });
+    }
+
+    const meetingId = req.params.meetingId;
+    const { data: existing, error: existingError } = await supabase
+      .from('mentoring_meetings')
+      .select('id, student_clerk_id, teacher_clerk_id')
+      .eq('id', meetingId)
+      .maybeSingle();
+
+    if (existingError) {
+      throw existingError;
+    }
+
+    if (!existing) {
+      return res.status(404).json({ error: 'Meeting not found' });
+    }
+
+    const isTeacherParticipant = caller.role === 'teacher' && existing.teacher_clerk_id === callerId;
+    const isStudentParticipant = caller.role === 'student' && existing.student_clerk_id === callerId;
+    const isAdmin = caller.role === 'admin';
+
+    if (!isTeacherParticipant && !isStudentParticipant && !isAdmin) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+
+    const { error: deleteError } = await supabase
+      .from('mentoring_meetings')
+      .delete()
+      .eq('id', meetingId);
+
+    if (deleteError) {
+      throw deleteError;
+    }
+
+    return res.json({ success: true });
+  } catch (error: any) {
+    console.error('Failed to delete meeting:', error);
+    return res.status(500).json({ error: error.message || 'Failed to delete meeting' });
   }
 });
 

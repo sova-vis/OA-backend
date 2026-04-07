@@ -27,6 +27,15 @@ class ServiceError extends Error {
     }
 }
 
+function getClerkSecretKey(): string {
+    const raw = process.env.CLERK_SECRET_KEY || process.env.CLERK_API_KEY || '';
+    const normalized = raw.trim().replace(/^['\"]+|['\"]+$/g, '');
+    if (!normalized) {
+        throw new ServiceError('Clerk secret key is not configured. Set CLERK_SECRET_KEY (or CLERK_API_KEY).', 500);
+    }
+    return normalized;
+}
+
 function splitName(name: string) {
     const parts = name.trim().split(/\s+/).filter(Boolean);
     if (parts.length === 0) {
@@ -42,11 +51,7 @@ function splitName(name: string) {
 }
 
 async function createClerkTeacher(email: string, password: string, name: string) {
-    const secretKey = process.env.CLERK_SECRET_KEY;
-
-    if (!secretKey) {
-        throw new Error('CLERK_SECRET_KEY is not configured');
-    }
+    const secretKey = getClerkSecretKey();
 
     const { firstName, lastName } = splitName(name);
 
@@ -80,11 +85,7 @@ async function createClerkTeacher(email: string, password: string, name: string)
 }
 
 async function getClerkUserByEmail(email: string) {
-    const secretKey = process.env.CLERK_SECRET_KEY;
-
-    if (!secretKey) {
-        throw new ServiceError('CLERK_SECRET_KEY is not configured', 500);
-    }
+    const secretKey = getClerkSecretKey();
 
     const query = new URLSearchParams({ email_address: email });
     const response = await fetch(`https://api.clerk.com/v1/users?${query.toString()}`, {
@@ -108,11 +109,7 @@ async function getClerkUserByEmail(email: string) {
 }
 
 async function updateClerkUserRoleToTeacher(userId: string) {
-    const secretKey = process.env.CLERK_SECRET_KEY;
-
-    if (!secretKey) {
-        throw new ServiceError('CLERK_SECRET_KEY is not configured', 500);
-    }
+    const secretKey = getClerkSecretKey();
 
     const response = await fetch(`https://api.clerk.com/v1/users/${userId}/metadata`, {
         method: 'PATCH',
