@@ -126,6 +126,22 @@ async function hasParticipantConflict(
   return Array.isArray(data) && data.length > 0;
 }
 
+async function hasMeetingRelationship(studentClerkId: string, teacherClerkId: string): Promise<boolean> {
+  const { data, error } = await supabase
+    .from('mentoring_meetings')
+    .select('id')
+    .eq('student_clerk_id', studentClerkId)
+    .eq('teacher_clerk_id', teacherClerkId)
+    .in('status', ['pending', 'accepted', 'scheduled', 'completed'])
+    .limit(1);
+
+  if (error) {
+    throw error;
+  }
+
+  return Array.isArray(data) && data.length > 0;
+}
+
 router.get('/teachers', clerkAuth, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const callerId = req.auth?.clerkId;
@@ -645,6 +661,11 @@ router.post('/conversations', clerkAuth, async (req: AuthenticatedRequest, res: 
       teacherClerkId = callerId;
     } else {
       return res.status(400).json({ error: 'Conversations are only allowed between one student and one teacher' });
+    }
+
+    const canChat = await hasMeetingRelationship(studentClerkId, teacherClerkId);
+    if (!canChat) {
+      return res.status(403).json({ error: 'Chat is only available after a 1:1 meeting request exists between student and teacher' });
     }
 
     const conversation = await ensureConversation(studentClerkId, teacherClerkId);
