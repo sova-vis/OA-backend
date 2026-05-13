@@ -52,6 +52,7 @@ export interface DriveFile {
   webContentLink: string;
   size: string;
   modifiedTime: string;
+  parents?: string[];
 }
 
 /**
@@ -139,7 +140,7 @@ export async function getFileMetadata(fileId: string): Promise<DriveFile> {
   try {
     const response = await drive.files.get({
       fileId,
-      fields: 'id, name, mimeType, webViewLink, webContentLink, size, modifiedTime',
+      fields: 'id, name, mimeType, webViewLink, webContentLink, size, modifiedTime, parents',
     });
 
     return response.data as DriveFile;

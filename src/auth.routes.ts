@@ -129,6 +129,45 @@ router.get('/profile', clerkAuth, async (req: AuthenticatedRequest, res: Respons
   }
 });
 
+router.patch('/profile', clerkAuth, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    if (!req.auth?.clerkId) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    const body = (req.body ?? {}) as { selected_subjects?: unknown };
+    const payload: Record<string, unknown> = {};
+
+    if (Array.isArray(body.selected_subjects)) {
+      payload.selected_subjects = body.selected_subjects
+        .filter((item) => typeof item === 'string')
+        .map((item) => item.trim())
+        .filter(Boolean)
+        .slice(0, 30);
+    }
+
+    if (Object.keys(payload).length === 0) {
+      return res.status(400).json({ error: 'No valid profile fields provided' });
+    }
+
+    const { data: updated, error } = await supabase
+      .from('profiles')
+      .update(payload)
+      .eq('clerk_id', req.auth.clerkId)
+      .select('*')
+      .single();
+
+    if (error) {
+      throw error;
+    }
+
+    return res.json(updated);
+  } catch (err) {
+    console.error('Error updating profile:', err);
+    return res.status(500).json({ error: 'Failed to update profile' });
+  }
+});
+
 /**
  * POST /auth/sync-profile
  * Ensure current Clerk user has a profile row in Supabase

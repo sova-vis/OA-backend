@@ -2,7 +2,7 @@ import { Router, Response } from 'express';
 import { AuthenticatedRequest, clerkAuth } from './lib/clerkAuth';
 import { supabase } from './lib/supabase';
 
-type PaperStatus = 'in_progress' | 'completed' | 'important' | 'bookmarked';
+type PaperStatus = 'goal' | 'in_progress' | 'completed' | 'important' | 'bookmarked';
 
 interface TrackingItem {
   id: string;
@@ -19,6 +19,7 @@ const VALID_STATUSES = new Set<PaperStatus>([
   'in_progress',
   'completed',
   'important',
+  'goal',
   'bookmarked',
 ]);
 
