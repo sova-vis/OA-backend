@@ -9,7 +9,12 @@ from oa_extraction.types import (
     RepairAction,
     SubjectLabel,
 )
-from oa_extraction.validators import build_confidence, validate_diagnostics, validate_extraction
+from oa_extraction.validators import (
+    answer_may_need_math_structure_refine,
+    build_confidence,
+    validate_diagnostics,
+    validate_extraction,
+)
 
 
 def _settings() -> Settings:
@@ -47,6 +52,15 @@ def test_math_log_base_mismatch_is_flagged() -> None:
     )
 
     assert "potential_log_base_mismatch" in {flag.code for flag in flags}
+
+
+def test_answer_may_need_math_structure_refine_matches_fraction_chain_heuristic() -> None:
+    garbled = (
+        "Answer: log (9) = log (3^2) = 2log (3) log (4) log (2^2) 2log (2) = log (3) = log_2 (3) log (2)"
+    )
+    explicit = r"\frac{\log 9}{\log 4} = \frac{\log 3}{\log 2} = \log_2 3"
+    assert answer_may_need_math_structure_refine(garbled) is True
+    assert answer_may_need_math_structure_refine(explicit) is False
 
 
 def test_fraction_or_chain_ambiguity_flags_run_on_garbled_log_proof_line() -> None:

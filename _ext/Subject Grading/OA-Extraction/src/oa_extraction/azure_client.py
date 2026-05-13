@@ -5,7 +5,6 @@ import time
 from pathlib import Path
 from typing import Any
 
-import fitz
 import httpx
 
 from .config import Settings
@@ -30,13 +29,7 @@ class AzureDocumentIntelligenceClient:
     def close(self) -> None:
         self._client.close()
 
-    def analyze_path(
-        self,
-        source_path: Path,
-        *,
-        variant_name: str = "original",
-        page_number: int | None = None,
-    ) -> OCRCandidate:
+    def analyze_path(self, source_path: Path, *, variant_name: str = "original") -> OCRCandidate:
         if not self.is_available:
             raise ConfigurationError(
                 "Azure fallback OCR is enabled but Azure Document Intelligence credentials are missing."
@@ -51,7 +44,7 @@ class AzureDocumentIntelligenceClient:
             "Ocp-Apim-Subscription-Key": str(self.settings.azure_api_key),
             "Content-Type": "application/json",
         }
-        payload = {"base64Source": base64.b64encode(self._payload_bytes(source_path, page_number=page_number)).decode("ascii")}
+        payload = {"base64Source": base64.b64encode(source_path.read_bytes()).decode("ascii")}
         initial = self._client.post(url, headers=headers, json=payload)
         initial.raise_for_status()
 
@@ -129,18 +122,3 @@ class AzureDocumentIntelligenceClient:
             ocr_confidence=ocr_confidence,
             uncertain_spans=low_confidence_words,
         )
-
-    def _payload_bytes(self, source_path: Path, *, page_number: int | None) -> bytes:
-        if page_number is None or source_path.suffix.lower() != ".pdf":
-            return source_path.read_bytes()
-
-        document = fitz.open(source_path)
-        try:
-            if page_number < 1 or page_number > document.page_count:
-                raise ConfigurationError(
-                    f"Requested PDF page_number {page_number} is out of range for Azure fallback."
-                )
-            page = document.load_page(page_number - 1)
-            return page.get_pixmap(dpi=300, alpha=False).tobytes("png")
-        finally:
-            document.close()

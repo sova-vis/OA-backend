@@ -11,6 +11,8 @@ from .config import Settings
 from .prompts import (
     ocr_system_prompt,
     ocr_user_prompt,
+    refine_math_answer_system_prompt,
+    refine_math_answer_user_prompt,
     repair_system_prompt,
     repair_user_prompt,
     split_classification_system_prompt,
@@ -23,6 +25,7 @@ from .types import (
     DocumentPage,
     GrokAPIError,
     LineOCR,
+    MathAnswerRefineResult,
     OCRCandidate,
     OCREngine,
     RepairAction,
@@ -153,6 +156,47 @@ class GrokClient:
             return StructuredExtraction.model_validate_json(output_text)
         except Exception as exc:  # pragma: no cover
             raise GrokAPIError(f"Failed to parse Grok structured output: {exc}") from exc
+
+    def refine_math_answer(
+        self,
+        pages: Sequence[DocumentPage],
+        *,
+        question_raw: str,
+        answer_raw: str,
+    ) -> MathAnswerRefineResult:
+        payload = {
+            "model": self.settings.model,
+            "store": False,
+            "input": [
+                {"role": "system", "content": refine_math_answer_system_prompt()},
+                {
+                    "role": "user",
+                    "content": [
+                        *self._image_inputs(pages),
+                        {
+                            "type": "input_text",
+                            "text": refine_math_answer_user_prompt(question_raw, answer_raw),
+                        },
+                    ],
+                },
+            ],
+            "text": {
+                "format": {
+                    "type": "json_schema",
+                    "name": "math_answer_refine_response",
+                    "schema": MathAnswerRefineResult.model_json_schema(),
+                    "strict": True,
+                }
+            },
+        }
+        response_json = self._post_with_retries(payload)
+        output_text = self._extract_output_text(response_json)
+        if not output_text.strip():
+            raise GrokAPIError("Grok returned an empty math answer refine response.")
+        try:
+            return MathAnswerRefineResult.model_validate_json(output_text)
+        except Exception as exc:  # pragma: no cover
+            raise GrokAPIError(f"Failed to parse Grok math answer refine output: {exc}") from exc
 
     def retry_split(
         self,

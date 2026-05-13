@@ -95,3 +95,25 @@ def repair_user_prompt(selected_candidate_text: str, disagreement_report: str) -
         f"{disagreement_report}\n\n"
         "Return repair actions only for lines where you are confident the competing evidence supports a better reading."
     )
+
+
+def refine_math_answer_system_prompt() -> str:
+    return (
+        "You re-transcribe ONLY the student's handwritten answer for a mathematics problem. "
+        "Return schema-valid JSON only. Use the image and the draft answer text; transcribe what is visibly written—"
+        "do not solve the problem, change mathematics, or invent steps. "
+        "Keep log bases and ln distinct; preserve subscripts and exponents. "
+        "Every fraction must use \\frac{numerator}{denominator} or (numerator)/(denominator); "
+        "one main equality chain per line; continue wrapped chains on the next line. "
+        "Output only the answer text in refined_answer—no question restatement, no labels like 'Answer:' unless they appear in the image."
+    )
+
+
+def refine_math_answer_user_prompt(question_raw: str, answer_raw: str) -> str:
+    return (
+        "Draft question text (context only; do not repeat in output):\n"
+        f"{question_raw}\n\n"
+        "Draft answer text to fix (structure only; keep the same mathematical content as the image):\n"
+        f"{answer_raw}\n\n"
+        "Return refined_answer as the full corrected answer transcription, confidence in [0,1], and a short rationale."
+    )
