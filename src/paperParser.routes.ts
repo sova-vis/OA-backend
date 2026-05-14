@@ -237,6 +237,8 @@ async function structurePaperText(params: {
     'The question text should contain the actual command/question only; do not lose the scenario.',
     'When a page break splits a question, merge it back into the same question.',
     'Do not combine separate numbered questions. Do not invent questions.',
+    'Do not create duplicate entries for the same numbered question. If question 3 has parts (a), (b), (c), create one question with number "3" and put the parts in subquestions.',
+    'If the paper labels parts as 3(a), 3(b), 3(c), keep question.number as "3" and subquestion labels as "a", "b", "c".',
     'Use concise answer_space_hint values such as short answer, calculation space, essay response, diagram/table.',
     'If figures, maps, source extracts, diagrams, tables, or graphs are referenced, summarize them in diagrams_or_sources.',
   ].join(' ');
