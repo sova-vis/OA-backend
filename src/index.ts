@@ -142,10 +142,21 @@ function isAllowedOrigin(origin: string): boolean {
     return true;
   }
 
-  // Allow Vercel preview deployments for this project namespace.
   try {
     const parsed = new URL(normalizedOrigin);
     const host = parsed.hostname.toLowerCase();
+    const port = Number(parsed.port);
+
+    if (
+      process.env.NODE_ENV !== 'production' &&
+      (host === 'localhost' || host === '127.0.0.1') &&
+      port >= 3000 &&
+      port <= 3010
+    ) {
+      return true;
+    }
+
+    // Allow Vercel preview deployments for this project namespace.
     if (host.endsWith('.vercel.app')) {
       return true;
     }
