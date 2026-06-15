@@ -23,6 +23,10 @@ const imageMode = args.get("images") || "storage";
 const onlySubject = args.get("subject");
 const dryRun = args.has("dry-run");
 const replaceExisting = args.has("replace");
+const batchSize = Math.max(
+  1,
+  Number.parseInt(args.get("batch-size") || (imageMode === "data-url" ? "10" : "100"), 10) || (imageMode === "data-url" ? 10 : 100),
+);
 
 if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
   console.error("Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY in OA-backend/.env");
@@ -298,11 +302,44 @@ async function readJson(filePath) {
   return JSON.parse(await fs.readFile(filePath, "utf8"));
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function upsertRows(rows) {
+  let lastError = null;
+
+  for (let attempt = 1; attempt <= 4; attempt += 1) {
+    try {
+      const { error } = await supabase.from("o_level_questions").upsert(rows, { onConflict: "id" });
+      if (!error) return;
+      lastError = error;
+    } catch (error) {
+      lastError = error;
+    }
+
+    if (attempt < 4) await sleep(attempt * 750);
+  }
+
+  if (rows.length > 1) {
+    const middle = Math.ceil(rows.length / 2);
+    await upsertRows(rows.slice(0, middle));
+    await upsertRows(rows.slice(middle));
+    return;
+  }
+
+  throw lastError;
+}
+
 async function flushRows(rows) {
   if (rows.length === 0 || dryRun) return;
 
-  const { error } = await supabase.from("o_level_questions").upsert(rows, { onConflict: "id" });
-  if (error) throw new Error(`Question upsert failed: ${error.message}`);
+  try {
+    await upsertRows(rows);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Question upsert failed: ${message}`);
+  }
 }
 
 async function importSubject(subjectName) {
@@ -390,7 +427,7 @@ async function importSubject(subjectName) {
 
       questionCount += 1;
 
-      if (batch.length >= 100) {
+      if (batch.length >= batchSize) {
         await flushRows(batch);
         batch = [];
       }
@@ -414,8 +451,7 @@ async function importSubject(subjectName) {
         sub_question: cleanText(raw.sub_question),
       };
       const baseId = questionId(subject.slug, question);
-      if (seenBaseIds.has(baseId)) continue;
-      const id = uniqueQuestionId(baseId, idCounts);
+      const id = uniqueQuestionId(`mcq-${baseId}`, idCounts);
 
       const questionText = cleanText(raw.question_text) || "";
       const parsed = parseQuestionText(questionText, raw.options);
@@ -454,7 +490,7 @@ async function importSubject(subjectName) {
 
       questionCount += 1;
 
-      if (batch.length >= 100) {
+      if (batch.length >= batchSize) {
         await flushRows(batch);
         batch = [];
       }
@@ -545,6 +581,7 @@ async function main() {
 
   console.log(`Importing ${subjects.length} subject(s) from ${dataRoot}`);
   console.log(`Image mode: ${imageMode}${imageMode === "storage" ? `, bucket: ${BUCKET}` : ""}`);
+  console.log(`Batch size: ${batchSize}`);
 
   for (const subject of subjects.sort()) {
     await importSubject(subject);

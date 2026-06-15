@@ -61,6 +61,9 @@ create index if not exists o_level_questions_paper_idx
 create index if not exists o_level_questions_kind_idx
   on public.o_level_questions(subject_slug, question_kind);
 
+create index if not exists o_level_questions_source_idx
+  on public.o_level_questions(subject_slug, year desc, source_type);
+
 create index if not exists o_level_questions_images_gin_idx
   on public.o_level_questions using gin(images);
 
