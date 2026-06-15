@@ -27,6 +27,7 @@ const batchSize = Math.max(
   1,
   Number.parseInt(args.get("batch-size") || (imageMode === "data-url" ? "10" : "100"), 10) || (imageMode === "data-url" ? 10 : 100),
 );
+const deleteBatchSize = Math.max(1, Number.parseInt(args.get("delete-batch-size") || "100", 10) || 100);
 
 if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
   console.error("Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY in OA-backend/.env");
@@ -342,12 +343,52 @@ async function flushRows(rows) {
   }
 }
 
+async function clearSubjectQuestions(subject) {
+  let deleted = 0;
+
+  while (true) {
+    const { data: rows, error: selectError } = await supabase
+      .from("o_level_questions")
+      .select("id")
+      .eq("subject_id", subject.id)
+      .limit(deleteBatchSize);
+
+    if (selectError) {
+      throw new Error(`Could not select existing questions for ${subject.name}: ${selectError.message}`);
+    }
+
+    if (!rows || rows.length === 0) break;
+
+    const ids = rows.map((row) => row.id);
+    let lastError = null;
+
+    for (let attempt = 1; attempt <= 4; attempt += 1) {
+      const { error } = await supabase.from("o_level_questions").delete().in("id", ids);
+      if (!error) {
+        lastError = null;
+        break;
+      }
+
+      lastError = error;
+      if (attempt < 4) await sleep(attempt * 750);
+    }
+
+    if (lastError) {
+      throw new Error(`Could not clear existing questions for ${subject.name}: ${lastError.message}`);
+    }
+
+    deleted += rows.length;
+    if (deleted % 500 === 0) console.log(`Cleared ${deleted} existing ${subject.name} question rows...`);
+  }
+
+  if (deleted > 0) console.log(`Cleared ${deleted} existing ${subject.name} question rows.`);
+}
+
 async function importSubject(subjectName) {
   const subject = await upsertSubject(subjectName);
 
   if (replaceExisting && !dryRun) {
-    const { error } = await supabase.from("o_level_questions").delete().eq("subject_id", subject.id);
-    if (error) throw new Error(`Could not clear existing questions for ${subject.name}: ${error.message}`);
+    await clearSubjectQuestions(subject);
   }
 
   const subjectDir = path.join(dataRoot, subjectName);
@@ -582,6 +623,7 @@ async function main() {
   console.log(`Importing ${subjects.length} subject(s) from ${dataRoot}`);
   console.log(`Image mode: ${imageMode}${imageMode === "storage" ? `, bucket: ${BUCKET}` : ""}`);
   console.log(`Batch size: ${batchSize}`);
+  if (replaceExisting) console.log(`Delete batch size: ${deleteBatchSize}`);
 
   for (const subject of subjects.sort()) {
     await importSubject(subject);
