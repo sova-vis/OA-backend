@@ -572,9 +572,12 @@ async function buildMcqAnswerLookup(mcqDir, files) {
 
 function flattenBatchQuestions(batchData, subjectName, batchFile) {
   const rows = [];
+  const papersByYear = asJsonObject(batchData.papers || batchData);
 
-  for (const year of Object.keys(batchData).sort()) {
-    const sessions = batchData[year] || {};
+  for (const year of Object.keys(papersByYear).sort()) {
+    if (!/^\d{4}$/.test(year)) continue;
+
+    const sessions = papersByYear[year] || {};
     for (const session of Object.keys(sessions).sort()) {
       const papers = sessions[session] || {};
       for (const paper of Object.keys(papers).sort((a, b) => paperRank(a) - paperRank(b) || a.localeCompare(b))) {
