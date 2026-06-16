@@ -176,6 +176,36 @@ function classifyQuestion(question, parsed) {
   return "structured";
 }
 
+function numericValue(...values) {
+  for (const value of values) {
+    const number = Number(value);
+    if (Number.isFinite(number)) return number;
+  }
+
+  return null;
+}
+
+function composeWrittenQuestionText(raw) {
+  const lines = [];
+  const intro = cleanText(raw.question_text) || cleanText(raw.intro_text);
+
+  if (intro) lines.push(intro);
+
+  if (Array.isArray(raw.parts)) {
+    for (const part of raw.parts) {
+      const label = cleanText(part.part);
+      const text = cleanText(part.question_text);
+      const marks = numericValue(part.marks);
+      const suffix = marks === null ? "" : ` [${marks} mark${marks === 1 ? "" : "s"}]`;
+      const line = [label, text].filter(Boolean).join(" ");
+
+      if (line) lines.push(`${line}${suffix}`);
+    }
+  }
+
+  return lines.join("\n\n");
+}
+
 function imageStoragePath(question, image, imageIndex) {
   if (image.path) return image.path.replace(/\\/g, "/").replace(/\.(png|jpg|jpeg|webp)$/i, "");
 
@@ -428,7 +458,7 @@ async function importSubject(subjectName) {
         correct_option: enrichedAnswer,
       };
 
-      const questionText = cleanText(raw.question_text) || "";
+      const questionText = composeWrittenQuestionText(raw);
       const parsed = parseQuestionText(questionText, raw.options);
       const images = await normalizeImages(question, raw.images);
       imageCount += images.length;
@@ -447,7 +477,7 @@ async function importSubject(subjectName) {
         variant: question.variant,
         question_number: question.question_number,
         sub_question: question.sub_question,
-        marks: Number.isFinite(raw.marks) ? raw.marks : null,
+        marks: numericValue(raw.marks, raw.total_marks),
         topic_syllabus: cleanText(raw.topic_syllabus),
         topic_general: cleanText(raw.topic_general),
         question_text: questionText,
