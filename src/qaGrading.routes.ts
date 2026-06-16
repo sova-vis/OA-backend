@@ -814,7 +814,7 @@ router.post('/evaluate-from-image/preview', upload.single('file'), async (req: R
 
     const formData = new FormData();
     const mimeType = (file.mimetype || 'application/octet-stream').trim();
-    const blob = new Blob([file.buffer], { type: mimeType });
+    const blob = new Blob([new Uint8Array(file.buffer)], { type: mimeType });
     formData.append('file', blob, file.originalname || 'upload.bin');
 
     const body = (req.body ?? {}) as Record<string, unknown>;
