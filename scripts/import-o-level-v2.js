@@ -5,8 +5,10 @@
  *   - public.question_parts  ((a)(i)/(b)(ii) parts of structured questions)
  *
  * Source layout (per subject folder under O_Level_jsons/):
- *   <Subject>/mcqs_by_year/<year>.json     -> MCQs  (type = 'mcq')
- *   <Subject>/<batch>.json                 -> papers (type = 'structured')
+ *   <Subject>/mcqs_by_year/<year>.json        -> MCQs  (type = 'mcq', flat mcqs[])
+ *   <Subject>/question per year/<year>.json   -> written questions (type = 'structured', flat questions[])
+ *
+ * dedup_group is taken from the source JSON when present, else computed from content.
  *
  * Usage:
  *   node scripts/import-o-level-v2.js --subject=physics --replace
@@ -22,6 +24,7 @@
 
 const fs = require("fs/promises");
 const path = require("path");
+const crypto = require("crypto");
 const dotenv = require("dotenv");
 const { createClient } = require("@supabase/supabase-js");
 
@@ -92,9 +95,36 @@ async function readJson(filePath) {
   return JSON.parse(await fs.readFile(filePath, "utf8"));
 }
 
-function paperRank(paper) {
-  const match = String(paper || "").match(/paper[_\s-]*(\d+)/i);
-  return match ? Number.parseInt(match[1], 10) : 99;
+async function readDirSafe(dir) {
+  try {
+    return await fs.readdir(dir);
+  } catch {
+    return [];
+  }
+}
+
+// Content fingerprint so the SAME question (recurring across variants/years) shares
+// a dedup_group. Hash is over normalized TEXT only — re-scanned diagrams differ
+// byte-wise across years, so including image bytes would defeat cross-year dedup.
+function normContent(value) {
+  return String(value == null ? "" : value)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function dedupGroup(raw, type) {
+  let content;
+  if (type === "mcq") {
+    const opts = ["A", "B", "C", "D"].map((k) => normContent((raw.options || {})[k])).join("~");
+    content = "mcq||" + normContent(raw.question_text) + "||" + opts;
+  } else {
+    const partsText = (Array.isArray(raw.parts) ? raw.parts : [])
+      .map((part) => normContent(part.part) + ":" + normContent(part.question_text))
+      .join("|");
+    content = "structured||" + normContent(raw.intro_text || raw.question_text) + "||" + partsText;
+  }
+  return crypto.createHash("sha1").update(content).digest("hex");
 }
 
 // ---------------------------------------------------------------------------
@@ -189,32 +219,6 @@ async function flushBatch(items) {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Flatten the nested papers.{year}.{session}.{paper}.{variant}[] structure.
-// ---------------------------------------------------------------------------
-function flattenStructured(batchData) {
-  const rows = [];
-  const papersByYear = asJsonObjectOrNull(batchData.papers) || {};
-
-  for (const year of Object.keys(papersByYear).sort()) {
-    if (!/^\d{4}$/.test(year)) continue; // skip metadata keys
-    const sessions = papersByYear[year] || {};
-    for (const session of Object.keys(sessions).sort()) {
-      const papers = sessions[session] || {};
-      for (const paper of Object.keys(papers).sort((a, b) => paperRank(a) - paperRank(b) || a.localeCompare(b))) {
-        const variants = papers[paper] || {};
-        for (const variant of Object.keys(variants).sort()) {
-          const questions = Array.isArray(variants[variant]) ? variants[variant] : [];
-          for (const question of questions) {
-            rows.push({ ...question, year, session, paper, variant });
-          }
-        }
-      }
-    }
-  }
-  return rows;
-}
-
 async function clearSubject(subject) {
   // question_parts cascade-delete via FK when questions are removed.
   let deleted = 0;
@@ -238,18 +242,17 @@ async function importSubjectFolder(folderName) {
   const subjectDir = path.join(dataRoot, folderName);
   const mcqDir = path.join(subjectDir, "mcqs_by_year");
 
-  const mcqFiles = (await fs.readdir(mcqDir)).filter((f) => /^\d{4}\.json$/.test(f)).sort();
-  const batchFiles = (await fs.readdir(subjectDir))
-    .filter((f) => /^\d{4}-\d{4}\.json$|^\d{4}-onwards\.json$/.test(f))
-    .sort();
+  const structDir = path.join(subjectDir, "question per year");
+  const mcqFiles = (await readDirSafe(mcqDir)).filter((f) => /^\d{4}\.json$/.test(f)).sort();
+  const structFiles = (await readDirSafe(structDir)).filter((f) => /^\d{4}\.json$/.test(f)).sort();
 
   // Canonical subject name from the JSON itself (folder may be lower-cased).
   let subject = folderName;
   if (mcqFiles.length) {
     const first = await readJson(path.join(mcqDir, mcqFiles[0]));
     subject = cleanText(first.subject) || folderName;
-  } else if (batchFiles.length) {
-    const first = await readJson(path.join(subjectDir, batchFiles[0]));
+  } else if (structFiles.length) {
+    const first = await readJson(path.join(structDir, structFiles[0]));
     subject = cleanText(first.subject) || folderName;
   }
 
@@ -295,6 +298,7 @@ async function importSubjectFolder(folderName) {
           requires_diagram: Boolean(raw.requires_diagram),
           images: Array.isArray(raw.images) ? raw.images : [],
           reference: asJsonObjectOrNull(raw.reference),
+          dedup_group: cleanText(raw.dedup_group) || dedupGroup(raw, "mcq"),
         },
         parts: [],
       });
@@ -303,10 +307,11 @@ async function importSubjectFolder(folderName) {
     }
   }
 
-  // ---- Structured papers -------------------------------------------------
-  for (const file of batchFiles) {
-    const data = await readJson(path.join(subjectDir, file));
-    const questions = flattenStructured(data);
+  // ---- Structured "question per year" files (flat questions[] arrays) -----
+  for (const file of structFiles) {
+    const data = await readJson(path.join(structDir, file));
+    const fallbackYear = data.year || file.replace(".json", "");
+    const questions = Array.isArray(data.questions) ? data.questions : [];
 
     for (const raw of questions) {
       const subj = cleanText(raw.subject) || subject;
@@ -317,7 +322,7 @@ async function importSubjectFolder(folderName) {
           question_id: cleanText(raw.question_id),
           subject: subj,
           type: "structured",
-          exam_year: intOrNull(raw.year),
+          exam_year: intOrNull(raw.year, fallbackYear),
           session: cleanText(raw.session),
           paper: cleanText(raw.paper),
           variant: cleanText(raw.variant),
@@ -333,6 +338,7 @@ async function importSubjectFolder(folderName) {
           requires_diagram: Boolean(raw.requires_diagram),
           images: Array.isArray(raw.images) ? raw.images : [],
           reference: asJsonObjectOrNull(raw.reference),
+          dedup_group: cleanText(raw.dedup_group) || dedupGroup(raw, "structured"),
         },
         parts,
       });
