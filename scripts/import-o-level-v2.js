@@ -117,7 +117,7 @@ function dedupGroup(raw, type) {
   let content;
   if (type === "mcq") {
     const opts = ["A", "B", "C", "D"].map((k) => normContent((raw.options || {})[k])).join("~");
-    content = "mcq||" + normContent(raw.question_text) + "||" + opts;
+    content = "mcq||" + normContent(raw.mcq_stem || raw.question_text) + "||" + opts;
   } else {
     const partsText = (Array.isArray(raw.parts) ? raw.parts : [])
       .map((part) => normContent(part.part) + ":" + normContent(part.question_text))
@@ -125,6 +125,23 @@ function dedupGroup(raw, type) {
     content = "structured||" + normContent(raw.intro_text || raw.question_text) + "||" + partsText;
   }
   return crypto.createHash("sha1").update(content).digest("hex");
+}
+
+// Collect a question's images. Handles three shapes:
+//   - raw.images[]            (Physics/Chemistry: stem/figure images)
+//   - raw.image               (Mathematics: the whole question as one image)
+//   - raw.answer_image        (Mathematics: the mark-scheme answer image)
+// answer_image is tagged role 'answer' so the UI keeps it behind the reveal toggle.
+function buildImages(raw) {
+  const imgs = [];
+  if (Array.isArray(raw.images)) imgs.push(...raw.images);
+  if (raw.image && typeof raw.image === "object" && raw.image.data_url) {
+    imgs.push({ ...raw.image, role: raw.image.role || "question" });
+  }
+  if (raw.answer_image && typeof raw.answer_image === "object" && raw.answer_image.data_url) {
+    imgs.push({ ...raw.answer_image, role: "answer" });
+  }
+  return imgs;
 }
 
 // ---------------------------------------------------------------------------
@@ -238,13 +255,30 @@ async function clearSubject(subject) {
   if (deleted > 0) console.log(`Cleared ${deleted} existing ${subject} question rows.`);
 }
 
+const isYearFile = (f) => /^\d{4}\.json$/.test(f);
+
+// Build a stable id for MCQ practice questions that ship without a question_id.
+const sessionAbbrev = (s) => (/may|june|m.?j/i.test(s) ? "MJ" : /oct|nov|o.?n/i.test(s) ? "ON" : String(s || "").replace(/[^A-Za-z0-9]+/g, "") || "XX");
+const paperAbbrev = (p) => {
+  const m = String(p || "").match(/(\d+)/);
+  return m ? "P" + m[1] : String(p || "").replace(/[^A-Za-z0-9]+/g, "") || "P";
+};
+const subjectAbbrev = (s) => String(s || "").replace(/[^A-Za-z0-9]+/g, "");
+
 async function importSubjectFolder(folderName) {
   const subjectDir = path.join(dataRoot, folderName);
   const mcqDir = path.join(subjectDir, "mcqs_by_year");
 
-  const structDir = path.join(subjectDir, "question per year");
-  const mcqFiles = (await readDirSafe(mcqDir)).filter((f) => /^\d{4}\.json$/.test(f)).sort();
-  const structFiles = (await readDirSafe(structDir)).filter((f) => /^\d{4}\.json$/.test(f)).sort();
+  const mcqFiles = (await readDirSafe(mcqDir)).filter(isYearFile).sort();
+
+  // Structured year files live in "question per year/", or directly in the
+  // subject folder (e.g. Mathematics: <Subject>/<year>.json).
+  let structDir = path.join(subjectDir, "question per year");
+  let structFiles = (await readDirSafe(structDir)).filter(isYearFile).sort();
+  if (structFiles.length === 0) {
+    structDir = subjectDir;
+    structFiles = (await readDirSafe(subjectDir)).filter(isYearFile).sort();
+  }
 
   // Canonical subject name from the JSON itself (folder may be lower-cased).
   let subject = folderName;
@@ -272,31 +306,54 @@ async function importSubjectFolder(folderName) {
   for (const file of mcqFiles) {
     const data = await readJson(path.join(mcqDir, file));
     const fallbackYear = data.year || file.replace(".json", "");
-    const questions = Array.isArray(data.mcqs) ? data.mcqs : [];
+    // Most MCQ files use `mcqs`; AI practice MCQ banks use `questions`.
+    const questions = Array.isArray(data.mcqs) ? data.mcqs : Array.isArray(data.questions) ? data.questions : [];
+    const seqByGroup = new Map();
 
     for (const raw of questions) {
       const subj = cleanText(raw.subject) || subject;
+      const year = intOrNull(raw.year, fallbackYear);
+      const session = cleanText(raw.session);
+      const paper = cleanText(raw.paper);
+
+      let questionId = cleanText(raw.question_id);
+      let variant = cleanText(raw.variant);
+      let questionNumber = intOrNull(raw.question_number) ?? 0;
+
+      // Practice MCQs ship without a question_id/variant and reuse paper question
+      // numbers across several derived MCQs. Renumber sequentially per
+      // (year, session, paper) and synthesise a stable id so both unique keys hold.
+      if (!questionId) {
+        const groupKey = [year, session, paper].join("|");
+        questionNumber = (seqByGroup.get(groupKey) || 0) + 1;
+        seqByGroup.set(groupKey, questionNumber);
+        // The unique key has no `type`, so an MCQ and a written question for the
+        // same paper/number would clash. Tag these practice MCQs so they don't.
+        variant = "MCQ";
+        questionId = `${subjectAbbrev(subj)}_${year}_${sessionAbbrev(session)}_${paperAbbrev(paper)}_MCQ_Q${questionNumber}`;
+      }
+
       const topicId = await resolveTopicId(subj, raw.topic, raw.theme, raw.syllabus_ref);
       batch.push({
         row: {
-          question_id: cleanText(raw.question_id),
+          question_id: questionId,
           subject: subj,
           type: "mcq",
-          exam_year: intOrNull(raw.year, fallbackYear),
-          session: cleanText(raw.session),
-          paper: cleanText(raw.paper),
-          variant: cleanText(raw.variant),
-          question_number: intOrNull(raw.question_number) ?? 0,
+          exam_year: year,
+          session,
+          paper,
+          variant,
+          question_number: questionNumber,
           topic: cleanText(raw.topic) || null,
           theme: cleanText(raw.theme) || null,
           topic_id: topicId,
-          question_text: cleanText(raw.question_text),
+          question_text: cleanText(raw.mcq_stem) || cleanText(raw.question_text),
           marks: intOrNull(raw.marks),
           options: asJsonObjectOrNull(raw.options),
           correct_option: cleanText(raw.correct_option) || null,
-          marking_scheme: cleanText(raw.marking_scheme) || null,
+          marking_scheme: cleanText(raw.marking_scheme) || cleanText(raw.answer) || null,
           requires_diagram: Boolean(raw.requires_diagram),
-          images: Array.isArray(raw.images) ? raw.images : [],
+          images: buildImages(raw),
           reference: asJsonObjectOrNull(raw.reference),
           dedup_group: cleanText(raw.dedup_group) || dedupGroup(raw, "mcq"),
         },
@@ -330,13 +387,13 @@ async function importSubjectFolder(folderName) {
           topic: cleanText(raw.topic) || null,
           theme: cleanText(raw.theme) || null,
           topic_id: topicId,
-          question_text: cleanText(raw.intro_text) || cleanText(raw.question_text),
+          question_text: cleanText(raw.intro_text) || cleanText(raw.preview_text) || cleanText(raw.question_text),
           marks: intOrNull(raw.total_marks, raw.marks),
           options: null,
           correct_option: null,
           marking_scheme: cleanText(raw.marking_scheme) || null,
-          requires_diagram: Boolean(raw.requires_diagram),
-          images: Array.isArray(raw.images) ? raw.images : [],
+          requires_diagram: Boolean(raw.requires_diagram || raw.image || raw.images),
+          images: buildImages(raw),
           reference: asJsonObjectOrNull(raw.reference),
           dedup_group: cleanText(raw.dedup_group) || dedupGroup(raw, "structured"),
         },
@@ -361,12 +418,14 @@ async function main() {
   for (const entry of entries) {
     if (!entry.isDirectory()) continue;
     if (onlySubject && entry.name.toLowerCase() !== onlySubject.toLowerCase()) continue;
-    try {
-      await fs.access(path.join(dataRoot, entry.name, "mcqs_by_year"));
-      folders.push(entry.name);
-    } catch {
-      // not a subject folder
-    }
+
+    // A subject folder has MCQ year files, "question per year" files, or year
+    // files directly inside it.
+    const dir = path.join(dataRoot, entry.name);
+    const hasMcq = (await readDirSafe(path.join(dir, "mcqs_by_year"))).some(isYearFile);
+    const hasStructFolder = (await readDirSafe(path.join(dir, "question per year"))).some(isYearFile);
+    const hasDirectYears = (await readDirSafe(dir)).some(isYearFile);
+    if (hasMcq || hasStructFolder || hasDirectYears) folders.push(entry.name);
   }
 
   if (folders.length === 0) throw new Error(`No subject folders found in ${dataRoot}`);
