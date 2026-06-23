@@ -132,6 +132,20 @@ function dedupGroup(raw, type) {
 //   - raw.image               (Mathematics: the whole question as one image)
 //   - raw.answer_image        (Mathematics: the mark-scheme answer image)
 // answer_image is tagged role 'answer' so the UI keeps it behind the reveal toggle.
+// Some parts (e.g. English vocabulary-in-context) carry MCQ options. The parts
+// table has no options column, so render them into the body text as labelled lines.
+function formatPartOptions(options) {
+  if (!options) return "";
+  let entries = [];
+  if (Array.isArray(options)) entries = options.map((value, i) => [String.fromCharCode(65 + i), value]);
+  else if (typeof options === "object") entries = Object.entries(options);
+  const lines = entries
+    .map(([label, text]) => [String(label).toUpperCase(), cleanText(text)])
+    .filter(([, text]) => text)
+    .map(([label, text]) => `${label}. ${text}`);
+  return lines.length ? "\n" + lines.join("\n") : "";
+}
+
 function buildImages(raw) {
   const imgs = [];
   if (Array.isArray(raw.images)) imgs.push(...raw.images);
@@ -218,7 +232,7 @@ async function flushBatch(items) {
         question_uid: uid,
         label: cleanText(part.part) || `(${index + 1})`,
         order_index: index,
-        body: cleanText(part.question_text),
+        body: cleanText(part.question_text) + formatPartOptions(part.options),
         marks: intOrNull(part.marks),
         answer: cleanText(part.answer) || null,
       });
@@ -355,6 +369,8 @@ async function importSubjectFolder(folderName) {
           requires_diagram: Boolean(raw.requires_diagram),
           images: buildImages(raw),
           reference: asJsonObjectOrNull(raw.reference),
+          sources: Array.isArray(raw.sources) ? raw.sources : [],
+          source_note: cleanText(raw.source_note) || null,
           dedup_group: cleanText(raw.dedup_group) || dedupGroup(raw, "mcq"),
         },
         parts: [],
@@ -374,6 +390,10 @@ async function importSubjectFolder(folderName) {
       const subj = cleanText(raw.subject) || subject;
       const topicId = await resolveTopicId(subj, raw.topic, raw.theme, raw.syllabus_ref);
       const parts = Array.isArray(raw.parts) ? raw.parts : [];
+      // A non-numeric question_number suffix (e.g. "1(b)") collapses to the same
+      // int and clashes on the composite key — fold the suffix into the variant.
+      const rawQn = String(raw.question_number == null ? "" : raw.question_number).trim();
+      const qnSuffix = rawQn.replace(/^\s*-?\d+/, "").trim();
       batch.push({
         row: {
           question_id: cleanText(raw.question_id),
@@ -382,7 +402,7 @@ async function importSubjectFolder(folderName) {
           exam_year: intOrNull(raw.year, fallbackYear),
           session: cleanText(raw.session),
           paper: cleanText(raw.paper),
-          variant: cleanText(raw.variant),
+          variant: cleanText(raw.variant) + qnSuffix,
           question_number: intOrNull(raw.question_number) ?? 0,
           topic: cleanText(raw.topic) || null,
           theme: cleanText(raw.theme) || null,
@@ -395,6 +415,8 @@ async function importSubjectFolder(folderName) {
           requires_diagram: Boolean(raw.requires_diagram || raw.image || raw.images),
           images: buildImages(raw),
           reference: asJsonObjectOrNull(raw.reference),
+          sources: Array.isArray(raw.sources) ? raw.sources : [],
+          source_note: cleanText(raw.source_note) || cleanText(raw.passage_note) || null,
           dedup_group: cleanText(raw.dedup_group) || dedupGroup(raw, "structured"),
         },
         parts,
