@@ -155,7 +155,28 @@ function buildImages(raw) {
   if (raw.answer_image && typeof raw.answer_image === "object" && raw.answer_image.data_url) {
     imgs.push({ ...raw.answer_image, role: "answer" });
   }
+  // Islamiyat Qur'an passages can carry an image of the Arabic text.
+  if (Array.isArray(raw.passages)) {
+    for (const p of raw.passages) {
+      if (p && p.arabic_image && typeof p.arabic_image === "object" && p.arabic_image.data_url) {
+        imgs.push({ ...p.arabic_image, role: p.arabic_image.role && p.arabic_image.role !== "answer" ? p.arabic_image.role : "passage" });
+      }
+    }
+  }
   return imgs;
+}
+
+// Islamiyat quran_passage questions list their passages separately (label,
+// reference, translation) and do NOT inline them — compose them into the text.
+function passageText(raw) {
+  if (!Array.isArray(raw.passages) || raw.passages.length === 0) return "";
+  const blocks = raw.passages
+    .map((p) => {
+      const head = [cleanText(p.label), cleanText(p.reference) ? `[${cleanText(p.reference)}]` : ""].filter(Boolean).join(" ");
+      return [head, cleanText(p.translation)].filter(Boolean).join("\n");
+    })
+    .filter(Boolean);
+  return blocks.length ? "\n\n" + blocks.join("\n\n") : "";
 }
 
 // ---------------------------------------------------------------------------
@@ -407,7 +428,7 @@ async function importSubjectFolder(folderName) {
           topic: cleanText(raw.topic) || null,
           theme: cleanText(raw.theme) || null,
           topic_id: topicId,
-          question_text: cleanText(raw.intro_text) || cleanText(raw.preview_text) || cleanText(raw.question_text),
+          question_text: (cleanText(raw.intro_text) || cleanText(raw.preview_text) || cleanText(raw.question_text)) + passageText(raw),
           marks: intOrNull(raw.total_marks, raw.marks),
           options: null,
           correct_option: null,
