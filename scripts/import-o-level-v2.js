@@ -57,9 +57,30 @@ const supabase = createClient(SUPABASE_URL, SERVICE_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },
 });
 
+// Cambridge/UCLES exam-paper boilerplate that leaked into the extracted text.
+const BOILERPLATE_1 =
+  /\s*(?:at\s+www\.cambridgeinternational\.org\s+after\s+)?the\s+live\s+examination\s+series\.?(?:\s*(?:University of Cambridge Local |Local )?Examinations\s+Syndicate\s*\(UCLES\),?\s*which\s+(?:is\s+itself|itself\s+is|is)\s+a\s+department\s+of\s+the\s+University\s+of\s+Cambridge\.?)?/gi;
+const BOILERPLATE_2 =
+  /\s*(?:University of Cambridge Local |Local )?Examinations\s+Syndicate\s*\(UCLES\),?\s*which\s+(?:is\s+itself|itself\s+is|is)\s+a\s+department\s+of\s+the\s+University\s+of\s+Cambridge\.?/gi;
+// Copyright-acknowledgement / answer-page / map-disclaimer / image-credit blocks
+// always sit at the tail of a field — strip from the earliest marker to the end
+// (consuming any leaked page numbers in front of it).
+const BOILERPLATE_TAIL =
+  /\s*(?:\b\d{1,3}\b\s+)*(?:Additional Pages?\s+If you use|If you use the following lined|END OF QUESTION PAPER|The boundaries and names shown|do not imply official endorsement|Copyright Acknowledgements?\b|Permission to reproduce items|Every reasonable effort has been made|To avoid the issue of disclosure|Cambridge International Examinations is part of|Cambridge Assessment is the brand name|Cambridge Assessment International Education concerning|is freely available to download at www\.cie\.org\.uk|©\s*Ref:)[\s\S]*$/i;
+// "BLANK PAGE" markers are interspersed mid-text — remove the tokens only.
+const BLANK_PAGE_RE = /\s*\bBLANK PAGE\b/gi;
+
+const BOILERPLATE_MARK =
+  /BLANK PAGE|Copyright Acknowledgement|Permission to reproduce items|Every reasonable effort|Cambridge International Examinations|Cambridge Assessment|www\.cie\.org\.uk|cambridgeinternational\.org|live examination series|Examinations Syndicate|Additional Pages?\s+If you use|If you use the following lined|END OF QUESTION PAPER|The boundaries and names shown|do not imply official endorsement|©\s*Ref:/i;
+
+function stripBoilerplate(value) {
+  if (!BOILERPLATE_MARK.test(value)) return value;
+  return value.replace(BOILERPLATE_TAIL, "").replace(BOILERPLATE_1, " ").replace(BOILERPLATE_2, " ").replace(BLANK_PAGE_RE, " ");
+}
+
 function cleanText(value) {
   if (value === null || value === undefined) return "";
-  return String(value)
+  return stripBoilerplate(String(value))
     .replace(/â€“/g, "-")
     .replace(/â€”/g, "-")
     .replace(/â€˜/g, "'")
@@ -71,6 +92,7 @@ function cleanText(value) {
     .replace(/â»/g, "-")
     .replace(/Â/g, "")
     .replace(/\s+/g, " ")
+    .replace(/\s+([.?!,;:])/g, "$1")
     .trim();
 }
 
@@ -155,28 +177,43 @@ function buildImages(raw) {
   if (raw.answer_image && typeof raw.answer_image === "object" && raw.answer_image.data_url) {
     imgs.push({ ...raw.answer_image, role: "answer" });
   }
-  // Islamiyat Qur'an passages can carry an image of the Arabic text.
-  if (Array.isArray(raw.passages)) {
-    for (const p of raw.passages) {
-      if (p && p.arabic_image && typeof p.arabic_image === "object" && p.arabic_image.data_url) {
-        imgs.push({ ...p.arabic_image, role: p.arabic_image.role && p.arabic_image.role !== "answer" ? p.arabic_image.role : "passage" });
-      }
-    }
-  }
   return imgs;
 }
 
-// Islamiyat quran_passage questions list their passages separately (label,
-// reference, translation) and do NOT inline them — compose them into the text.
-function passageText(raw) {
-  if (!Array.isArray(raw.passages) || raw.passages.length === 0) return "";
-  const blocks = raw.passages
-    .map((p) => {
-      const head = [cleanText(p.label), cleanText(p.reference) ? `[${cleanText(p.reference)}]` : ""].filter(Boolean).join(" ");
-      return [head, cleanText(p.translation)].filter(Boolean).join("\n");
-    })
-    .filter(Boolean);
-  return blocks.length ? "\n\n" + blocks.join("\n\n") : "";
+// Structured source/passage material that belongs to the question (NOT something
+// the student answers): History sources (Pakistan Studies) and Qur'an/Hadith
+// passages (Islamiyat: label + reference + translation + the Arabic-text image).
+// Stored together so the UI can show each image paired with its translation.
+function buildSources(raw) {
+  if (Array.isArray(raw.sources) && raw.sources.length) return raw.sources;
+  if (Array.isArray(raw.passages) && raw.passages.length) {
+    return raw.passages
+      .map((p) => {
+        const img = p && p.arabic_image && typeof p.arabic_image === "object" && p.arabic_image.data_url ? p.arabic_image : null;
+        return {
+          label: cleanText(p.label) || null,
+          reference: cleanText(p.reference) || null,
+          translation: cleanText(p.translation) || null,
+          image: img ? { data_url: img.data_url, width: img.width ?? null, height: img.height ?? null } : null,
+        };
+      })
+      .filter((s) => s.translation || s.image);
+  }
+  return [];
+}
+
+// Some years embed the Qur'an/Hadith passages as roman-numeral "parts" (i)(ii)
+// instead of a passages[] array. These carry no marks and no answer (the real
+// question parts (a)(b) do). Treat them as read-only passages, not answer parts.
+const ROMAN_LABEL = /^\(?\s*(i|ii|iii|iv|v|vi|vii|viii|ix|x)\s*\)?\.?$/i;
+function isPassagePart(part) {
+  return ROMAN_LABEL.test(String(part.part || "").trim()) && !cleanText(part.answer) && part.marks == null;
+}
+function passagePartsToSources(parts) {
+  return parts
+    .filter(isPassagePart)
+    .map((p) => ({ label: cleanText(p.part) || null, reference: null, translation: cleanText(p.question_text) || null, image: null }))
+    .filter((s) => s.translation);
 }
 
 // ---------------------------------------------------------------------------
@@ -390,7 +427,7 @@ async function importSubjectFolder(folderName) {
           requires_diagram: Boolean(raw.requires_diagram),
           images: buildImages(raw),
           reference: asJsonObjectOrNull(raw.reference),
-          sources: Array.isArray(raw.sources) ? raw.sources : [],
+          sources: buildSources(raw),
           source_note: cleanText(raw.source_note) || null,
           dedup_group: cleanText(raw.dedup_group) || dedupGroup(raw, "mcq"),
         },
@@ -410,7 +447,11 @@ async function importSubjectFolder(folderName) {
     for (const raw of questions) {
       const subj = cleanText(raw.subject) || subject;
       const topicId = await resolveTopicId(subj, raw.topic, raw.theme, raw.syllabus_ref);
-      const parts = Array.isArray(raw.parts) ? raw.parts : [];
+      const rawParts = Array.isArray(raw.parts) ? raw.parts : [];
+      // Passages embedded as roman-numeral parts are read-only sources, not answers.
+      const passageSources = passagePartsToSources(rawParts);
+      const parts = rawParts.filter((p) => !isPassagePart(p));
+      const sources = [...buildSources(raw), ...passageSources];
       // A non-numeric question_number suffix (e.g. "1(b)") collapses to the same
       // int and clashes on the composite key — fold the suffix into the variant.
       const rawQn = String(raw.question_number == null ? "" : raw.question_number).trim();
@@ -428,7 +469,7 @@ async function importSubjectFolder(folderName) {
           topic: cleanText(raw.topic) || null,
           theme: cleanText(raw.theme) || null,
           topic_id: topicId,
-          question_text: (cleanText(raw.intro_text) || cleanText(raw.preview_text) || cleanText(raw.question_text)) + passageText(raw),
+          question_text: cleanText(raw.intro_text) || cleanText(raw.preview_text) || cleanText(raw.question_text),
           marks: intOrNull(raw.total_marks, raw.marks),
           options: null,
           correct_option: null,
@@ -436,7 +477,7 @@ async function importSubjectFolder(folderName) {
           requires_diagram: Boolean(raw.requires_diagram || raw.image || raw.images),
           images: buildImages(raw),
           reference: asJsonObjectOrNull(raw.reference),
-          sources: Array.isArray(raw.sources) ? raw.sources : [],
+          sources,
           source_note: cleanText(raw.source_note) || cleanText(raw.passage_note) || null,
           dedup_group: cleanText(raw.dedup_group) || dedupGroup(raw, "structured"),
         },
