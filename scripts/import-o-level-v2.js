@@ -542,6 +542,19 @@ async function importSubjectFolder(folderName) {
       // int and clashes on the composite key — fold the suffix into the variant.
       const rawQn = String(raw.question_number == null ? "" : raw.question_number).trim();
       const qnSuffix = rawQn.replace(/^\s*-?\d+/, "").trim();
+      let structVariant = cleanText(raw.variant) + qnSuffix;
+      let structNumber = intOrNull(raw.question_number) ?? 0;
+      // When there is no question number (e.g. History Paper 2 "OptA"/"OptB"
+      // source studies), derive a disambiguator from the question_id tail so the
+      // composite key stays unique.
+      if (structNumber === 0) {
+        const tail = cleanText(raw.question_id).split("_").pop() || "";
+        const qMatch = tail.match(/Q(\d+)/i);
+        const optMatch = tail.match(/^Opt([A-Z])$/i);
+        if (qMatch) structNumber = Number.parseInt(qMatch[1], 10);
+        else if (optMatch) structNumber = optMatch[1].toUpperCase().charCodeAt(0) - 64;
+        else if (tail) structVariant = structVariant ? `${structVariant} ${tail}` : tail;
+      }
       batch.push({
         row: {
           question_id: cleanText(raw.question_id),
@@ -550,8 +563,8 @@ async function importSubjectFolder(folderName) {
           exam_year: intOrNull(raw.year, fallbackYear),
           session: cleanText(raw.session),
           paper: cleanText(raw.paper),
-          variant: cleanText(raw.variant) + qnSuffix,
-          question_number: intOrNull(raw.question_number) ?? 0,
+          variant: structVariant,
+          question_number: structNumber,
           topic: cleanText(raw.topic) || null,
           theme: cleanText(raw.theme) || null,
           topic_id: topicId,
