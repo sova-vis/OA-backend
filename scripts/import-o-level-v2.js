@@ -91,6 +91,8 @@ function cleanText(value) {
     .replace(/â‰¥/g, ">=")
     .replace(/â»/g, "-")
     .replace(/Â/g, "")
+    // strip NUL + other control chars (PDF artefacts Postgres rejects)
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "")
     .replace(/\s+/g, " ")
     .replace(/\s+([.?!,;:])/g, "$1")
     .trim();
@@ -138,13 +140,16 @@ function normContent(value) {
 function dedupGroup(raw, type) {
   let content;
   if (type === "mcq") {
-    const opts = ["A", "B", "C", "D"].map((k) => normContent((raw.options || {})[k])).join("~");
-    content = "mcq||" + normContent(raw.mcq_stem || raw.question_text) + "||" + opts;
+    const opts = Array.isArray(raw.options)
+      ? raw.options.map((o) => normContent(o && typeof o === "object" ? o.text ?? o.value : o)).join("~")
+      : ["A", "B", "C", "D"].map((k) => normContent((raw.options || {})[k])).join("~");
+    content = "mcq||" + normContent(composeMcqText(raw)) + "||" + opts;
   } else {
-    const partsText = (Array.isArray(raw.parts) ? raw.parts : [])
+    const flat = flattenParts(raw);
+    const partsText = (Array.isArray(flat) ? flat : [])
       .map((part) => normContent(part.part) + ":" + normContent(part.question_text))
       .join("|");
-    content = "structured||" + normContent(raw.intro_text || raw.question_text) + "||" + partsText;
+    content = "structured||" + normContent(composeStructText(raw)) + "||" + partsText;
   }
   return crypto.createHash("sha1").update(content).digest("hex");
 }
@@ -177,7 +182,77 @@ function buildImages(raw) {
   if (raw.answer_image && typeof raw.answer_image === "object" && raw.answer_image.data_url) {
     imgs.push({ ...raw.answer_image, role: "answer" });
   }
+  // Geography / Environmental Management: figures[] carry the data_url in `image`.
+  if (Array.isArray(raw.figures)) {
+    for (const fig of raw.figures) {
+      const dataUrl = typeof fig.image === "string" ? fig.image : fig.image && fig.image.data_url;
+      if (dataUrl && /^data:/.test(dataUrl)) {
+        imgs.push({ data_url: dataUrl, width: fig.width ?? null, height: fig.height ?? null, caption: cleanText(fig.caption) || null, role: "figure" });
+      }
+    }
+  }
   return imgs;
+}
+
+const OPTION_LETTER = /^[A-D]$/;
+
+// Render an inline data table (Accounting/Economics/Commerce MCQ `tables`, or a
+// structured `context.data_tables`) as newline-separated "cell | cell" rows.
+function tablesText(tables) {
+  if (!Array.isArray(tables) || tables.length === 0) return "";
+  return tables
+    .map((table) => {
+      const rows = Array.isArray(table) ? table : Array.isArray(table.rows) ? table.rows : [];
+      return rows.map((row) => (Array.isArray(row) ? row.map((c) => cleanText(c)).join(" | ") : cleanText(row))).filter(Boolean).join("\n");
+    })
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+// MCQ stem (+ any inline table), preserving table newlines (cleanText would strip them).
+function composeMcqText(raw) {
+  const base = cleanText(raw.stem) || cleanText(raw.mcq_stem) || cleanText(raw.question_text);
+  const table = tablesText(raw.tables);
+  return table ? [base, table].filter(Boolean).join("\n\n") : base;
+}
+
+// Structured intro: `context.text` (+ data tables) OR intro_text/preview_text/prompt,
+// plus any art-assignment instructions.
+function composeStructText(raw) {
+  let base;
+  if (raw.context && typeof raw.context === "object" && !Array.isArray(raw.context)) base = cleanText(raw.context.text);
+  else base = cleanText(raw.intro_text) || cleanText(raw.preview_text) || cleanText(raw.question_text) || cleanText(raw.prompt);
+  const blocks = [base].filter(Boolean);
+  const instructions = cleanText(raw.instructions);
+  if (instructions) blocks.push(instructions);
+  const dataTables = tablesText(raw.context && raw.context.data_tables);
+  if (dataTables) blocks.push(dataTables);
+  return blocks.join("\n\n");
+}
+
+// Flatten parts + subparts into {part, question_text, marks, answer}, resolving each
+// answer from the question-level `answers` map keyed by the full label (e.g. "(a)(i)").
+function flattenParts(raw) {
+  if (!Array.isArray(raw.parts)) return raw.parts || [];
+  const answers = raw.answers && typeof raw.answers === "object" && !Array.isArray(raw.answers) ? raw.answers : null;
+  // Old shape already uses {part, question_text, answer} — pass through untouched.
+  if (!answers && !raw.parts.some((p) => p && (p.subparts || (p.label !== undefined && p.text !== undefined)))) return raw.parts;
+
+  const out = [];
+  for (const p of raw.parts) {
+    const label = p.label ?? p.part;
+    const body = p.text ?? p.question_text;
+    if (Array.isArray(p.subparts) && p.subparts.length) {
+      if (cleanText(body)) out.push({ part: label, question_text: body, marks: null, answer: (answers && answers[label]) ?? p.answer ?? null });
+      for (const sp of p.subparts) {
+        const full = `${label ?? ""}${sp.label ?? ""}`;
+        out.push({ part: full, question_text: sp.text ?? sp.question_text, marks: sp.marks, answer: (answers && answers[full]) ?? sp.answer ?? null });
+      }
+    } else {
+      out.push({ part: label, question_text: body, marks: p.marks, answer: p.answer ?? (answers && answers[label]) ?? null, options: p.options });
+    }
+  }
+  return out;
 }
 
 // Structured source/passage material that belongs to the question (NOT something
@@ -343,10 +418,14 @@ async function importSubjectFolder(folderName) {
 
   const mcqFiles = (await readDirSafe(mcqDir)).filter(isYearFile).sort();
 
-  // Structured year files live in "question per year/", or directly in the
-  // subject folder (e.g. Mathematics: <Subject>/<year>.json).
+  // Structured year files live in "question per year/" or "questions_by_year/",
+  // or directly in the subject folder (e.g. Mathematics: <Subject>/<year>.json).
   let structDir = path.join(subjectDir, "question per year");
   let structFiles = (await readDirSafe(structDir)).filter(isYearFile).sort();
+  if (structFiles.length === 0) {
+    structDir = path.join(subjectDir, "questions_by_year");
+    structFiles = (await readDirSafe(structDir)).filter(isYearFile).sort();
+  }
   if (structFiles.length === 0) {
     structDir = subjectDir;
     structFiles = (await readDirSafe(subjectDir)).filter(isYearFile).sort();
@@ -405,6 +484,11 @@ async function importSubjectFolder(folderName) {
         questionId = `${subjectAbbrev(subj)}_${year}_${sessionAbbrev(session)}_${paperAbbrev(paper)}_MCQ_Q${questionNumber}`;
       }
 
+      // `answer` is either the correct-option letter (Accounting/Commerce/Economics)
+      // or the full mark scheme (Pakistan Studies practice MCQs).
+      const answerText = cleanText(raw.answer);
+      const answerIsLetter = OPTION_LETTER.test(answerText.toUpperCase());
+
       const topicId = await resolveTopicId(subj, raw.topic, raw.theme, raw.syllabus_ref);
       batch.push({
         row: {
@@ -419,11 +503,11 @@ async function importSubjectFolder(folderName) {
           topic: cleanText(raw.topic) || null,
           theme: cleanText(raw.theme) || null,
           topic_id: topicId,
-          question_text: cleanText(raw.mcq_stem) || cleanText(raw.question_text),
+          question_text: composeMcqText(raw),
           marks: intOrNull(raw.marks),
-          options: asJsonObjectOrNull(raw.options),
-          correct_option: cleanText(raw.correct_option) || null,
-          marking_scheme: cleanText(raw.marking_scheme) || cleanText(raw.answer) || null,
+          options: Array.isArray(raw.options) ? raw.options : asJsonObjectOrNull(raw.options),
+          correct_option: cleanText(raw.correct_option).toUpperCase() || (answerIsLetter ? answerText.toUpperCase() : null),
+          marking_scheme: cleanText(raw.marking_scheme) || (answerIsLetter ? null : answerText) || null,
           requires_diagram: Boolean(raw.requires_diagram),
           images: buildImages(raw),
           reference: asJsonObjectOrNull(raw.reference),
@@ -447,7 +531,9 @@ async function importSubjectFolder(folderName) {
     for (const raw of questions) {
       const subj = cleanText(raw.subject) || subject;
       const topicId = await resolveTopicId(subj, raw.topic, raw.theme, raw.syllabus_ref);
-      const rawParts = Array.isArray(raw.parts) ? raw.parts : [];
+      // Flatten parts+subparts and resolve answers from the answers map (new schema);
+      // old shapes pass through unchanged.
+      const rawParts = flattenParts(raw);
       // Passages embedded as roman-numeral parts are read-only sources, not answers.
       const passageSources = passagePartsToSources(rawParts);
       const parts = rawParts.filter((p) => !isPassagePart(p));
@@ -469,16 +555,16 @@ async function importSubjectFolder(folderName) {
           topic: cleanText(raw.topic) || null,
           theme: cleanText(raw.theme) || null,
           topic_id: topicId,
-          question_text: cleanText(raw.intro_text) || cleanText(raw.preview_text) || cleanText(raw.question_text),
-          marks: intOrNull(raw.total_marks, raw.marks),
+          question_text: composeStructText(raw),
+          marks: intOrNull(raw.marks_total, raw.total_marks, raw.marks),
           options: null,
           correct_option: null,
           marking_scheme: cleanText(raw.marking_scheme) || null,
-          requires_diagram: Boolean(raw.requires_diagram || raw.image || raw.images),
+          requires_diagram: Boolean(raw.requires_diagram || raw.image || raw.images || raw.figures),
           images: buildImages(raw),
           reference: asJsonObjectOrNull(raw.reference),
           sources,
-          source_note: cleanText(raw.source_note) || cleanText(raw.passage_note) || null,
+          source_note: cleanText(raw.insert_note) || cleanText(raw.source_note) || cleanText(raw.passage_note) || null,
           dedup_group: cleanText(raw.dedup_group) || dedupGroup(raw, "structured"),
         },
         parts,
@@ -507,7 +593,9 @@ async function main() {
     // files directly inside it.
     const dir = path.join(dataRoot, entry.name);
     const hasMcq = (await readDirSafe(path.join(dir, "mcqs_by_year"))).some(isYearFile);
-    const hasStructFolder = (await readDirSafe(path.join(dir, "question per year"))).some(isYearFile);
+    const hasStructFolder =
+      (await readDirSafe(path.join(dir, "question per year"))).some(isYearFile) ||
+      (await readDirSafe(path.join(dir, "questions_by_year"))).some(isYearFile);
     const hasDirectYears = (await readDirSafe(dir)).some(isYearFile);
     if (hasMcq || hasStructFolder || hasDirectYears) folders.push(entry.name);
   }
