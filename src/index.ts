@@ -12,6 +12,7 @@ import ragRoutes from './rag.routes';
 import contentRoutes from './content.routes';
 import qaGradingRoutes from './qaGrading.routes';
 import paperTrackingRoutes from './paperTracking.routes';
+import practiceProgressRoutes from './practiceProgress.routes';
 import mentoringRoutes from './mentoring.routes';
 import paperParserRoutes from './paperParser.routes';
 
@@ -201,6 +202,9 @@ app.use('/rag', ragRoutes);
 
 // User paper tracking API
 app.use('/tracking', paperTrackingRoutes);
+
+// Practice-paper progress API (autosave, timers, handwritten uploads)
+app.use('/practice', practiceProgressRoutes);
 
 // Teacher-student meetings and chat API
 app.use('/mentoring', mentoringRoutes);
