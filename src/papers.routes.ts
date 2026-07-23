@@ -14,18 +14,28 @@ import { env } from './lib/env';
 
 const router = Router();
 
-function resolveDriveFolderId(explicitFolderId?: string): string | undefined {
+type PaperLevel = 'olevel' | 'alevel';
+
+function resolveDriveFolderId(explicitFolderId?: string, level?: PaperLevel): string | undefined {
   const fromParam = explicitFolderId?.trim();
+  if (fromParam) return fromParam;
+
+  // A-Level library lives in its own Drive root
+  if (level === 'alevel') return env.GOOGLE_DRIVE_ALEVEL_FOLDER_ID?.trim();
+
   const fromPrimaryEnv = env.GOOGLE_DRIVE_FOLDER_ID?.trim();
   const fromLegacyEnv = env.GOOGLE_DRIVE_ROOT_FOLDER_ID?.trim();
 
-  return fromParam || fromPrimaryEnv || fromLegacyEnv;
+  return fromPrimaryEnv || fromLegacyEnv;
 }
 
-function missingFolderConfigError() {
+function missingFolderConfigError(level?: PaperLevel) {
+  const varName =
+    level === 'alevel' ? 'GOOGLE_DRIVE_ALEVEL_FOLDER_ID' : 'GOOGLE_DRIVE_FOLDER_ID';
   return {
-    error:
-      'Google Drive folder ID is not configured. Set GOOGLE_DRIVE_FOLDER_ID in OA-backend/.env (or GOOGLE_DRIVE_ROOT_FOLDER_ID for legacy setups).',
+    error: `Google Drive folder ID is not configured. Set ${varName} in OA-backend/.env${
+      level === 'alevel' ? '' : ' (or GOOGLE_DRIVE_ROOT_FOLDER_ID for legacy setups)'
+    }.`,
   };
 }
 
@@ -106,10 +116,13 @@ router.get('/drive/list', async (req, res) => {
  */
 router.get('/browse/:folderId?', async (req, res) => {
   try {
-    const folderId = resolveDriveFolderId(req.params.folderId);
+    // ?level=alevel switches the root to the A-Level library (only relevant
+    // when no explicit folderId is given — subfolder ids are globally unique)
+    const level: PaperLevel = req.query.level === 'alevel' ? 'alevel' : 'olevel';
+    const folderId = resolveDriveFolderId(req.params.folderId, level);
 
     if (!folderId) {
-      return res.status(500).json(missingFolderConfigError());
+      return res.status(500).json(missingFolderConfigError(level));
     }
 
     console.log(`📂 Browsing folder: ${folderId}`);
