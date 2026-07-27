@@ -1,56 +1,22 @@
 import { Router, Response } from 'express';
 import multer from 'multer';
 import { AuthenticatedRequest, clerkAuth } from './lib/clerkAuth';
+import {
+  PracticeProgressDoc, PracticeUpload,
+  ensureBucket, isValidPaperKey, docPath, filesPrefix,
+  readDoc, writeDoc, signUploads,
+} from './lib/practiceStore';
 import { supabase } from './lib/supabase';
+import { PRACTICE_BUCKET } from './lib/practiceStore';
 
 /**
- * Practice-paper progress, persisted as JSON objects in a private Supabase
- * Storage bucket (chosen over a SQL table because Storage rides the working
- * REST credentials). One object per (student, paper):
- *
- *   s/<clerkId>/<paperKeySafe>.json          -> PracticeProgress document
- *   files/<clerkId>/<paperKeySafe>/<name>    -> handwritten upload binaries
- *
- * paper_key = "Subject|Year|Session|Paper|Variant" in question-bank naming,
- * e.g. "Chemistry|2024|May_June|Paper_2|Variant_1".
+ * Practice-paper progress: answers autosaved as the student types, handwritten
+ * upload refs, timer state, completion status and (once graded) a report.
+ * Storage layout and helpers live in lib/practiceStore.ts.
  */
 
-const BUCKET = 'practice-progress';
-const MAX_DOC_BYTES = 1_000_000; // 1MB of typed answers is plenty
 const MAX_UPLOAD_BYTES = 15 * 1024 * 1024;
 const MAX_UPLOADS_PER_PAPER = 24;
-const SIGNED_URL_TTL = 60 * 60; // 1h
-
-type SolveMode = 'digital' | 'handwritten';
-type PracticeStatus = 'in_progress' | 'completed';
-
-interface PracticeUpload {
-  path: string;
-  name: string;
-  size: number;
-  type: string;
-  at: string;
-}
-
-interface PracticeProgressDoc {
-  paperKey: string;
-  subject: string;
-  year: string;
-  session: string;
-  paper: string;
-  variant: string;
-  isMcq: boolean;
-  solveMode: SolveMode;
-  status: PracticeStatus;
-  answers: { mcq: Record<string, string>; parts: Record<string, string> };
-  uploads: PracticeUpload[];
-  answeredCount: number;
-  totalCount: number;
-  timerDurationSeconds: number;
-  timerElapsedSeconds: number;
-  startedAt: string;
-  updatedAt: string;
-}
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -58,35 +24,6 @@ const upload = multer({
 });
 
 const router = Router();
-
-let bucketReady = false;
-async function ensureBucket() {
-  if (bucketReady) return;
-  const { data } = await supabase.storage.getBucket(BUCKET);
-  if (!data) {
-    const { error } = await supabase.storage.createBucket(BUCKET, { public: false });
-    if (error && !/already exists/i.test(error.message)) throw error;
-  }
-  bucketReady = true;
-}
-
-function safeKey(paperKey: string): string {
-  return paperKey.replace(/[^A-Za-z0-9._-]/g, '_');
-}
-
-function isValidPaperKey(paperKey: unknown): paperKey is string {
-  if (typeof paperKey !== 'string' || paperKey.length === 0 || paperKey.length > 200) return false;
-  const segments = paperKey.split('|');
-  return segments.length === 5 && segments.every((segment) => segment.trim().length > 0);
-}
-
-function docPath(clerkId: string, paperKey: string) {
-  return `s/${clerkId}/${safeKey(paperKey)}.json`;
-}
-
-function filesPrefix(clerkId: string, paperKey: string) {
-  return `files/${clerkId}/${safeKey(paperKey)}`;
-}
 
 function cleanRecord(input: unknown, maxEntries: number): Record<string, string> {
   if (!input || typeof input !== 'object' || Array.isArray(input)) return {};
@@ -113,6 +50,7 @@ function clampInt(value: unknown, min: number, max: number, fallback: number): n
   return Math.max(min, Math.min(max, Math.round(n)));
 }
 
+/** Build the stored doc from a client PUT, preserving server-owned fields. */
 function normalizeDoc(paperKey: string, body: Record<string, unknown>, existing: PracticeProgressDoc | null): PracticeProgressDoc {
   const now = new Date().toISOString();
   const segments = paperKey.split('|');
@@ -130,9 +68,10 @@ function normalizeDoc(paperKey: string, body: Record<string, unknown>, existing:
       mcq: cleanRecord((body.answers as Record<string, unknown> | undefined)?.mcq, 200),
       parts: cleanRecord((body.answers as Record<string, unknown> | undefined)?.parts, 500),
     },
-    // uploads are managed exclusively by the upload endpoints; a stale client
-    // PUT must never clobber them
+    // uploads + report are managed by their own endpoints; a stale client PUT
+    // must never clobber them
     uploads: existing?.uploads ?? [],
+    report: existing?.report ?? null,
     answeredCount: clampInt(body.answeredCount, 0, 10_000, 0),
     totalCount: clampInt(body.totalCount, 0, 10_000, 0),
     timerDurationSeconds: clampInt(body.timerDurationSeconds, 0, 24 * 3600, 0),
@@ -140,34 +79,6 @@ function normalizeDoc(paperKey: string, body: Record<string, unknown>, existing:
     startedAt: existing?.startedAt ?? toIso(body.startedAt, now),
     updatedAt: now,
   };
-}
-
-async function readDoc(clerkId: string, paperKey: string): Promise<PracticeProgressDoc | null> {
-  const { data, error } = await supabase.storage.from(BUCKET).download(docPath(clerkId, paperKey));
-  if (error || !data) return null;
-  try {
-    return JSON.parse(await data.text()) as PracticeProgressDoc;
-  } catch {
-    return null;
-  }
-}
-
-async function writeDoc(clerkId: string, doc: PracticeProgressDoc): Promise<void> {
-  const payload = Buffer.from(JSON.stringify(doc), 'utf8');
-  if (payload.byteLength > MAX_DOC_BYTES) throw new Error('Progress document too large');
-  const { error } = await supabase.storage
-    .from(BUCKET)
-    .upload(docPath(clerkId, doc.paperKey), payload, { contentType: 'application/json', upsert: true });
-  if (error) throw error;
-}
-
-async function signUploads(items: PracticeUpload[]): Promise<Array<PracticeUpload & { url?: string }>> {
-  if (items.length === 0) return [];
-  const { data } = await supabase.storage
-    .from(BUCKET)
-    .createSignedUrls(items.map((item) => item.path), SIGNED_URL_TTL);
-  const byPath = new Map((data ?? []).map((entry) => [entry.path, entry.signedUrl]));
-  return items.map((item) => ({ ...item, url: byPath.get(item.path) ?? undefined }));
 }
 
 /** GET /practice/progress — every practice session for the student, newest first. */
@@ -178,7 +89,7 @@ router.get('/progress', clerkAuth, async (req: AuthenticatedRequest, res: Respon
     await ensureBucket();
 
     const { data: entries, error } = await supabase.storage
-      .from(BUCKET)
+      .from(PRACTICE_BUCKET)
       .list(`s/${clerkId}`, { limit: 200 });
     if (error) throw error;
 
@@ -186,7 +97,7 @@ router.get('/progress', clerkAuth, async (req: AuthenticatedRequest, res: Respon
     const docs = (
       await Promise.all(
         jsonNames.map(async (entry) => {
-          const { data } = await supabase.storage.from(BUCKET).download(`s/${clerkId}/${entry.name}`);
+          const { data } = await supabase.storage.from(PRACTICE_BUCKET).download(`s/${clerkId}/${entry.name}`);
           if (!data) return null;
           try {
             return JSON.parse(await data.text()) as PracticeProgressDoc;
@@ -199,7 +110,7 @@ router.get('/progress', clerkAuth, async (req: AuthenticatedRequest, res: Respon
 
     docs.sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
     const items = await Promise.all(
-      docs.map(async (doc) => ({ ...doc, uploads: await signUploads(doc.uploads) })),
+      docs.map(async (doc) => ({ ...doc, uploads: await signUploads(doc.uploads ?? []) })),
     );
     return res.json({ items });
   } catch (error) {
@@ -239,10 +150,10 @@ router.delete('/progress/:paperKey', clerkAuth, async (req: AuthenticatedRequest
     await ensureBucket();
 
     const prefix = filesPrefix(clerkId, paperKey);
-    const { data: files } = await supabase.storage.from(BUCKET).list(prefix, { limit: 100 });
+    const { data: files } = await supabase.storage.from(PRACTICE_BUCKET).list(prefix, { limit: 100 });
     const paths = (files ?? []).map((file) => `${prefix}/${file.name}`);
     paths.push(docPath(clerkId, paperKey));
-    await supabase.storage.from(BUCKET).remove(paths);
+    await supabase.storage.from(PRACTICE_BUCKET).remove(paths);
     return res.json({ ok: true });
   } catch (error) {
     console.error('Failed to delete practice progress:', error);
@@ -277,7 +188,7 @@ router.post(
       const cleanName = (file.originalname || 'upload').replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 120);
       const path = `${filesPrefix(clerkId, paperKey)}/${Date.now()}_${cleanName}`;
       const { error: uploadError } = await supabase.storage
-        .from(BUCKET)
+        .from(PRACTICE_BUCKET)
         .upload(path, file.buffer, { contentType: file.mimetype, upsert: false });
       if (uploadError) throw uploadError;
 
@@ -289,7 +200,6 @@ router.post(
         at: new Date().toISOString(),
       };
 
-      // fold into the progress doc (create a skeleton if this is the first touch)
       const base = existing ?? normalizeDoc(paperKey, { solveMode: 'handwritten' }, null);
       base.uploads = [...(base.uploads ?? []), record];
       base.solveMode = 'handwritten';
@@ -315,13 +225,12 @@ router.delete('/progress/:paperKey/uploads', clerkAuth, async (req: Authenticate
     if (!isValidPaperKey(paperKey)) return res.status(400).json({ error: 'Invalid paper key' });
 
     const path = typeof req.body?.path === 'string' ? req.body.path : '';
-    // a student may only ever delete files under their own prefix
     if (!path.startsWith(filesPrefix(clerkId, paperKey) + '/')) {
       return res.status(400).json({ error: 'Invalid upload path' });
     }
     await ensureBucket();
 
-    await supabase.storage.from(BUCKET).remove([path]);
+    await supabase.storage.from(PRACTICE_BUCKET).remove([path]);
     const existing = await readDoc(clerkId, paperKey);
     if (existing) {
       existing.uploads = (existing.uploads ?? []).filter((item) => item.path !== path);

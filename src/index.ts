@@ -13,6 +13,7 @@ import contentRoutes from './content.routes';
 import qaGradingRoutes from './qaGrading.routes';
 import paperTrackingRoutes from './paperTracking.routes';
 import practiceProgressRoutes from './practiceProgress.routes';
+import practiceGradingRoutes from './practiceGrading.routes';
 import mentoringRoutes from './mentoring.routes';
 import paperParserRoutes from './paperParser.routes';
 
@@ -205,6 +206,9 @@ app.use('/tracking', paperTrackingRoutes);
 
 // Practice-paper progress API (autosave, timers, handwritten uploads)
 app.use('/practice', practiceProgressRoutes);
+
+// AI marking for practice papers (Groq text + vision)
+app.use('/practice-grading', practiceGradingRoutes);
 
 // Teacher-student meetings and chat API
 app.use('/mentoring', mentoringRoutes);
