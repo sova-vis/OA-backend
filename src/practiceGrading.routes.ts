@@ -1,4 +1,5 @@
 import { Router, Response } from 'express';
+import multer from 'multer';
 import { AuthenticatedRequest, clerkAuth } from './lib/clerkAuth';
 import {
   grokEnabled, grokChatJson, grokVisionModel, grokTextModel, grokErrorMessage, GrokError, GrokImage,
@@ -7,6 +8,8 @@ import {
   PracticeProgressDoc, PracticeReport, GradedQuestion, SolveMode,
   ensureBucket, isValidPaperKey, readDoc, writeDoc, signUploads, downloadUploadImages,
 } from './lib/practiceStore';
+
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 15 * 1024 * 1024 } });
 
 /**
  * AI marking for practice papers.
@@ -168,6 +171,42 @@ async function gradeWritten(subject: string, question: GradeQuestion): Promise<G
     expectedPoints: asStringArray(parsed.expected_points),
     missingPoints: asStringArray(parsed.missing_points),
     gradingSource: 'grok', schemeUsed: scheme.length > 0,
+  };
+}
+
+/** Single handwritten answer (topic drill): read + grade one question from an image. */
+async function gradeOneHandwritten(subject: string, question: GradeQuestion, images: GrokImage[]): Promise<GradedQuestion> {
+  const max = clampMarks(question.maxMarks, Math.max(1, (question.parts ?? []).reduce((s, p) => s + (p.marks ?? 0), 0) || 1));
+  const scheme = schemeText(question);
+  const system = [
+    'You are a strict but fair Cambridge O/A Level examiner grading a scanned handwritten answer to ONE question.',
+    'Read the handwriting in the image(s), then grade the answer out of max_marks (whole marks only).',
+    'Mark strictly against marking_scheme when present; otherwise grade with your own expert subject knowledge.',
+    'If nothing is attempted in the image, give 0 and verdict "unanswered".',
+    'Return JSON ONLY: { "earned_marks": number, "verdict": "correct"|"partial"|"weak"|"unanswered", "feedback": string, "expected_points": string[], "missing_points": string[] }.',
+  ].join(' ');
+  const user = JSON.stringify({
+    subject,
+    question: question.questionText,
+    max_marks: max,
+    marking_scheme: scheme,
+  });
+
+  const parsed = await grokChatJson({ system, user, images, model: grokVisionModel(), temperature: 0, maxTokens: 900 });
+  const earnedRaw = Number(parsed.earned_marks);
+  const earned = Number.isFinite(earnedRaw) ? Math.max(0, Math.min(max, Math.round(earnedRaw))) : 0;
+  const rawVerdict = String(parsed.verdict || '').toLowerCase();
+  const verdict: GradedQuestion['verdict'] =
+    rawVerdict === 'correct' || rawVerdict === 'partial' || rawVerdict === 'weak' || rawVerdict === 'unanswered'
+      ? (rawVerdict as GradedQuestion['verdict'])
+      : verdictFromRatio(max ? earned / max : 0);
+
+  return {
+    id: question.id, questionNumber: question.questionNumber, earned, max, verdict,
+    feedback: typeof parsed.feedback === 'string' && parsed.feedback.trim() ? parsed.feedback.trim() : 'Graded from your uploaded answer.',
+    expectedPoints: asStringArray(parsed.expected_points),
+    missingPoints: asStringArray(parsed.missing_points),
+    gradingSource: 'grok-vision', schemeUsed: scheme.length > 0,
   };
 }
 
@@ -357,6 +396,46 @@ router.post('/grade-one', clerkAuth, async (req: AuthenticatedRequest, res: Resp
     return res.json({ result });
   } catch (error) {
     console.error('Single-question grading error:', error);
+    const message = grokErrorMessage(error);
+    const status = error instanceof GrokError && (error.code === 'no_key' || error.code === 'invalid_key') ? 503 : 500;
+    return res.status(status).json({ error: message });
+  }
+});
+
+/**
+ * POST /practice-grading/grade-one-image  (Clerk auth, multipart)
+ * Grade one topic-drill question from a photo of a handwritten answer, against
+ * its own marking scheme. Stateless — the image is graded in-memory, not stored.
+ * Fields: subject, question (JSON string); file: the answer image.
+ */
+router.post('/grade-one-image', clerkAuth, upload.single('file'), async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const clerkId = req.auth?.clerkId;
+    if (!clerkId) return res.status(401).json({ error: 'Unauthorized' });
+
+    const subject = String(req.body?.subject || '').trim();
+    let question: GradeQuestion;
+    try {
+      question = JSON.parse(String(req.body?.question || '')) as GradeQuestion;
+    } catch {
+      return res.status(400).json({ error: 'Invalid question payload' });
+    }
+    if (!question || !question.id) return res.status(400).json({ error: 'question is required' });
+
+    const file = req.file;
+    if (!file) return res.status(400).json({ error: 'No file provided' });
+    if (!/^image\//.test(file.mimetype)) {
+      return res.status(400).json({ error: 'Upload a photo (JPG or PNG) of your answer.' });
+    }
+    if (!grokEnabled()) {
+      return res.status(503).json({ error: grokErrorMessage(new GrokError('', 'no_key')), code: 'no_key' });
+    }
+
+    const images: GrokImage[] = [{ base64: file.buffer.toString('base64'), mimeType: file.mimetype }];
+    const result = await gradeOneHandwritten(subject, question, images);
+    return res.json({ result });
+  } catch (error) {
+    console.error('Single-question image grading error:', error);
     const message = grokErrorMessage(error);
     const status = error instanceof GrokError && (error.code === 'no_key' || error.code === 'invalid_key') ? 503 : 500;
     return res.status(status).json({ error: message });
