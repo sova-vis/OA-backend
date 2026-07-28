@@ -122,21 +122,22 @@ function gradeMcq(question: GradeQuestion): GradedQuestion {
     expectedPoints: correct ? [`Correct option: ${correct}`] : [],
     missingPoints: isCorrect ? [] : correct ? [`Review why ${correct} is correct.`] : [],
     gradingSource: 'deterministic',
+    schemeUsed: Boolean(correct), // the correct option is the scheme
   };
 }
 
 /** Written: Grok grades against the scheme, or as an expert examiner if none. */
 async function gradeWritten(subject: string, question: GradeQuestion): Promise<GradedQuestion> {
   const max = clampMarks(question.maxMarks, Math.max(1, (question.parts ?? []).reduce((s, p) => s + (p.marks ?? 0), 0) || 1));
+  const scheme = schemeText(question);
   if (!hasStudentWork(question)) {
     return {
       id: question.id, questionNumber: question.questionNumber, earned: 0, max,
       verdict: 'unanswered', feedback: 'Not answered.', expectedPoints: [], missingPoints: [],
-      gradingSource: 'grok',
+      gradingSource: 'grok', schemeUsed: scheme.length > 0,
     };
   }
 
-  const scheme = schemeText(question);
   const system = [
     'You are a strict but fair Cambridge O/A Level examiner.',
     'Grade the student answer out of max_marks (award whole marks only).',
@@ -166,7 +167,7 @@ async function gradeWritten(subject: string, question: GradeQuestion): Promise<G
     feedback: typeof parsed.feedback === 'string' && parsed.feedback.trim() ? parsed.feedback.trim() : 'Graded.',
     expectedPoints: asStringArray(parsed.expected_points),
     missingPoints: asStringArray(parsed.missing_points),
-    gradingSource: 'grok',
+    gradingSource: 'grok', schemeUsed: scheme.length > 0,
   };
 }
 
@@ -210,12 +211,13 @@ async function gradeHandwritten(
 
   return questions.map((q) => {
     const max = clampMarks(q.maxMarks, 1);
+    const usedScheme = schemeText(q).length > 0;
     const r = byNumber.get(String(q.questionNumber).trim());
     if (!r) {
       return {
         id: q.id, questionNumber: q.questionNumber, earned: 0, max, verdict: 'unanswered',
         feedback: 'No matching answer found in the uploaded pages.', expectedPoints: [], missingPoints: [],
-        gradingSource: 'grok-vision',
+        gradingSource: 'grok-vision', schemeUsed: usedScheme,
       };
     }
     const earnedRaw = Number(r.earned_marks);
@@ -230,7 +232,7 @@ async function gradeHandwritten(
       feedback: typeof r.feedback === 'string' && r.feedback.trim() ? r.feedback.trim() : 'Graded from your uploaded answer.',
       expectedPoints: asStringArray(r.expected_points),
       missingPoints: asStringArray(r.missing_points),
-      gradingSource: 'grok-vision',
+      gradingSource: 'grok-vision', schemeUsed: usedScheme,
     };
   });
 }
