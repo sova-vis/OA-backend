@@ -5,7 +5,7 @@ import {
   grokEnabled, grokChatJson, grokVisionModel, grokTextModel, grokErrorMessage, GrokError, GrokImage,
 } from './lib/grok';
 import {
-  PracticeProgressDoc, PracticeReport, GradedQuestion, SolveMode,
+  PracticeProgressDoc, PracticeReport, GradedQuestion, MarkCategory, SolveMode,
   ensureBucket, isValidPaperKey, readDoc, writeDoc, signUploads, downloadUploadImages,
 } from './lib/practiceStore';
 
@@ -129,6 +129,29 @@ function gradeMcq(question: GradeQuestion): GradedQuestion {
   };
 }
 
+const BREAKDOWN_INSTRUCTION =
+  'Also split the marks by assessment objective in "breakdown": an array of { "category": "Knowledge"|"Explanation"|"Evaluation", "earned": number, "max": number }. ' +
+  'Only include the objectives this question actually tests, and the earned/max across the breakdown should reconcile with the total marks.';
+
+/** Normalize a model "breakdown" into clamped MarkCategory[] (or undefined). */
+function parseBreakdown(value: unknown, totalMax: number): MarkCategory[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const cats: MarkCategory['category'][] = ['Knowledge', 'Explanation', 'Evaluation'];
+  const out: MarkCategory[] = [];
+  for (const raw of value) {
+    if (!raw || typeof raw !== 'object') continue;
+    const r = raw as Record<string, unknown>;
+    const label = String(r.category ?? '').trim();
+    const category = cats.find((c) => c.toLowerCase() === label.toLowerCase());
+    if (!category) continue;
+    const max = Math.max(0, Math.min(totalMax, Math.round(Number(r.max) || 0)));
+    const earned = Math.max(0, Math.min(max, Math.round(Number(r.earned) || 0)));
+    if (max <= 0) continue;
+    out.push({ category, earned, max });
+  }
+  return out.length ? out : undefined;
+}
+
 /** Written: Grok grades against the scheme, or as an expert examiner if none. */
 async function gradeWritten(subject: string, question: GradeQuestion): Promise<GradedQuestion> {
   const max = clampMarks(question.maxMarks, Math.max(1, (question.parts ?? []).reduce((s, p) => s + (p.marks ?? 0), 0) || 1));
@@ -147,6 +170,7 @@ async function gradeWritten(subject: string, question: GradeQuestion): Promise<G
     'When a marking scheme is provided, mark strictly against it.',
     'When marking_scheme is empty, grade using your own expert subject knowledge and standard Cambridge mark-scheme conventions.',
     'Return JSON ONLY with keys: earned_marks (number), verdict ("correct"|"partial"|"weak"), feedback (string, one or two sentences, addressed to the student), expected_points (array of short strings), missing_points (array of short strings).',
+    BREAKDOWN_INSTRUCTION,
   ].join(' ');
   const user = JSON.stringify({
     subject,
@@ -156,7 +180,7 @@ async function gradeWritten(subject: string, question: GradeQuestion): Promise<G
     student_answer: studentText(question),
   });
 
-  const parsed = await grokChatJson({ system, user, temperature: 0, maxTokens: 900 });
+  const parsed = await grokChatJson({ system, user, temperature: 0, maxTokens: 1000 });
   const earnedRaw = Number(parsed.earned_marks);
   const earned = Number.isFinite(earnedRaw) ? Math.max(0, Math.min(max, Math.round(earnedRaw))) : 0;
   const rawVerdict = String(parsed.verdict || '').toLowerCase();
@@ -171,6 +195,7 @@ async function gradeWritten(subject: string, question: GradeQuestion): Promise<G
     expectedPoints: asStringArray(parsed.expected_points),
     missingPoints: asStringArray(parsed.missing_points),
     gradingSource: 'grok', schemeUsed: scheme.length > 0,
+    breakdown: parseBreakdown(parsed.breakdown, max),
   };
 }
 
@@ -184,6 +209,7 @@ async function gradeOneHandwritten(subject: string, question: GradeQuestion, ima
     'Mark strictly against marking_scheme when present; otherwise grade with your own expert subject knowledge.',
     'If nothing is attempted in the image, give 0 and verdict "unanswered".',
     'Return JSON ONLY: { "earned_marks": number, "verdict": "correct"|"partial"|"weak"|"unanswered", "feedback": string, "expected_points": string[], "missing_points": string[] }.',
+    BREAKDOWN_INSTRUCTION,
   ].join(' ');
   const user = JSON.stringify({
     subject,
@@ -192,7 +218,7 @@ async function gradeOneHandwritten(subject: string, question: GradeQuestion, ima
     marking_scheme: scheme,
   });
 
-  const parsed = await grokChatJson({ system, user, images, model: grokVisionModel(), temperature: 0, maxTokens: 900 });
+  const parsed = await grokChatJson({ system, user, images, model: grokVisionModel(), temperature: 0, maxTokens: 1000 });
   const earnedRaw = Number(parsed.earned_marks);
   const earned = Number.isFinite(earnedRaw) ? Math.max(0, Math.min(max, Math.round(earnedRaw))) : 0;
   const rawVerdict = String(parsed.verdict || '').toLowerCase();
@@ -207,6 +233,7 @@ async function gradeOneHandwritten(subject: string, question: GradeQuestion, ima
     expectedPoints: asStringArray(parsed.expected_points),
     missingPoints: asStringArray(parsed.missing_points),
     gradingSource: 'grok-vision', schemeUsed: scheme.length > 0,
+    breakdown: parseBreakdown(parsed.breakdown, max),
   };
 }
 
@@ -240,11 +267,12 @@ async function gradeHandwritten(
     'The images contain the student\'s handwritten answers. Read the handwriting, match each answer to the question by its number, then grade it.',
     'Mark against each question\'s marking_scheme when present, otherwise use your own expert subject knowledge.',
     'Award whole marks only, never more than that question\'s max_marks. If a question is not attempted in the images, give 0 and verdict "unanswered".',
-    'Return JSON ONLY: { "results": [ { "question_number": string, "earned_marks": number, "verdict": "correct"|"partial"|"weak"|"unanswered", "feedback": string, "expected_points": string[], "missing_points": string[] } ] }.',
+    'Return JSON ONLY: { "results": [ { "question_number": string, "earned_marks": number, "verdict": "correct"|"partial"|"weak"|"unanswered", "feedback": string, "expected_points": string[], "missing_points": string[], "breakdown": [ { "category": "Knowledge"|"Explanation"|"Evaluation", "earned": number, "max": number } ] } ] }.',
+    'In each breakdown only include the objectives that question tests.',
   ].join(' ');
   const user = `Subject: ${subject}\nGrade these questions from the attached handwritten pages:\n${JSON.stringify(outline)}`;
 
-  const parsed = await grokChatJson({ system, user, images, model: grokVisionModel(), temperature: 0, maxTokens: 3000 });
+  const parsed = await grokChatJson({ system, user, images, model: grokVisionModel(), temperature: 0, maxTokens: 3500 });
   const results = Array.isArray(parsed.results) ? (parsed.results as Array<Record<string, unknown>>) : [];
   const byNumber = new Map(results.map((r) => [String(r.question_number).trim(), r]));
 
@@ -272,6 +300,7 @@ async function gradeHandwritten(
       expectedPoints: asStringArray(r.expected_points),
       missingPoints: asStringArray(r.missing_points),
       gradingSource: 'grok-vision', schemeUsed: usedScheme,
+      breakdown: parseBreakdown(r.breakdown, max),
     };
   });
 }

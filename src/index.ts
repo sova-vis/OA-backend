@@ -14,6 +14,7 @@ import qaGradingRoutes from './qaGrading.routes';
 import paperTrackingRoutes from './paperTracking.routes';
 import practiceProgressRoutes from './practiceProgress.routes';
 import uploadCheckRoutes from './uploadCheck.routes';
+import insightsRoutes from './insights.routes';
 import practiceGradingRoutes from './practiceGrading.routes';
 import mentoringRoutes from './mentoring.routes';
 import paperParserRoutes from './paperParser.routes';
@@ -213,6 +214,9 @@ app.use('/practice-grading', practiceGradingRoutes);
 
 // Standalone upload-and-mark flow (Grok vision + annotated PDF)
 app.use('/upload-check', uploadCheckRoutes);
+
+// Phase 1 — performance insights (attempts log for Notebook / Weakness Map)
+app.use('/insights', insightsRoutes);
 
 // Teacher-student meetings and chat API
 app.use('/mentoring', mentoringRoutes);
