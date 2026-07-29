@@ -129,4 +129,58 @@ router.post('/patterns', clerkAuth, async (req: AuthenticatedRequest, res: Respo
   }
 });
 
+/* ---------------- Paper generator polish (Grok) ---------------- */
+
+interface PolishQuestion { id: string; questionText: string }
+
+/**
+ * POST /insights/polish-paper  { questions: [{ id, questionText }] }
+ * Lightly reworks real bank questions so a generated paper reads cleanly —
+ * fixes OCR artefacts and phrasing WITHOUT changing the meaning, marks or answer.
+ * Falls back to the originals when Grok is unavailable.
+ */
+router.post('/polish-paper', clerkAuth, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const clerkId = req.auth?.clerkId;
+    if (!clerkId) return res.status(401).json({ error: 'Unauthorized' });
+
+    const body = (req.body ?? {}) as { questions?: unknown };
+    const questions: PolishQuestion[] = Array.isArray(body.questions)
+      ? (body.questions as unknown[])
+          .map((q) => (q && typeof q === 'object' ? q as Record<string, unknown> : {}))
+          .filter((q) => typeof q.id === 'string' && typeof q.questionText === 'string')
+          .map((q) => ({ id: String(q.id), questionText: String(q.questionText).slice(0, 1500) }))
+          .slice(0, 40)
+      : [];
+    if (questions.length === 0) return res.status(400).json({ error: 'questions[] is required' });
+
+    if (!grokEnabled()) return res.json({ questions }); // unchanged fallback
+
+    const system = [
+      'You are a Cambridge exam typesetter cleaning real past-paper questions for a practice paper.',
+      'For each question, rewrite the text so it reads as a clean, properly phrased exam question:',
+      'fix OCR artefacts, spacing and punctuation, and tidy grammar.',
+      'DO NOT change the meaning, the numbers, the required answer, or the marks. Keep it faithful.',
+      'Return JSON ONLY: { "questions": [ { "id": string, "questionText": string } ] } with the same ids.',
+    ].join(' ');
+    const parsed = await grokChatJson({
+      system,
+      user: JSON.stringify({ questions }),
+      model: grokTextModel(),
+      temperature: 0.2,
+      maxTokens: 3000,
+      timeoutMs: 90_000,
+    });
+    const out = Array.isArray(parsed.questions) ? (parsed.questions as Array<Record<string, unknown>>) : [];
+    const byId = new Map(out.map((q) => [String(q.id), String(q.questionText ?? '').trim()]));
+    const merged = questions.map((q) => ({ id: q.id, questionText: byId.get(q.id) || q.questionText }));
+    return res.json({ questions: merged });
+  } catch (error) {
+    console.error('Paper polish error:', error);
+    // never block generation on polish failure — return originals
+    const body = (req.body ?? {}) as { questions?: PolishQuestion[] };
+    return res.json({ questions: Array.isArray(body.questions) ? body.questions : [] });
+  }
+});
+
 export default router;
