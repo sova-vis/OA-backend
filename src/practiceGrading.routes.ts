@@ -152,6 +152,20 @@ function parseBreakdown(value: unknown, totalMax: number): MarkCategory[] | unde
   return out.length ? out : undefined;
 }
 
+const EXAMINER_INSTRUCTION =
+  'Also add: "command_word" (the question\'s command word such as Describe/Explain/Evaluate/State/Calculate/Suggest, or "" if none); ' +
+  '"command_word_note" (if the student answered in a style that does not match the command word — e.g. describing when asked to evaluate — one short sentence explaining the gap, otherwise ""); ' +
+  '"examiner_note" (one sentence in the style of a Cambridge examiner report, e.g. "Candidates commonly lose marks here because…").';
+
+function examinerFields(parsed: Record<string, unknown>): Pick<GradedQuestion, 'commandWord' | 'commandWordNote' | 'examinerNote'> {
+  const s = (v: unknown, n: number) => { const t = String(v ?? '').trim(); return t ? t.slice(0, n) : undefined; };
+  return {
+    commandWord: s(parsed.command_word, 40),
+    commandWordNote: s(parsed.command_word_note, 300),
+    examinerNote: s(parsed.examiner_note, 400),
+  };
+}
+
 /** Written: Grok grades against the scheme, or as an expert examiner if none. */
 async function gradeWritten(subject: string, question: GradeQuestion): Promise<GradedQuestion> {
   const max = clampMarks(question.maxMarks, Math.max(1, (question.parts ?? []).reduce((s, p) => s + (p.marks ?? 0), 0) || 1));
@@ -171,6 +185,7 @@ async function gradeWritten(subject: string, question: GradeQuestion): Promise<G
     'When marking_scheme is empty, grade using your own expert subject knowledge and standard Cambridge mark-scheme conventions.',
     'Return JSON ONLY with keys: earned_marks (number), verdict ("correct"|"partial"|"weak"), feedback (string, one or two sentences, addressed to the student), expected_points (array of short strings), missing_points (array of short strings).',
     BREAKDOWN_INSTRUCTION,
+    EXAMINER_INSTRUCTION,
   ].join(' ');
   const user = JSON.stringify({
     subject,
@@ -180,7 +195,7 @@ async function gradeWritten(subject: string, question: GradeQuestion): Promise<G
     student_answer: studentText(question),
   });
 
-  const parsed = await grokChatJson({ system, user, temperature: 0, maxTokens: 1000 });
+  const parsed = await grokChatJson({ system, user, temperature: 0, maxTokens: 1100 });
   const earnedRaw = Number(parsed.earned_marks);
   const earned = Number.isFinite(earnedRaw) ? Math.max(0, Math.min(max, Math.round(earnedRaw))) : 0;
   const rawVerdict = String(parsed.verdict || '').toLowerCase();
@@ -196,6 +211,7 @@ async function gradeWritten(subject: string, question: GradeQuestion): Promise<G
     missingPoints: asStringArray(parsed.missing_points),
     gradingSource: 'grok', schemeUsed: scheme.length > 0,
     breakdown: parseBreakdown(parsed.breakdown, max),
+    ...examinerFields(parsed),
   };
 }
 
@@ -210,6 +226,7 @@ async function gradeOneHandwritten(subject: string, question: GradeQuestion, ima
     'If nothing is attempted in the image, give 0 and verdict "unanswered".',
     'Return JSON ONLY: { "earned_marks": number, "verdict": "correct"|"partial"|"weak"|"unanswered", "feedback": string, "expected_points": string[], "missing_points": string[] }.',
     BREAKDOWN_INSTRUCTION,
+    EXAMINER_INSTRUCTION,
   ].join(' ');
   const user = JSON.stringify({
     subject,
@@ -218,7 +235,7 @@ async function gradeOneHandwritten(subject: string, question: GradeQuestion, ima
     marking_scheme: scheme,
   });
 
-  const parsed = await grokChatJson({ system, user, images, model: grokVisionModel(), temperature: 0, maxTokens: 1000 });
+  const parsed = await grokChatJson({ system, user, images, model: grokVisionModel(), temperature: 0, maxTokens: 1100 });
   const earnedRaw = Number(parsed.earned_marks);
   const earned = Number.isFinite(earnedRaw) ? Math.max(0, Math.min(max, Math.round(earnedRaw))) : 0;
   const rawVerdict = String(parsed.verdict || '').toLowerCase();
@@ -234,6 +251,7 @@ async function gradeOneHandwritten(subject: string, question: GradeQuestion, ima
     missingPoints: asStringArray(parsed.missing_points),
     gradingSource: 'grok-vision', schemeUsed: scheme.length > 0,
     breakdown: parseBreakdown(parsed.breakdown, max),
+    ...examinerFields(parsed),
   };
 }
 
@@ -267,8 +285,8 @@ async function gradeHandwritten(
     'The images contain the student\'s handwritten answers. Read the handwriting, match each answer to the question by its number, then grade it.',
     'Mark against each question\'s marking_scheme when present, otherwise use your own expert subject knowledge.',
     'Award whole marks only, never more than that question\'s max_marks. If a question is not attempted in the images, give 0 and verdict "unanswered".',
-    'Return JSON ONLY: { "results": [ { "question_number": string, "earned_marks": number, "verdict": "correct"|"partial"|"weak"|"unanswered", "feedback": string, "expected_points": string[], "missing_points": string[], "breakdown": [ { "category": "Knowledge"|"Explanation"|"Evaluation", "earned": number, "max": number } ] } ] }.',
-    'In each breakdown only include the objectives that question tests.',
+    'Return JSON ONLY: { "results": [ { "question_number": string, "earned_marks": number, "verdict": "correct"|"partial"|"weak"|"unanswered", "feedback": string, "expected_points": string[], "missing_points": string[], "breakdown": [ { "category": "Knowledge"|"Explanation"|"Evaluation", "earned": number, "max": number } ], "command_word": string, "command_word_note": string, "examiner_note": string } ] }.',
+    'In each breakdown only include the objectives that question tests. command_word is the question\'s command word; command_word_note explains any style mismatch (else ""); examiner_note is a one-sentence examiner-report style remark.',
   ].join(' ');
   const user = `Subject: ${subject}\nGrade these questions from the attached handwritten pages:\n${JSON.stringify(outline)}`;
 
@@ -301,6 +319,7 @@ async function gradeHandwritten(
       missingPoints: asStringArray(r.missing_points),
       gradingSource: 'grok-vision', schemeUsed: usedScheme,
       breakdown: parseBreakdown(r.breakdown, max),
+      ...examinerFields(r),
     };
   });
 }

@@ -47,6 +47,10 @@ export interface GradedQuestion {
   schemeUsed?: boolean;
   /** marks earned vs available per assessment objective */
   breakdown?: MarkCategory[];
+  /** Phase 3 — examiner intelligence */
+  commandWord?: string;      // the question's command word, e.g. "Describe", "Evaluate"
+  commandWordNote?: string;  // coaching when the answer's style doesn't match the command word
+  examinerNote?: string;     // "Candidates commonly lose marks here because…"
 }
 
 export interface PracticeReport {
