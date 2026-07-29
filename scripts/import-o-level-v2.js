@@ -78,9 +78,19 @@ function stripBoilerplate(value) {
   return value.replace(BOILERPLATE_TAIL, "").replace(BOILERPLATE_1, " ").replace(BOILERPLATE_2, " ").replace(BLANK_PAGE_RE, " ");
 }
 
+// Leading OCR/import artifacts ("DFD,," / "DFDDFD,,,," / ",," / "::"). The DFD
+// marker is only stripped when it precedes repeated punctuation, so a legit
+// "DFD represents…" (Computer Science) is never touched.
+function stripLeadingOcrNoise(value) {
+  return value
+    .replace(/^\s*(?:DFD)+\s*(?=[,.;:]{2,})/i, "")
+    .replace(/^\s*[,.;:]{2,}\s*/, "")
+    .trimStart();
+}
+
 function cleanText(value) {
   if (value === null || value === undefined) return "";
-  return stripBoilerplate(String(value))
+  return stripLeadingOcrNoise(stripBoilerplate(String(value)))
     .replace(/â€“/g, "-")
     .replace(/â€”/g, "-")
     .replace(/â€˜/g, "'")

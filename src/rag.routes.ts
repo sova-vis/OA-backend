@@ -1,10 +1,13 @@
 import { Router, Request, Response } from "express";
+import multer from "multer";
 import { supabase } from "./lib/supabase";
 import Groq from "groq-sdk";
 import { promises as fs } from "fs";
 import path from "path";
+import { grokEnabled, grokChatJson, grokVisionModel, grokErrorMessage } from "./lib/grok";
 
 const router = Router();
+const visionUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 12 * 1024 * 1024 } });
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 const GROQ_MODEL = process.env.GROQ_MODEL || "llama-3.3-70b-versatile";
 const COHERE_API_KEY = (process.env.COHERE_API_KEY || "").trim();
@@ -4060,10 +4063,57 @@ router.post("/query", async (req: Request, res: Response) => {
       retrieval: buildDiagnostics(ragResult, "grounded", effectiveSubjectFilter, "Grounded answer"),
     } as RagQueryResponse);
   } catch (error) {
-    console.error("RAG query error:", error);
-    return res
-      .status(500)
-      .json({ error: error instanceof Error ? error.message : "Unknown error" });
+    // #31 structured error log: upstream status code (429/500/504…) + request context
+    const err = error as { status?: number; statusCode?: number; response?: { status?: number }; code?: string; message?: string };
+    const upstreamStatus = err?.status ?? err?.statusCode ?? err?.response?.status;
+    const reqBody = req.body as RagQueryRequest & { subject?: string };
+    console.error("[RAG] query error", JSON.stringify({
+      upstreamStatus: upstreamStatus ?? null,
+      code: err?.code ?? null,
+      message: err?.message ?? String(error),
+      question: (reqBody?.question ?? "").slice(0, 120),
+      subject: reqBody?.subject ?? null,
+      historyLen: Array.isArray(reqBody?.history) ? reqBody.history.length : 0,
+    }));
+    // surface a 5xx that reflects the upstream when it was a gateway/timeout/rate-limit
+    const status = upstreamStatus === 429 ? 429 : upstreamStatus === 504 ? 504 : 500;
+    return res.status(status).json({ error: err?.message || "Unknown error", code: upstreamStatus ?? undefined });
+  }
+});
+
+/**
+ * POST /rag/ask-image  (multipart) — Ask AI with an attached image.
+ * Diagrams, graphs, circuits, chemical structures or a photographed question are
+ * read by Grok vision (grok-4.5) and answered as an O/A-Level tutor.
+ */
+router.post("/ask-image", visionUpload.single("image"), async (req: Request, res: Response) => {
+  try {
+    const question = String(req.body?.question || "").trim() || "Read the attached image and answer any question in it, explaining clearly.";
+    const subject = String(req.body?.subject || "").trim();
+    const file = req.file;
+    if (!file || !/^image\//.test(file.mimetype)) {
+      return res.status(400).json({ error: "Attach an image (JPG or PNG)." });
+    }
+    if (!grokEnabled()) {
+      return res.status(503).json({ error: "AI image reading is not configured. Add XAI_API_KEY in OA-backend/.env." });
+    }
+    const system = [
+      "You are a friendly, precise Cambridge O/A Level tutor.",
+      "The student has attached an image — a diagram, graph, circuit, chemical structure, or a photographed exam question.",
+      "Read it carefully and answer clearly and correctly at O/A-Level depth. If it's a question, solve it and show the key steps.",
+      "Return JSON ONLY: { \"answer\": string }.",
+    ].join(" ");
+    const user = `${subject ? "Subject: " + subject + ". " : ""}${question}`;
+    const parsed = await grokChatJson({
+      system, user,
+      images: [{ base64: file.buffer.toString("base64"), mimeType: file.mimetype }],
+      model: grokVisionModel(), temperature: 0.2, maxTokens: 1300, timeoutMs: 90_000,
+    });
+    return res.json({ type: "image_answer", answer: String(parsed.answer || "") });
+  } catch (error) {
+    const err = error as { status?: number; message?: string };
+    console.error("[RAG] ask-image error", JSON.stringify({ status: err?.status ?? null, message: err?.message ?? String(error) }));
+    return res.status(500).json({ error: grokErrorMessage(error) });
   }
 });
 
