@@ -18,6 +18,12 @@ import insightsRoutes from './insights.routes';
 import practiceGradingRoutes from './practiceGrading.routes';
 import mentoringRoutes from './mentoring.routes';
 import paperParserRoutes from './paperParser.routes';
+import { clerkAuth } from './lib/clerkAuth';
+import { rateLimit } from './lib/rateLimit';
+import { logConfigReport, serviceReadinessMap } from './lib/configReport';
+
+// per-user throttle for the paid-AI routes (generous — only stops abuse)
+const aiLimit = rateLimit({ windowMs: 60_000, max: 40, name: 'ai' });
 
 const app: Express = express();
 const PORT = process.env.PORT || 3001;
@@ -137,7 +143,10 @@ const configuredOrigins = (process.env.FRONTEND_URL || '')
   .filter(Boolean);
 
 const allowedOrigins = new Set(
-  ['http://localhost:3000', ...configuredOrigins].map((origin) => normalizeOrigin(origin))
+  // Production frontend is allow-listed explicitly (belt-and-suspenders) in
+  // addition to FRONTEND_URL, so a misconfigured env can never lock out the
+  // real site. Add other production origins to FRONTEND_URL (comma-separated).
+  ['http://localhost:3000', 'https://oalevels.vercel.app', ...configuredOrigins].map((origin) => normalizeOrigin(origin))
 );
 
 function isAllowedOrigin(origin: string): boolean {
@@ -160,10 +169,10 @@ function isAllowedOrigin(origin: string): boolean {
       return true;
     }
 
-    // Allow Vercel preview deployments for this project namespace.
-    if (host.endsWith('.vercel.app')) {
-      return true;
-    }
+    // F-03: only THIS project's Vercel preview deployments are allowed —
+    // production is allow-listed explicitly above / via FRONTEND_URL. The broad
+    // "*.vercel.app" rule was removed so an unrelated app anyone deploys to
+    // Vercel can no longer make credentialed calls to this API.
     if (host.endsWith('.sova-vis-projects.vercel.app')) {
       return true;
     }
@@ -197,11 +206,11 @@ app.use('/admin', adminRoutes);
 // Papers API
 app.use('/papers', papersRoutes);
 
-// Content API (navigation/search)
-app.use('/content', contentRoutes);
+// Content API (navigation/search) — now requires auth (F-04)
+app.use('/content', clerkAuth, contentRoutes);
 
-// RAG API
-app.use('/rag', ragRoutes);
+// RAG / Ask-AI — auth + AI rate limit (F-04)
+app.use('/rag', clerkAuth, aiLimit, ragRoutes);
 
 // User paper tracking API
 app.use('/tracking', paperTrackingRoutes);
@@ -209,28 +218,29 @@ app.use('/tracking', paperTrackingRoutes);
 // Practice-paper progress API (autosave, timers, handwritten uploads)
 app.use('/practice', practiceProgressRoutes);
 
-// AI marking for practice papers (Grok text + vision)
-app.use('/practice-grading', practiceGradingRoutes);
+// AI marking for practice papers (Grok text + vision) — auth in-module + AI limit
+app.use('/practice-grading', clerkAuth, aiLimit, practiceGradingRoutes);
 
 // Standalone upload-and-mark flow (Grok vision + annotated PDF)
-app.use('/upload-check', uploadCheckRoutes);
+app.use('/upload-check', clerkAuth, aiLimit, uploadCheckRoutes);
 
 // Phase 1 — performance insights (attempts log for Notebook / Weakness Map)
-app.use('/insights', insightsRoutes);
+app.use('/insights', clerkAuth, aiLimit, insightsRoutes);
 
 // Teacher-student meetings and chat API
 app.use('/mentoring', mentoringRoutes);
 
-// OA grading API
-app.use('/oa-grading', qaGradingRoutes);
-app.use('/qa-grading', qaGradingRoutes);
+// OA / QA grading proxy — now requires auth + AI rate limit (F-04)
+app.use('/oa-grading', clerkAuth, aiLimit, qaGradingRoutes);
+app.use('/qa-grading', clerkAuth, aiLimit, qaGradingRoutes);
 
-// Past paper structuring API
-app.use('/paper-parser', paperParserRoutes);
+// Past paper structuring — now requires auth + AI rate limit (F-04)
+app.use('/paper-parser', clerkAuth, aiLimit, paperParserRoutes);
 
-// Health check
+// Health check — includes subsystem readiness booleans (never secrets) so a
+// misconfigured deploy is diagnosable without shell access.
 app.get('/health', (_req: Request, res: Response) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+  res.json({ status: 'ok', timestamp: new Date().toISOString(), services: serviceReadinessMap() });
 });
 
 // Root route
@@ -243,6 +253,7 @@ app.listen(PORT, () => {
   console.log(`Backend server running on http://localhost:${PORT}`);
   console.log(`Health check: http://localhost:${PORT}/health`);
   console.log('OA grading sidecar startup is handled by /qa-grading on-demand checks.');
+  logConfigReport();
 });
 
 export default app;

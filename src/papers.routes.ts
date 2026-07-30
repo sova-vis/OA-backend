@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { clerkAuth } from './lib/clerkAuth';
 import {
   listFilesInFolder,
   getFileMetadata,
@@ -76,7 +77,7 @@ function getDriveErrorMessage(error: unknown): { status: number; message: string
  * GET /papers/drive/list
  * List all papers from Google Drive folder (recursively gets all PDFs)
  */
-router.get('/drive/list', async (req, res) => {
+router.get('/drive/list', clerkAuth, async (req, res) => {
   try {
     const folderId = resolveDriveFolderId();
 
@@ -114,7 +115,7 @@ router.get('/drive/list', async (req, res) => {
  * GET /papers/browse/:folderId
  * Browse a specific folder (for navigation) - returns immediate children only
  */
-router.get('/browse/:folderId?', async (req, res) => {
+router.get('/browse/:folderId?', clerkAuth, async (req, res) => {
   try {
     // ?level=alevel switches the root to the A-Level library (only relevant
     // when no explicit folderId is given — subfolder ids are globally unique)
@@ -251,7 +252,7 @@ router.get('/download/:fileId', async (req, res) => {
  * GET /papers/drive/search?q=searchTerm
  * Search papers by name
  */
-router.get('/drive/search', async (req, res) => {
+router.get('/drive/search', clerkAuth, async (req, res) => {
   try {
     const { q } = req.query;
     const folderId = resolveDriveFolderId();
@@ -288,7 +289,7 @@ router.get('/drive/search', async (req, res) => {
  * GET /papers/drive/:fileId
  * Get metadata for a specific file
  */
-router.get('/drive/:fileId', async (req, res) => {
+router.get('/drive/:fileId', clerkAuth, async (req, res) => {
   try {
     const { fileId } = req.params;
 
@@ -314,7 +315,7 @@ router.get('/drive/:fileId', async (req, res) => {
  * GET /papers/organized
  * Get papers organized by subject, year, session
  */
-router.get('/organized', async (req, res) => {
+router.get('/organized', clerkAuth, async (req, res) => {
   try {
     const folderId = resolveDriveFolderId();
 

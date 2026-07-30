@@ -191,11 +191,14 @@ router.post('/sync-profile', clerkAuth, async (req: AuthenticatedRequest, res: R
       role?: string;
     };
 
-    const incomingRole = parseRole(body.role);
+    // SECURITY (F-01, F-02): never trust the client for identity or privilege.
+    // Bind by the Clerk-VERIFIED email claim (not body.email), and never accept a
+    // role from the request — new profiles are always students; promotion is
+    // admin-only via the requireRole('admin')-guarded admin routes.
     const fullName = (body.full_name || '').trim() || 'User';
-    const email = (body.email || '').trim() || null;
+    const email = extractClaimString(req.auth?.claims, ['email', 'email_address', 'primary_email_address']);
 
-    console.log('📝 Parsed data:', { clerkId, email, fullName, role: incomingRole });
+    console.log('📝 Parsed data:', { clerkId, email, fullName });
 
     const { data: existing, error: fetchError } = await supabase
       .from('profiles')
@@ -215,7 +218,7 @@ router.post('/sync-profile', clerkAuth, async (req: AuthenticatedRequest, res: R
         .update({
           email: email ?? existing.email,
           full_name: fullName || existing.full_name,
-          role: existing.role || incomingRole,
+          role: existing.role || 'student',
         })
         .eq('clerk_id', clerkId)
         .select('*')
@@ -249,7 +252,7 @@ router.post('/sync-profile', clerkAuth, async (req: AuthenticatedRequest, res: R
           .update({
             clerk_id: clerkId,
             full_name: fullName || existingByEmail.full_name,
-            role: existingByEmail.role || incomingRole,
+            role: existingByEmail.role || 'student',
           })
           .eq('email', email)
           .select('*')
@@ -272,7 +275,7 @@ router.post('/sync-profile', clerkAuth, async (req: AuthenticatedRequest, res: R
         clerk_id: clerkId,
         email,
         full_name: fullName,
-        role: incomingRole,
+        role: 'student',
       })
       .select('*')
       .single();

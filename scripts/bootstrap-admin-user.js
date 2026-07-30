@@ -4,12 +4,18 @@ const { createClient } = require('@supabase/supabase-js');
 
 dotenv.config({ path: path.resolve(__dirname, '..', '.env') });
 
-const ADMIN_EMAIL = process.env.ADMIN_BOOTSTRAP_EMAIL || 'sovavis2025@gmail.com';
-const ADMIN_PASSWORD = process.env.ADMIN_BOOTSTRAP_PASSWORD || 'ChangeThisAdminPassword123!';
+// No committed credentials — these must be supplied via the environment.
+const ADMIN_EMAIL = process.env.ADMIN_BOOTSTRAP_EMAIL || '';
+const ADMIN_PASSWORD = process.env.ADMIN_BOOTSTRAP_PASSWORD || '';
 const ADMIN_NAME = process.env.ADMIN_BOOTSTRAP_NAME || 'Admin';
 const CLERK_SECRET_KEY = process.env.CLERK_SECRET_KEY || '';
 const SUPABASE_URL = process.env.SUPABASE_URL || '';
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+
+if (!ADMIN_EMAIL || !ADMIN_PASSWORD) {
+  console.error('Set ADMIN_BOOTSTRAP_EMAIL and ADMIN_BOOTSTRAP_PASSWORD in OA-backend/.env before running this script.');
+  process.exit(1);
+}
 
 if (!CLERK_SECRET_KEY) {
   console.error('Missing CLERK_SECRET_KEY in OA-backend/.env');

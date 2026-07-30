@@ -1,4 +1,13 @@
 import { supabase } from './supabase';
+import {
+  studentDataSource,
+  pgDualWriteEnabled,
+  pgUpsertAttempts,
+  pgReadAttempts,
+  pgUpsertSession,
+  pgReadSession,
+  warnPgOnce,
+} from './studentDataPg';
 
 /**
  * Shared persistence for practice-paper sessions. Progress documents and
@@ -118,6 +127,16 @@ export function filesPrefix(clerkId: string, paperKey: string): string {
 }
 
 export async function readDoc(clerkId: string, paperKey: string): Promise<PracticeProgressDoc | null> {
+  // Phase 2: read from Postgres once cut over; fall back to Storage if the row
+  // isn't there yet (not backfilled) or Postgres errors.
+  if (studentDataSource() === 'postgres') {
+    try {
+      const fromPg = await pgReadSession(clerkId, paperKey);
+      if (fromPg) return fromPg;
+    } catch (error) {
+      warnPgOnce('practice_sessions read failed, using storage', error);
+    }
+  }
   const { data, error } = await supabase.storage.from(PRACTICE_BUCKET).download(docPath(clerkId, paperKey));
   if (error || !data) return null;
   try {
@@ -134,6 +153,16 @@ export async function writeDoc(clerkId: string, doc: PracticeProgressDoc): Promi
     .from(PRACTICE_BUCKET)
     .upload(docPath(clerkId, doc.paperKey), payload, { contentType: 'application/json', upsert: true });
   if (error) throw error;
+  // Phase 2: mirror the session (and its graded report) into Postgres.
+  // Best-effort — a Postgres failure (e.g. migration 005 not yet run) must never
+  // fail the student's save, which already succeeded in Storage above.
+  if (pgDualWriteEnabled()) {
+    try {
+      await pgUpsertSession(clerkId, doc);
+    } catch (pgError) {
+      warnPgOnce('practice_sessions upsert failed', pgError);
+    }
+  }
 }
 
 /* ============================================================
@@ -202,6 +231,16 @@ function normalizeAttempt(raw: unknown): AttemptRecord | null {
 }
 
 export async function readAttempts(clerkId: string): Promise<AttemptRecord[]> {
+  // Phase 2: once STUDENT_DATA_SOURCE=postgres (set only AFTER backfilling), the
+  // attempts log is served by a single indexed query instead of parsing a blob.
+  // Only flip that flag after the backfill has run, or history will read empty.
+  if (studentDataSource() === 'postgres') {
+    try {
+      return await pgReadAttempts(clerkId);
+    } catch (error) {
+      warnPgOnce('attempts read failed, using storage', error);
+    }
+  }
   const { data, error } = await supabase.storage.from(PRACTICE_BUCKET).download(attemptsPath(clerkId));
   if (error || !data) return [];
   try {
@@ -228,6 +267,17 @@ export async function appendAttempts(clerkId: string, incoming: unknown[]): Prom
     .from(PRACTICE_BUCKET)
     .upload(attemptsPath(clerkId), payload, { contentType: 'application/json', upsert: true });
   if (error) throw error;
+  // Phase 2: mirror only the NEW attempts into Postgres, each as an independent
+  // upsert keyed on its stable id. This is what removes the concurrency data
+  // loss — two devices finishing at once no longer overwrite each other here.
+  // Best-effort: a failure never blocks the student (Storage above succeeded).
+  if (pgDualWriteEnabled()) {
+    try {
+      await pgUpsertAttempts(clerkId, clean);
+    } catch (pgError) {
+      warnPgOnce('attempts upsert failed', pgError);
+    }
+  }
   return merged;
 }
 

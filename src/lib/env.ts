@@ -28,6 +28,12 @@ const envSchema = z.object({
   
   // CORS
   FRONTEND_URL: z.preprocess(trimString, z.string()).default('http://localhost:3000'),
+
+  // Phase 2 — student modelling storage rollout (see migration 005).
+  //   STUDENT_DATA_SOURCE     'storage' (default) | 'postgres' — where reads come from.
+  //   STUDENT_DATA_DUAL_WRITE 'true' (default) | 'false'       — mirror writes to Postgres.
+  STUDENT_DATA_SOURCE: z.preprocess(trimString, z.enum(['storage', 'postgres'])).default('storage'),
+  STUDENT_DATA_DUAL_WRITE: z.preprocess(trimString, z.enum(['true', 'false'])).default('true'),
   
   // Clerk (optional for development)
   CLERK_SECRET_KEY: z.preprocess(trimString, z.string().optional()),
