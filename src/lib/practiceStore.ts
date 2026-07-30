@@ -60,6 +60,8 @@ export interface GradedQuestion {
   commandWord?: string;      // the question's command word, e.g. "Describe", "Evaluate"
   commandWordNote?: string;  // coaching when the answer's style doesn't match the command word
   examinerNote?: string;     // "Candidates commonly lose marks here because…"
+  /** per sub-part awarded marks (earned vs available), labelled to the scheme parts */
+  partScores?: { label: string; earned: number; max: number }[];
 }
 
 export interface PracticeReport {
