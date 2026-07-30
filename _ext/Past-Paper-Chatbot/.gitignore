@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+venv/
+.env
+
+# Generated data (large, reproducible via scripts/*.py)
+data/raw/
+data/processed/
+data/chunks/
+data/chunks.jsonl
+data/vector_store/
