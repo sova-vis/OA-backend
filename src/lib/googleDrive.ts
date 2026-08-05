@@ -267,3 +267,15 @@ export async function getFileStream(fileId: string) {
     throw new Error('Failed to stream file from Google Drive');
   }
 }
+
+/**
+ * Download the whole file as a Buffer (needed to hand a PDF to mupdf for page
+ * text extraction).
+ */
+export async function getFileBuffer(fileId: string): Promise<Buffer> {
+  const response = await drive.files.get(
+    { fileId, alt: 'media' },
+    { responseType: 'arraybuffer' }
+  );
+  return Buffer.from(response.data as ArrayBuffer);
+}

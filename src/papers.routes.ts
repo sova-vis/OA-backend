@@ -9,12 +9,74 @@ import {
   findFilesByNameGlobal,
   DriveFile,
   getFileStream,
+  getFileBuffer,
   listFoldersAndFiles,
   getAllPDFsRecursive
 } from './lib/googleDrive';
 import { env } from './lib/env';
 
 const router = Router();
+
+// mupdf ships as ESM with top-level await; keep a real dynamic import in the CJS
+// build (same trick uploadCheck.routes uses) and cache the module.
+const importEsm = new Function('m', 'return import(m)') as (m: string) => Promise<any>;
+let mupdfPromise: Promise<any> | null = null;
+const loadMupdf = () => (mupdfPromise ??= importEsm('mupdf'));
+
+// Per-file page text, so opening several questions of the same paper parses the
+// PDF once. Small LRU-ish cap to bound memory.
+const pageTextCache = new Map<string, string[]>();
+const PAGE_CACHE_MAX = 40;
+
+function normalizeForMatch(s: string): string {
+  return (s || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+}
+
+async function pageTextsFor(fileId: string): Promise<string[]> {
+  const hit = pageTextCache.get(fileId);
+  if (hit) return hit;
+  const buffer = await getFileBuffer(fileId);
+  const mupdf = await loadMupdf();
+  const doc = mupdf.Document.openDocument(new Uint8Array(buffer), 'application/pdf');
+  const texts: string[] = [];
+  const count = doc.countPages();
+  for (let i = 0; i < count; i++) {
+    const page = doc.loadPage(i);
+    let txt = '';
+    try {
+      txt = page.toStructuredText('preserve-whitespace').asText();
+    } catch {
+      txt = '';
+    }
+    texts.push(normalizeForMatch(txt));
+  }
+  if (pageTextCache.size >= PAGE_CACHE_MAX) {
+    const oldest = pageTextCache.keys().next().value;
+    if (oldest !== undefined) pageTextCache.delete(oldest);
+  }
+  pageTextCache.set(fileId, texts);
+  return texts;
+}
+
+/**
+ * 1-based page number whose text contains a distinctive chunk of the question,
+ * or null when it cannot be located (caller then opens the paper at page 1).
+ */
+async function findQuestionPage(fileId: string, questionText: string): Promise<number | null> {
+  const needle = normalizeForMatch(questionText);
+  if (needle.length < 12) return null;              // too short to be distinctive
+  // a chunk from a little into the stem avoids leading "1"/"2" question numbers
+  const probe = needle.slice(0, 48);
+  try {
+    const pages = await pageTextsFor(fileId);
+    let idx = pages.findIndex((t) => t.includes(probe));
+    if (idx < 0) idx = pages.findIndex((t) => t.includes(needle.slice(0, 24)));
+    return idx >= 0 ? idx + 1 : null;
+  } catch (e) {
+    console.error('page lookup failed:', e);
+    return null;
+  }
+}
 
 type PaperLevel = 'olevel' | 'alevel';
 
@@ -334,7 +396,21 @@ router.get('/find-qp', clerkAuth, async (req, res) => {
       files[0];
 
     if (!pick) return res.status(404).json({ error: 'paper not found', stem });
-    res.json({ fileId: pick.id, name: pick.name, viewUrl: `/papers/view/${pick.id}` });
+
+    // Optional: jump to the page the question is on. No page number is stored in
+    // the data, so it is located by matching the question text against each page's
+    // text. Best-effort — a miss just opens the paper at page 1.
+    let page: number | null = null;
+    if (kind === 'qp' && typeof q.text === 'string' && q.text.trim()) {
+      page = await findQuestionPage(pick.id, q.text);
+    }
+
+    res.json({
+      fileId: pick.id,
+      name: pick.name,
+      viewUrl: `/papers/view/${pick.id}`,
+      page,
+    });
   } catch (error) {
     console.error('Error resolving paper:', error);
     res.status(500).json({ error: 'Failed to resolve paper' });
