@@ -216,6 +216,28 @@ export async function getFileByName(
 }
 
 /**
+ * Search the WHOLE drive (not just one folder's direct children) for files whose
+ * name contains the term. searchFilesByName is scoped to `'<folderId>' in parents`,
+ * which only matches direct children — past-paper PDFs are nested several folders
+ * deep, so that never finds them. A question only knows its paper by name, so this
+ * global finder is what lets the "open paper" action resolve a Drive file.
+ */
+export async function findFilesByNameGlobal(
+  searchTerm: string,
+  opts?: { mimeType?: string; pageSize?: number }
+): Promise<DriveFile[]> {
+  const term = searchTerm.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+  const mimeClause = opts?.mimeType ? ` and mimeType='${opts.mimeType}'` : '';
+  const response = await drive.files.list({
+    q: `name contains '${term}' and trashed=false${mimeClause}`,
+    fields: 'files(id, name, mimeType, size, modifiedTime)',
+    orderBy: 'name',
+    pageSize: opts?.pageSize ?? 25,
+  });
+  return (response.data.files as DriveFile[]) || [];
+}
+
+/**
  * Generate embedded viewer URL for PDF files
  */
 export function getEmbedViewerUrl(fileId: string): string {

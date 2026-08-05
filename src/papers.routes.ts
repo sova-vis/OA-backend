@@ -6,6 +6,7 @@ import {
   getEmbedViewerUrl,
   getDirectDownloadUrl,
   searchFilesByName,
+  findFilesByNameGlobal,
   DriveFile,
   getFileStream,
   listFoldersAndFiles,
@@ -282,6 +283,61 @@ router.get('/drive/search', clerkAuth, async (req, res) => {
   } catch (error) {
     console.error('Error searching papers:', error);
     res.status(500).json({ error: 'Failed to search papers' });
+  }
+});
+
+/**
+ * GET /papers/find-qp
+ * Resolve a question's original past-paper PDF (or mark scheme) to a Drive file,
+ * so the practice UI can open it when an extracted image is not good enough.
+ *
+ * Query: subject, year, session, paper, variant  — OR  name=<QP filename/stem>.
+ * The paper's filename encodes all of these ("Biology_2023_May_June_Paper_2_
+ * Variant_1_QP.pdf"), so we build the distinctive stem and let Drive substring-
+ * match it, then prefer an exact-stem, question-paper match. kind=ms opens the
+ * mark scheme instead.
+ */
+router.get('/find-qp', clerkAuth, async (req, res) => {
+  try {
+    const q = req.query as Record<string, string | undefined>;
+    const kind = (q.kind || 'qp').toLowerCase() === 'ms' ? 'ms' : 'qp';
+
+    // Build the filename stem (without _QP/_MS and extension) to search on.
+    let stem = '';
+    if (q.name) {
+      stem = q.name.split(/[\\/]/).pop()!.replace(/\.pdf$/i, '').replace(/_(QP|MS)$/i, '');
+    } else if (q.subject && q.year && q.session && q.paper) {
+      const parts = [
+        q.subject.trim().replace(/\s+/g, '_'),
+        q.year, q.session, q.paper,
+        q.variant && q.variant.trim() ? q.variant.trim() : '',
+      ].filter(Boolean);
+      stem = parts.join('_');
+    } else {
+      return res.status(400).json({ error: 'provide name, or subject+year+session+paper' });
+    }
+
+    let files = await findFilesByNameGlobal(stem, { mimeType: 'application/pdf' });
+    // no-variant papers store the variant as part of the folder but not always the
+    // filename; if the exact stem found nothing, retry without the trailing variant
+    if (files.length === 0 && /_Variant_\d+$/i.test(stem)) {
+      files = await findFilesByNameGlobal(stem.replace(/_Variant_\d+$/i, ''), { mimeType: 'application/pdf' });
+    }
+
+    const wantKind = kind === 'ms' ? /_MS\b/i : /_QP\b/i;
+    const stemLc = stem.toLowerCase();
+    const exact = files.find((f) => f.name.replace(/\.pdf$/i, '').toLowerCase() === `${stemLc}_${kind}`);
+    const pick =
+      exact ||
+      files.find((f) => wantKind.test(f.name) && f.name.toLowerCase().includes(stemLc)) ||
+      files.find((f) => wantKind.test(f.name)) ||
+      files[0];
+
+    if (!pick) return res.status(404).json({ error: 'paper not found', stem });
+    res.json({ fileId: pick.id, name: pick.name, viewUrl: `/papers/view/${pick.id}` });
+  } catch (error) {
+    console.error('Error resolving paper:', error);
+    res.status(500).json({ error: 'Failed to resolve paper' });
   }
 });
 

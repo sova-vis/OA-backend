@@ -88,6 +88,23 @@ function stripLeadingOcrNoise(value) {
     .trimStart();
 }
 
+// PostgreSQL cannot store  (NUL) in text OR jsonb — it raises "unsupported
+// Unicode escape sequence". cleanText scrubs the flat text columns, but jsonb
+// fields (sources, images, options, reference) are inserted structurally and can
+// still carry a NUL from a PDF artefact. This strips control chars from every
+// string in a value without disturbing its shape.
+const JSONB_CONTROL_RE = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g;
+function stripControlDeep(value) {
+  if (typeof value === "string") return value.replace(JSONB_CONTROL_RE, "");
+  if (Array.isArray(value)) return value.map(stripControlDeep);
+  if (value && typeof value === "object") {
+    const out = {};
+    for (const key of Object.keys(value)) out[key] = stripControlDeep(value[key]);
+    return out;
+  }
+  return value;
+}
+
 function cleanText(value) {
   if (value === null || value === undefined) return "";
   return stripLeadingOcrNoise(stripBoilerplate(String(value)))
@@ -201,7 +218,16 @@ function buildImages(raw) {
       }
     }
   }
-  return imgs;
+  // Strip control chars from the small text fields (alt/caption/role) — an alt
+  // copied from question text can carry a NUL. The base64 data_url is left
+  // untouched: it cannot contain control chars and is far too large to rescan.
+  return imgs.map((im) => {
+    const out = {};
+    for (const key of Object.keys(im)) {
+      out[key] = key === "data_url" ? im[key] : stripControlDeep(im[key]);
+    }
+    return out;
+  });
 }
 
 const OPTION_LETTER = /^[A-D]$/;
@@ -270,7 +296,10 @@ function flattenParts(raw) {
 // passages (Islamiyat: label + reference + translation + the Arabic-text image).
 // Stored together so the UI can show each image paired with its translation.
 function buildSources(raw) {
-  if (Array.isArray(raw.sources) && raw.sources.length) return raw.sources;
+  // case-study / source text is passed through structurally (not via cleanText),
+  // so a NUL from a PDF artefact would reach jsonb and fail the whole batch —
+  // strip control chars here for every subject
+  if (Array.isArray(raw.sources) && raw.sources.length) return stripControlDeep(raw.sources);
   if (Array.isArray(raw.passages) && raw.passages.length) {
     return raw.passages
       .map((p) => {
@@ -394,19 +423,31 @@ async function flushBatch(items) {
 }
 
 async function clearSubject(subject) {
-  // question_parts cascade-delete via FK when questions are removed.
+  // Delete in small batches: rows carry large base64 images in jsonb, and a big
+  // multi-row DELETE (plus its TOAST cleanup and the parts cascade) can exceed
+  // Postgres's statement_timeout under load. 100 keeps each statement small, and
+  // a timeout is retried a few times before giving up.
   let deleted = 0;
   while (true) {
     const { data: rows, error } = await supabase
       .from("questions")
       .select("id")
       .eq("subject", subject)
-      .limit(500);
+      .limit(100);
     if (error) throw new Error(`Could not select existing ${subject} questions: ${error.message}`);
     if (!rows || rows.length === 0) break;
     const ids = rows.map((r) => r.id);
-    const { error: delErr } = await supabase.from("questions").delete().in("id", ids);
-    if (delErr) throw new Error(`Could not clear existing ${subject} questions: ${delErr.message}`);
+
+    let ok = false;
+    for (let attempt = 0; attempt < 5 && !ok; attempt++) {
+      // clear parts explicitly first so the questions DELETE does no cascade work
+      await supabase.from("question_parts").delete().in("question_uid", ids);
+      const { error: delErr } = await supabase.from("questions").delete().in("id", ids);
+      if (!delErr) { ok = true; break; }
+      const timeout = /timeout|canceling statement/i.test(delErr.message);
+      if (!timeout || attempt === 4) throw new Error(`Could not clear existing ${subject} questions: ${delErr.message}`);
+      await sleep(1000 * (attempt + 1));   // back off and let the DB settle
+    }
     deleted += ids.length;
   }
   if (deleted > 0) console.log(`Cleared ${deleted} existing ${subject} question rows.`);
@@ -515,12 +556,12 @@ async function importSubjectFolder(folderName) {
           topic_id: topicId,
           question_text: composeMcqText(raw),
           marks: intOrNull(raw.marks),
-          options: Array.isArray(raw.options) ? raw.options : asJsonObjectOrNull(raw.options),
+          options: stripControlDeep(Array.isArray(raw.options) ? raw.options : asJsonObjectOrNull(raw.options)),
           correct_option: cleanText(raw.correct_option).toUpperCase() || (answerIsLetter ? answerText.toUpperCase() : null),
           marking_scheme: cleanText(raw.marking_scheme) || (answerIsLetter ? null : answerText) || null,
           requires_diagram: Boolean(raw.requires_diagram),
           images: buildImages(raw),
-          reference: asJsonObjectOrNull(raw.reference),
+          reference: stripControlDeep(asJsonObjectOrNull(raw.reference)),
           sources: buildSources(raw),
           source_note: cleanText(raw.source_note) || null,
           dedup_group: cleanText(raw.dedup_group) || dedupGroup(raw, "mcq"),
@@ -585,7 +626,7 @@ async function importSubjectFolder(folderName) {
           marking_scheme: cleanText(raw.marking_scheme) || null,
           requires_diagram: Boolean(raw.requires_diagram || raw.image || raw.images || raw.figures),
           images: buildImages(raw),
-          reference: asJsonObjectOrNull(raw.reference),
+          reference: stripControlDeep(asJsonObjectOrNull(raw.reference)),
           sources,
           source_note: cleanText(raw.insert_note) || cleanText(raw.source_note) || cleanText(raw.passage_note) || null,
           dedup_group: cleanText(raw.dedup_group) || dedupGroup(raw, "structured"),
