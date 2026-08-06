@@ -441,20 +441,32 @@ router.get('/result/:assignmentId', async (req: AuthenticatedRequest, res: Respo
     const sub = submission as Record<string, unknown>;
     if (!sub.released_at) return res.json({ released: false });
 
-    const { data: marks } = await supabase.from('submission_marks').select('*').eq('submission_id', sub.id as string);
-    const { data: aqs } = await supabase.from('assignment_questions').select('id, order_index, snapshot').eq('assignment_id', req.params.assignmentId).order('order_index');
+    const [{ data: marks }, { data: aqs }, { data: answers }] = await Promise.all([
+      supabase.from('submission_marks').select('*').eq('submission_id', sub.id as string),
+      supabase.from('assignment_questions').select('id, order_index, snapshot').eq('assignment_id', req.params.assignmentId).order('order_index'),
+      supabase.from('submission_answers').select('assignment_question_id, answer_text, selected_option, ocr_text, images').eq('submission_id', sub.id as string),
+    ]);
     const snapByAq = new Map<string, Record<string, unknown>>();
     for (const q of (aqs ?? []) as { id: string; snapshot: Record<string, unknown> }[]) snapByAq.set(q.id, q.snapshot);
+    const answerByAq = new Map<string, Record<string, unknown>>();
+    for (const a of (answers ?? []) as Record<string, unknown>[]) answerByAq.set(a.assignment_question_id as string, a);
 
     const questions = ((marks ?? []) as Record<string, unknown>[]).map((m) => {
       const finalCriteria = (m.final_criteria ?? m.ai_criteria ?? []) as Record<string, unknown>[];
       const comments = (m.criterion_comments ?? []) as { index: number; text: string }[];
       const snap = snapByAq.get(m.assignment_question_id as string) || {};
+      const ans = answerByAq.get(m.assignment_question_id as string) || {};
       const score = finalCriteria.reduce((s, c) => s + (Number(c.marks_awarded) || 0), 0);
       const available = Number(m.ai_marks_available ?? finalCriteria.reduce((s, c) => s + Number(c.marks_available || 0), 0));
       return {
         topic: snap.topic ?? null,
         number: snap.question_number ?? null,
+        // The question, and what the student actually solved — so the marked
+        // paper is meaningful when they read the feedback.
+        question_text: snap.text ?? null,
+        your_answer: (ans.answer_text as string) || (ans.ocr_text as string) || null,
+        your_option: (ans.selected_option as string) || null,
+        your_images: Array.isArray(ans.images) ? ans.images : [],
         score,
         available,
         voice_note: release.comments ? (m.voice_note ?? null) : null,

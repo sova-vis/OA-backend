@@ -12,6 +12,7 @@ import {
   hashPassword,
   syntheticClerkId,
 } from './lib/provisioning';
+import { displayName } from './lib/names';
 
 /**
  * Teacher Portal — class & enrolment management (spec §3, §4.4, §3.5).
@@ -626,7 +627,7 @@ router.get('/student/mine', async (req: AuthenticatedRequest, res: Response) => 
     const teacherMap = new Map<string, string>();
     if (ownerIds.length > 0) {
       const { data: teachers } = await supabase.from('profiles').select('clerk_id, full_name, email').in('clerk_id', ownerIds);
-      for (const t of (teachers ?? []) as ProfileRow[]) teacherMap.set(t.clerk_id, t.full_name || t.email || 'Teacher');
+      for (const t of (teachers ?? []) as ProfileRow[]) teacherMap.set(t.clerk_id, displayName(t.full_name, t.email, 'Teacher'));
     }
 
     return res.json(

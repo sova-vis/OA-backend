@@ -81,6 +81,18 @@ router.get('/notifications', async (req: AuthenticatedRequest, res: Response) =>
 
     const notifications: { type: string; body: string; class_id?: string; assignment_id?: string }[] = [];
 
+    // Stored notifications (e.g. a student deleted their account, oversight grant).
+    const { data: stored } = await supabase
+      .from('notifications')
+      .select('type, body, class_id, assignment_id')
+      .eq('recipient_clerk_id', clerkId)
+      .is('read_at', null)
+      .order('created_at', { ascending: false })
+      .limit(20);
+    for (const n of (stored ?? []) as { type: string; body: string; class_id: string | null; assignment_id: string | null }[]) {
+      notifications.push({ type: n.type, body: n.body, class_id: n.class_id ?? undefined, assignment_id: n.assignment_id ?? undefined });
+    }
+
     // Pending enrolment requests, batched by class.
     const { data: pending } = await supabase.from('class_enrollments').select('class_id').in('class_id', classIds).eq('status', 'pending');
     const pendingByClass = new Map<string, number>();

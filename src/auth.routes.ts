@@ -288,6 +288,75 @@ router.post('/complete-onboarding', clerkAuth, async (req: AuthenticatedRequest,
 });
 
 /**
+ * POST /auth/delete-account
+ * Self-service account deletion. Requires the caller to re-type their own email.
+ * Removes all their Propel data and the Clerk user. When a student deletes,
+ * their teachers are notified that an enrolled student left.
+ */
+async function deleteClerkUser(clerkId: string): Promise<void> {
+  const key = process.env.CLERK_SECRET_KEY;
+  if (!key) return;
+  try {
+    await fetch(`https://api.clerk.com/v1/users/${clerkId}`, { method: 'DELETE', headers: { Authorization: `Bearer ${key}` } });
+  } catch {
+    /* best-effort */
+  }
+}
+
+router.post('/delete-account', clerkAuth, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const clerkId = req.auth?.clerkId;
+    if (!clerkId) return res.status(401).json({ error: 'Unauthorized' });
+
+    const verifiedEmail = (extractClaimString(req.auth?.claims, ['email', 'email_address', 'primary_email_address']) || '').toLowerCase();
+    const typed = String(req.body?.email_confirmation ?? '').trim().toLowerCase();
+    if (!verifiedEmail || typed !== verifiedEmail) {
+      return res.status(400).json({ error: 'The email you typed does not match your account email.' });
+    }
+
+    const { data: profile } = await supabase.from('profiles').select('role, full_name, email').eq('clerk_id', clerkId).maybeSingle();
+    const role = (profile as { role?: string } | null)?.role ?? 'student';
+    const fullName = (profile as { full_name?: string } | null)?.full_name || verifiedEmail.split('@')[0];
+
+    if (role === 'teacher') {
+      // Classes cascade to co-teachers, enrolments, assignments, submissions.
+      await supabase.from('classes').delete().eq('owner_clerk_id', clerkId);
+      await supabase.from('class_co_teachers').delete().eq('teacher_clerk_id', clerkId);
+      await supabase.from('custom_questions').delete().eq('owner_clerk_id', clerkId);
+      await supabase.from('comment_bank').delete().eq('owner_clerk_id', clerkId);
+      await supabase.from('scope_grants').delete().eq('user_clerk_id', clerkId);
+    } else {
+      // Notify each class owner that an enrolled student deleted their account.
+      const { data: enr } = await supabase.from('class_enrollments').select('class_id').eq('student_clerk_id', clerkId).in('status', ['active', 'pending']);
+      const classIds = ((enr ?? []) as { class_id: string }[]).map((e) => e.class_id);
+      if (classIds.length > 0) {
+        const { data: classes } = await supabase.from('classes').select('id, name, owner_clerk_id').in('id', classIds);
+        for (const c of (classes ?? []) as { id: string; name: string; owner_clerk_id: string }[]) {
+          await supabase.from('notifications').insert({
+            recipient_clerk_id: c.owner_clerk_id,
+            type: 'account_deleted',
+            class_id: c.id,
+            body: `${fullName}, enrolled in ${c.name}, has deleted their Propel account.`,
+          });
+        }
+      }
+      // Submissions cascade to answers + marks.
+      await supabase.from('submissions').delete().eq('student_clerk_id', clerkId);
+      await supabase.from('class_enrollments').delete().eq('student_clerk_id', clerkId);
+    }
+
+    await supabase.from('notifications').delete().eq('recipient_clerk_id', clerkId);
+    await supabase.from('profiles').delete().eq('clerk_id', clerkId);
+    await deleteClerkUser(clerkId);
+
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error('Delete-account error:', err);
+    return res.status(500).json({ error: 'Failed to delete account' });
+  }
+});
+
+/**
  * POST /auth/sync-profile
  * Ensure current Clerk user has a profile row in Supabase
  */

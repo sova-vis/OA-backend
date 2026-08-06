@@ -2,6 +2,7 @@ import { Router, Response } from 'express';
 import { AuthenticatedRequest, clerkAuth } from './lib/clerkAuth';
 import { supabase } from './lib/supabase';
 import { resolveClassAccess } from './lib/portalAccess';
+import { displayName } from './lib/names';
 import { isSubmissionFullyReviewed, releaseSubmission } from './lib/release';
 
 /**
@@ -103,7 +104,7 @@ router.get('/assignment/:id/status', async (req: AuthenticatedRequest, res: Resp
     const nameMap = new Map<string, string>();
     if (ids.length > 0) {
       const { data: profiles } = await supabase.from('profiles').select('clerk_id, full_name, email').in('clerk_id', ids);
-      for (const p of (profiles ?? []) as { clerk_id: string; full_name: string | null; email: string | null }[]) nameMap.set(p.clerk_id, p.full_name || p.email || 'Student');
+      for (const p of (profiles ?? []) as { clerk_id: string; full_name: string | null; email: string | null }[]) nameMap.set(p.clerk_id, displayName(p.full_name, p.email, 'Student'));
     }
 
     const released = rows.filter((r) => r.released_at).length;

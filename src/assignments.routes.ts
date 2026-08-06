@@ -424,9 +424,7 @@ router.delete('/:id', async (req: AuthenticatedRequest, res: Response) => {
     const { assignment, access } = await loadAssignmentWithAccess(req.params.id, req.auth!.clerkId);
     if (!assignment || !access) return res.status(404).json({ error: 'Assignment not found' });
     if (!access.canGrade) return res.status(403).json({ error: 'No grading access' });
-    if (assignment.status !== 'draft') {
-      return res.status(400).json({ error: 'Only draft assignments can be deleted' });
-    }
+    // Deleting an assignment removes its questions and all submissions (cascade).
     const { error } = await supabase.from('assignments').delete().eq('id', assignment.id);
     if (error) throw error;
     return res.json({ ok: true });

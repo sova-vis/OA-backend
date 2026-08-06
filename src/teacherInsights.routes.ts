@@ -2,6 +2,7 @@ import { Router, Response } from 'express';
 import { AuthenticatedRequest, clerkAuth } from './lib/clerkAuth';
 import { supabase } from './lib/supabase';
 import { resolveClassAccess } from './lib/portalAccess';
+import { displayName } from './lib/names';
 
 /**
  * Teacher Portal — dashboard (spec feature group 2) and insights (§12).
@@ -196,7 +197,7 @@ router.get('/dashboard', async (req: AuthenticatedRequest, res: Response) => {
       const { data: profs } = await supabase.from('profiles').select('clerk_id, full_name, email').in('clerk_id', attentionIds);
       for (const p of (profs ?? []) as { clerk_id: string; full_name: string | null; email: string | null }[]) {
         const cls = enrollRows.find((e) => e.student_clerk_id === p.clerk_id)?.class_id ?? '';
-        nameMap.set(p.clerk_id, { name: p.full_name || p.email || 'Student', class_id: cls });
+        nameMap.set(p.clerk_id, { name: displayName(p.full_name, p.email, 'Student'), class_id: cls });
       }
     }
     const needs_attention = needsRaw.slice(0, 5).map((n) => ({
@@ -266,7 +267,7 @@ router.get('/class/:classId/heatmap', async (req: AuthenticatedRequest, res: Res
     const nameMap = new Map<string, string>();
     if (studentIds.length > 0) {
       const { data: profs } = await supabase.from('profiles').select('clerk_id, full_name, email').in('clerk_id', studentIds);
-      for (const p of (profs ?? []) as { clerk_id: string; full_name: string | null; email: string | null }[]) nameMap.set(p.clerk_id, p.full_name || p.email || 'Student');
+      for (const p of (profs ?? []) as { clerk_id: string; full_name: string | null; email: string | null }[]) nameMap.set(p.clerk_id, displayName(p.full_name, p.email, 'Student'));
     }
 
     const topicList = Array.from(topics).sort();
@@ -387,7 +388,7 @@ router.get('/export/csv', async (req: AuthenticatedRequest, res: Response) => {
     const nameMap = new Map<string, string>();
     if (studentIds.length > 0) {
       const { data: profs } = await supabase.from('profiles').select('clerk_id, full_name, email').in('clerk_id', studentIds);
-      for (const p of (profs ?? []) as { clerk_id: string; full_name: string | null; email: string | null }[]) nameMap.set(p.clerk_id, p.full_name || p.email || 'Student');
+      for (const p of (profs ?? []) as { clerk_id: string; full_name: string | null; email: string | null }[]) nameMap.set(p.clerk_id, displayName(p.full_name, p.email, 'Student'));
     }
     const { data: klass } = await supabase.from('classes').select('syllabus_code').eq('id', classId).maybeSingle();
     const syllabus = (klass as { syllabus_code?: string } | null)?.syllabus_code ?? '';
