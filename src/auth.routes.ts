@@ -227,6 +227,67 @@ router.post('/select-role', clerkAuth, async (req: AuthenticatedRequest, res: Re
 });
 
 /**
+ * POST /auth/complete-onboarding
+ * Save the onboarding survey (role + collected fields) in one call and mark
+ * onboarding complete. One-time: only permitted while onboarding_complete=false,
+ * so it cannot be used to self-escalate a role later (§15.1).
+ */
+router.post('/complete-onboarding', clerkAuth, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const clerkId = req.auth?.clerkId;
+    if (!clerkId) return res.status(401).json({ error: 'Unauthorized' });
+
+    const b = (req.body ?? {}) as Record<string, unknown>;
+    const role = b.role === 'teacher' ? 'teacher' : b.role === 'student' ? 'student' : null;
+    if (!role) return res.status(400).json({ error: "role must be 'student' or 'teacher'" });
+
+    const email = extractClaimString(req.auth?.claims, ['email', 'email_address', 'primary_email_address']);
+    const fullName = typeof b.full_name === 'string' && b.full_name.trim() ? b.full_name.trim() : 'User';
+
+    const { data: existing } = await supabase.from('profiles').select('onboarding_complete').eq('clerk_id', clerkId).maybeSingle();
+    if (existing && (existing as { onboarding_complete?: boolean }).onboarding_complete) {
+      return res.status(403).json({ error: 'Onboarding already completed.' });
+    }
+
+    const common: Record<string, unknown> = {
+      clerk_id: clerkId,
+      email,
+      full_name: fullName,
+      role,
+      onboarding_complete: true,
+    };
+    if (typeof b.photo_url === 'string' && b.photo_url) common.photo_url = b.photo_url;
+
+    if (role === 'student') {
+      if (typeof b.level === 'string') common.level = b.level;
+      if (Array.isArray(b.selected_subjects)) common.selected_subjects = b.selected_subjects.filter((s) => typeof s === 'string').slice(0, 20);
+      if (typeof b.exam_session === 'string') common.exam_session = b.exam_session;
+      if (typeof b.target_grade === 'string') common.target_grade = b.target_grade;
+      if (typeof b.study_days === 'string') common.study_days = b.study_days;
+      if (b.subject_confidence && typeof b.subject_confidence === 'object') common.subject_confidence = b.subject_confidence;
+    } else {
+      if (Number.isFinite(Number(b.experience_years))) common.experience_years = Number(b.experience_years);
+      if (typeof b.school_name === 'string') common.school_name = b.school_name.trim() || null;
+      if (['private', 'public', 'none'].includes(b.school_type as string)) common.school_type = b.school_type;
+      if (typeof b.level === 'string') common.level = b.level; // levels taught, optional
+      if (Array.isArray(b.selected_subjects)) common.selected_subjects = b.selected_subjects.filter((s) => typeof s === 'string').slice(0, 20);
+    }
+
+    // Manual update-or-insert (avoids depending on an ON CONFLICT target, which
+    // isn't reliably present on this pre-existing profiles table).
+    const { data: existingRow } = await supabase.from('profiles').select('id').eq('clerk_id', clerkId).maybeSingle();
+    const result = existingRow
+      ? await supabase.from('profiles').update(common).eq('clerk_id', clerkId).select('*').single()
+      : await supabase.from('profiles').insert(common).select('*').single();
+    if (result.error) throw result.error;
+    return res.json(result.data);
+  } catch (err) {
+    console.error('Complete-onboarding error:', err);
+    return res.status(500).json({ error: 'Failed to complete onboarding' });
+  }
+});
+
+/**
  * POST /auth/sync-profile
  * Ensure current Clerk user has a profile row in Supabase
  */

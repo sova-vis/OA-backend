@@ -166,6 +166,7 @@ router.get('/queue', async (req: AuthenticatedRequest, res: Response) => {
         mark_id: m.id,
         submission_id: m.submission_id,
         assignment_question_id: m.assignment_question_id,
+        student_clerk_id: studentMap.get(m.submission_id as string) || '',
         student_name: nameMap.get(studentMap.get(m.submission_id as string) || '') || 'Student',
         question: {
           number: snap.question_number ?? aq.order_index,
@@ -191,6 +192,7 @@ router.get('/queue', async (req: AuthenticatedRequest, res: Response) => {
         status: m.status,
         flagged: m.flagged ?? false,
         examiner_note: examinerByAq.get(m.assignment_question_id as string) ?? null,
+        voice_note: m.voice_note ?? null,
       };
     });
 
@@ -331,6 +333,22 @@ router.post('/marks/:id/flag', async (req: AuthenticatedRequest, res: Response) 
   } catch (err) {
     console.error('Flag mark error:', err);
     return res.status(500).json({ error: 'Failed to flag' });
+  }
+});
+
+// POST /review/marks/:id/voice — attach/clear a voice note (base64 data URL).
+router.post('/marks/:id/voice', async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const ctx = await loadMarkContext(req.params.id, req.auth!.clerkId);
+    if (!ctx || !ctx.access) return res.status(404).json({ error: 'Mark not found' });
+    if (!ctx.access.canGrade) return res.status(403).json({ error: 'No grading access' });
+    const audio = typeof req.body?.audio === 'string' && req.body.audio ? req.body.audio : null;
+    if (audio && audio.length > 3_000_000) return res.status(413).json({ error: 'Voice note too long (keep it under ~30s)' });
+    await supabase.from('submission_marks').update({ voice_note: audio, updated_at: new Date().toISOString() }).eq('id', req.params.id);
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error('Voice note error:', err);
+    return res.status(500).json({ error: 'Failed to save voice note' });
   }
 });
 

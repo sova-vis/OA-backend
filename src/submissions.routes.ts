@@ -3,6 +3,7 @@ import { AuthenticatedRequest, clerkAuth } from './lib/clerkAuth';
 import { supabase } from './lib/supabase';
 import { resolveClassAccess } from './lib/portalAccess';
 import { markSubmission } from './lib/marking';
+import { grokChatJson, grokEnabled } from './lib/grok';
 
 /**
  * Teacher Portal — submissions: student take/submit flow and teacher tracking
@@ -147,6 +148,11 @@ router.get('/available', async (req: AuthenticatedRequest, res: Response) => {
     const classIds = ((enrollments ?? []) as { class_id: string }[]).map((e) => e.class_id);
     if (classIds.length === 0) return res.json([]);
 
+    // Class names for grouping in the classroom hub.
+    const classNameById = new Map<string, string>();
+    const { data: classRows } = await supabase.from('classes').select('id, name').in('id', classIds);
+    for (const c of (classRows ?? []) as { id: string; name: string }[]) classNameById.set(c.id, c.name);
+
     const { data: assignments } = await supabase
       .from('assignments')
       .select('id, class_id, title, status, deadline_at, timed, duration_minutes, attempt_limit, target_all, mark_scheme_visibility')
@@ -157,15 +163,15 @@ router.get('/available', async (req: AuthenticatedRequest, res: Response) => {
     const rows = (assignments ?? []) as AssignmentRow[];
     // Filter to those targeting the student and attach the student's submission state.
     const ids = rows.map((a) => a.id);
-    const subByAssignment = new Map<string, { id: string; status: string }>();
+    const subByAssignment = new Map<string, { id: string; status: string; released: boolean }>();
     if (ids.length > 0) {
       const { data: subs } = await supabase
         .from('submissions')
-        .select('id, assignment_id, status')
+        .select('id, assignment_id, status, released_at')
         .eq('student_clerk_id', clerkId)
         .in('assignment_id', ids);
-      for (const s of (subs ?? []) as { id: string; assignment_id: string; status: string }[]) {
-        subByAssignment.set(s.assignment_id, { id: s.id, status: s.status });
+      for (const s of (subs ?? []) as { id: string; assignment_id: string; status: string; released_at: string | null }[]) {
+        subByAssignment.set(s.assignment_id, { id: s.id, status: s.status, released: Boolean(s.released_at) });
       }
     }
 
@@ -177,11 +183,14 @@ router.get('/available', async (req: AuthenticatedRequest, res: Response) => {
       result.push({
         id: a.id,
         title: a.title,
+        class_id: a.class_id,
+        class_name: classNameById.get(a.class_id) ?? 'Class',
         deadline_at: a.deadline_at,
         timed: a.timed,
         duration_minutes: a.duration_minutes,
         submission_id: sub?.id ?? null,
         submission_status: sub?.status ?? 'not_started',
+        released: sub?.released ?? false,
       });
     }
     return res.json(result);
@@ -303,6 +312,75 @@ router.post('/:id/answer', async (req: AuthenticatedRequest, res: Response) => {
   }
 });
 
+// POST /submissions/:id/answer/ocr — upload a handwritten answer photo, OCR it
+// with Grok vision, and store image + extracted text (§8.2). The original image
+// is retained and shown to the teacher alongside the text at review time.
+router.post('/:id/answer/ocr', async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const clerkId = req.auth!.clerkId;
+    const { data: submission } = await supabase.from('submissions').select('id, student_clerk_id, status').eq('id', req.params.id).maybeSingle();
+    if (!submission) return res.status(404).json({ error: 'Submission not found' });
+    if ((submission as { student_clerk_id: string }).student_clerk_id !== clerkId) return res.status(403).json({ error: 'Not your submission' });
+    if (!['in_progress', 'returned'].includes((submission as { status: string }).status)) return res.status(400).json({ error: 'Not open for editing' });
+
+    const aqId = String(req.body?.assignment_question_id ?? '');
+    const rawImage = String(req.body?.image ?? '');
+    if (!aqId || !rawImage) return res.status(400).json({ error: 'assignment_question_id and image are required' });
+
+    // Accept a data URL or bare base64.
+    const m = rawImage.match(/^data:(image\/[a-zA-Z+]+);base64,(.+)$/);
+    const mime = m ? m[1] : 'image/jpeg';
+    const base64 = m ? m[2] : rawImage;
+
+    let ocrText = '';
+    let confidence = 0;
+    if (grokEnabled()) {
+      try {
+        const result = await grokChatJson({
+          system: 'You transcribe a student\'s HANDWRITTEN exam answer from an image into plain text. Preserve the answer faithfully; do not solve or correct it. Return JSON {"text": "...", "confidence": 0..1} where confidence is how legible the handwriting was.',
+          user: 'Transcribe this handwritten answer.',
+          images: [{ base64, mimeType: mime }],
+          maxTokens: 1500,
+        });
+        if (typeof result.text === 'string') ocrText = result.text.trim();
+        const c = Number(result.confidence);
+        confidence = Number.isFinite(c) ? Math.max(0, Math.min(1, c)) : 0.5;
+      } catch {
+        /* leave as failed */
+      }
+    }
+
+    const OCR_FLOOR = 0.4;
+    const ocrStatus = ocrText && confidence >= OCR_FLOOR ? 'ok' : 'failed';
+
+    // Merge image into the answer's images array (retained for review).
+    const { data: existing } = await supabase.from('submission_answers').select('images').eq('submission_id', req.params.id).eq('assignment_question_id', aqId).maybeSingle();
+    const images = Array.isArray((existing as { images?: unknown[] } | null)?.images) ? (existing as { images: unknown[] }).images : [];
+    images.push({ data_url: `data:${mime};base64,${base64}` });
+
+    await supabase.from('submission_answers').upsert(
+      {
+        submission_id: req.params.id,
+        assignment_question_id: aqId,
+        images,
+        ocr_text: ocrText || null,
+        ocr_confidence: confidence,
+        ocr_status: ocrStatus,
+        // OCR text becomes the answer used for marking; teacher can correct it.
+        answer_text: ocrText || null,
+        answered: Boolean(ocrText),
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: 'submission_id,assignment_question_id' }
+    );
+
+    return res.json({ ocr_text: ocrText, ocr_confidence: confidence, ocr_status: ocrStatus });
+  } catch (err) {
+    console.error('OCR upload error:', err);
+    return res.status(500).json({ error: 'Failed to process handwriting' });
+  }
+});
+
 // POST /submissions/:id/submit — finalize and run auto-marking.
 router.post('/:id/submit', async (req: AuthenticatedRequest, res: Response) => {
   try {
@@ -379,6 +457,7 @@ router.get('/result/:assignmentId', async (req: AuthenticatedRequest, res: Respo
         number: snap.question_number ?? null,
         score,
         available,
+        voice_note: release.comments ? (m.voice_note ?? null) : null,
         // §11.3 breakdown: only if enabled.
         criteria: release.breakdown
           ? finalCriteria.map((c, i) => ({

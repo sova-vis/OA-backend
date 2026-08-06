@@ -28,6 +28,7 @@ import feedbackRoutes from './feedback.routes';
 import teacherInsightsRoutes from './teacherInsights.routes';
 import settingsRoutes from './settings.routes';
 import institutionRoutes from './institution.routes';
+import datesheetRoutes from './datesheet.routes';
 import { clerkAuth } from './lib/clerkAuth';
 import { rateLimit } from './lib/rateLimit';
 import { logConfigReport, serviceReadinessMap } from './lib/configReport';
@@ -265,6 +266,9 @@ app.use('/teacher-insights', teacherInsightsRoutes);
 // Teacher Portal — settings (§17) + notifications (§16), institution (§14–18)
 app.use('/settings', settingsRoutes);
 app.use('/institution', institutionRoutes);
+
+// Propel — exam datesheet (student-facing)
+app.use('/datesheet', datesheetRoutes);
 
 // OA / QA grading proxy — now requires auth + AI rate limit (F-04)
 app.use('/oa-grading', clerkAuth, aiLimit, qaGradingRoutes);

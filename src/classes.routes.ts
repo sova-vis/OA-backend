@@ -599,6 +599,55 @@ router.post('/:id/enrollments/reject', async (req: AuthenticatedRequest, res: Re
 });
 
 // ---------------------------------------------------------------------------
+// GET /classes/student/mine — the classrooms a student has joined, with the
+// teacher's name (for the student Classroom hub).
+// ---------------------------------------------------------------------------
+router.get('/student/mine', async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const clerkId = req.auth!.clerkId;
+    const { data: enrollments, error } = await supabase
+      .from('class_enrollments')
+      .select('class_id, status')
+      .eq('student_clerk_id', clerkId)
+      .in('status', ['active', 'pending']);
+    if (error) throw error;
+
+    const classIds = ((enrollments ?? []) as { class_id: string; status: string }[]).map((e) => e.class_id);
+    if (classIds.length === 0) return res.json([]);
+    const statusByClass = new Map(((enrollments ?? []) as { class_id: string; status: string }[]).map((e) => [e.class_id, e.status]));
+
+    const { data: klasses } = await supabase
+      .from('classes')
+      .select('id, name, subject, syllabus_code, level, owner_clerk_id')
+      .in('id', classIds);
+    const rows = (klasses ?? []) as ClassRow[];
+
+    const ownerIds = Array.from(new Set(rows.map((c) => c.owner_clerk_id)));
+    const teacherMap = new Map<string, string>();
+    if (ownerIds.length > 0) {
+      const { data: teachers } = await supabase.from('profiles').select('clerk_id, full_name, email').in('clerk_id', ownerIds);
+      for (const t of (teachers ?? []) as ProfileRow[]) teacherMap.set(t.clerk_id, t.full_name || t.email || 'Teacher');
+    }
+
+    return res.json(
+      rows.map((c) => ({
+        class_id: c.id,
+        class_name: c.name,
+        subject: c.subject,
+        syllabus_code: c.syllabus_code,
+        level: c.level,
+        teacher_clerk_id: c.owner_clerk_id,
+        teacher_name: teacherMap.get(c.owner_clerk_id) || 'Teacher',
+        enrollment_status: statusByClass.get(c.id) || 'active',
+      }))
+    );
+  } catch (err) {
+    console.error('Student classrooms error:', err);
+    return res.status(500).json({ error: 'Failed to load classrooms' });
+  }
+});
+
+// ---------------------------------------------------------------------------
 // POST /classes/join — a student joins by code (§3.2, §4.4). Case-insensitive.
 // ---------------------------------------------------------------------------
 router.post('/join', async (req: AuthenticatedRequest, res: Response) => {

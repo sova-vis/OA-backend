@@ -214,10 +214,28 @@ router.get('/', async (req: AuthenticatedRequest, res: Response) => {
       }
     }
 
+    // Attach pending-review counts (marks needing review) per assignment, so the
+    // list can split Pending vs Done.
+    const pendingCounts = new Map<string, number>();
+    if (ids.length > 0) {
+      const { data: subs } = await supabase.from('submissions').select('id, assignment_id').in('assignment_id', ids);
+      const subToAsg = new Map<string, string>();
+      for (const s of (subs ?? []) as { id: string; assignment_id: string }[]) subToAsg.set(s.id, s.assignment_id);
+      const subIds = Array.from(subToAsg.keys());
+      if (subIds.length > 0) {
+        const { data: marks } = await supabase.from('submission_marks').select('submission_id, status').in('submission_id', subIds).in('status', ['needs_review', 'ocr_failed']);
+        for (const m of (marks ?? []) as { submission_id: string }[]) {
+          const aid = subToAsg.get(m.submission_id);
+          if (aid) pendingCounts.set(aid, (pendingCounts.get(aid) ?? 0) + 1);
+        }
+      }
+    }
+
     return res.json(
       ((assignments ?? []) as Record<string, unknown>[]).map((a) => ({
         ...a,
         question_count: qCounts.get(a.id as string) ?? 0,
+        pending_reviews: pendingCounts.get(a.id as string) ?? 0,
       }))
     );
   } catch (err) {
