@@ -169,6 +169,64 @@ router.patch('/profile', clerkAuth, async (req: AuthenticatedRequest, res: Respo
 });
 
 /**
+ * POST /auth/select-role
+ * One-time role choice at onboarding: student or teacher. Only permitted while
+ * the profile has not completed onboarding — after that, role changes are
+ * admin-only (§15.1). Never allows selecting 'admin'.
+ */
+router.post('/select-role', clerkAuth, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const clerkId = req.auth?.clerkId;
+    if (!clerkId) return res.status(401).json({ error: 'Unauthorized' });
+
+    const role = req.body?.role;
+    if (role !== 'student' && role !== 'teacher') {
+      return res.status(400).json({ error: "role must be 'student' or 'teacher'" });
+    }
+
+    const email = extractClaimString(req.auth?.claims, ['email', 'email_address', 'primary_email_address']);
+    const fullName =
+      extractClaimString(req.auth?.claims, ['name', 'full_name']) ||
+      [extractClaimString(req.auth?.claims, ['first_name']), extractClaimString(req.auth?.claims, ['last_name'])]
+        .filter(Boolean)
+        .join(' ')
+        .trim() ||
+      'User';
+
+    const { data: existing, error: fetchError } = await supabase.from('profiles').select('*').eq('clerk_id', clerkId).maybeSingle();
+    if (fetchError) throw fetchError;
+
+    // Guard against self-escalation: once onboarding is done, only an admin can
+    // change a role.
+    if (existing && existing.onboarding_complete) {
+      return res.status(403).json({ error: 'Your role is already set. Contact an administrator to change it.' });
+    }
+
+    if (existing) {
+      const { data: updated, error } = await supabase
+        .from('profiles')
+        .update({ role, onboarding_complete: true, full_name: existing.full_name || fullName })
+        .eq('clerk_id', clerkId)
+        .select('*')
+        .single();
+      if (error) throw error;
+      return res.json(updated);
+    }
+
+    const { data: created, error } = await supabase
+      .from('profiles')
+      .insert({ clerk_id: clerkId, email, full_name: fullName, role, onboarding_complete: true })
+      .select('*')
+      .single();
+    if (error) throw error;
+    return res.status(201).json(created);
+  } catch (err) {
+    console.error('Select-role error:', err);
+    return res.status(500).json({ error: 'Failed to set role' });
+  }
+});
+
+/**
  * POST /auth/sync-profile
  * Ensure current Clerk user has a profile row in Supabase
  */

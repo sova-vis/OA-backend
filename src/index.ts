@@ -18,6 +18,16 @@ import insightsRoutes from './insights.routes';
 import practiceGradingRoutes from './practiceGrading.routes';
 import mentoringRoutes from './mentoring.routes';
 import paperParserRoutes from './paperParser.routes';
+import classesRoutes from './classes.routes';
+import assignmentsRoutes from './assignments.routes';
+import customQuestionsRoutes from './customQuestions.routes';
+import submissionsRoutes from './submissions.routes';
+import reviewRoutes from './review.routes';
+import releaseRoutes from './release.routes';
+import feedbackRoutes from './feedback.routes';
+import teacherInsightsRoutes from './teacherInsights.routes';
+import settingsRoutes from './settings.routes';
+import institutionRoutes from './institution.routes';
 import { clerkAuth } from './lib/clerkAuth';
 import { rateLimit } from './lib/rateLimit';
 import { logConfigReport, serviceReadinessMap } from './lib/configReport';
@@ -229,6 +239,32 @@ app.use('/insights', clerkAuth, aiLimit, insightsRoutes);
 
 // Teacher-student meetings and chat API
 app.use('/mentoring', mentoringRoutes);
+
+// Teacher Portal — class & enrolment management (auth enforced in-module)
+app.use('/classes', classesRoutes);
+
+// Teacher Portal — assignment creation & tracking (auth enforced in-module)
+app.use('/assignments', assignmentsRoutes);
+
+// Teacher Portal — custom questions with discrete criteria (§5.4)
+app.use('/custom-questions', customQuestionsRoutes);
+
+// Teacher Portal — submissions & marking (feature groups 7, 8)
+app.use('/submissions', submissionsRoutes);
+
+// Teacher Portal — grading review (feature group 9)
+app.use('/review', reviewRoutes);
+
+// Teacher Portal — result release (§11) and feedback (§10)
+app.use('/release', releaseRoutes);
+app.use('/feedback', feedbackRoutes);
+
+// Teacher Portal — dashboard (§2) and insights (§12)
+app.use('/teacher-insights', teacherInsightsRoutes);
+
+// Teacher Portal — settings (§17) + notifications (§16), institution (§14–18)
+app.use('/settings', settingsRoutes);
+app.use('/institution', institutionRoutes);
 
 // OA / QA grading proxy — now requires auth + AI rate limit (F-04)
 app.use('/oa-grading', clerkAuth, aiLimit, qaGradingRoutes);
