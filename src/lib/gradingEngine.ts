@@ -1,16 +1,20 @@
 /**
- * Thin client for the OA/QA grading engine (`/oa-level/evaluate`). Used to mark
- * a single mark-scheme criterion: we pass the criterion text as the "mark
+ * Marks a single mark-scheme criterion: we pass the criterion text as the "mark
  * scheme" and read back how well the student's answer satisfies it (§8.3).
  *
- * The engine returns a holistic 0–1 score, NOT a calibrated confidence
- * (Appendix A blocking dependency). We derive a HEURISTIC confidence from the
- * score's distance from the 0.5 decision boundary and flag it as uncalibrated;
- * it must be replaced when the engine emits real calibrated confidence.
+ * Primary marker is the OA/QA grading engine (`/oa-level/evaluate`). When that
+ * service is down/unconfigured we fall back to the Grok LLM (the same key that
+ * powers OCR/handwriting), so theory auto-marking still works out of the box
+ * instead of leaving every answer as "No AI mark".
  *
- * All failures are swallowed (returns null) so marking degrades gracefully to
- * a review scaffold when the engine is down.
+ * The score is a holistic 0–1, NOT a calibrated confidence (Appendix A blocking
+ * dependency). We derive a HEURISTIC confidence from the score's distance from
+ * the 0.5 decision boundary and flag it as uncalibrated.
+ *
+ * Returns null only when BOTH markers are unavailable, so marking degrades
+ * gracefully to a review scaffold.
  */
+import { grokChatJson, grokEnabled } from './grok';
 
 const base = (
   process.env.OA_GRADING_SERVICE_URL ||
@@ -23,12 +27,21 @@ export interface CriterionEval {
   feedback: string;
 }
 
-export async function evaluateCriterion(input: {
+interface CriterionInput {
   question: string;
   studentAnswer: string;
   criterionText: string;
   subject: string | null;
-}): Promise<CriterionEval | null> {
+}
+
+export async function evaluateCriterion(input: CriterionInput): Promise<CriterionEval | null> {
+  const fromEngine = await evaluateWithEngine(input);
+  if (fromEngine) return fromEngine;
+  // Engine down/unconfigured → LLM fallback so marking still happens.
+  return evaluateWithGrok(input);
+}
+
+async function evaluateWithEngine(input: CriterionInput): Promise<CriterionEval | null> {
   try {
     const res = await fetch(`${base}/oa-level/evaluate`, {
       method: 'POST',
@@ -46,6 +59,30 @@ export async function evaluateCriterion(input: {
     const raw = Number(data.score);
     const score = Number.isFinite(raw) ? Math.max(0, Math.min(1, raw)) : 0;
     return { score, feedback: typeof data.feedback === 'string' ? data.feedback : '' };
+  } catch {
+    return null;
+  }
+}
+
+async function evaluateWithGrok(input: CriterionInput): Promise<CriterionEval | null> {
+  if (!grokEnabled()) return null;
+  const system =
+    'You are a strict but fair Cambridge O/A Level examiner marking ONE mark-scheme point. ' +
+    'Decide how well the student answer satisfies the given marking point. ' +
+    'Reply ONLY with JSON: {"score": <0..1>, "feedback": "<one short sentence>"}. ' +
+    'score 1 = the point is fully and correctly made; 0 = absent or wrong; ' +
+    'use values in between for partial credit. Judge meaning, not wording.';
+  const user =
+    `SUBJECT: ${input.subject ?? 'General'}\n` +
+    `QUESTION: ${input.question || '(not provided)'}\n` +
+    `MARKING POINT (award if satisfied): ${input.criterionText}\n` +
+    `STUDENT ANSWER: ${input.studentAnswer || '(blank)'}`;
+  try {
+    const parsed = await grokChatJson({ system, user, temperature: 0, maxTokens: 400, timeoutMs: 45000 });
+    const raw = Number((parsed as { score?: unknown }).score);
+    const score = Number.isFinite(raw) ? Math.max(0, Math.min(1, raw)) : 0;
+    const feedback = typeof (parsed as { feedback?: unknown }).feedback === 'string' ? String((parsed as { feedback?: unknown }).feedback) : '';
+    return { score, feedback };
   } catch {
     return null;
   }

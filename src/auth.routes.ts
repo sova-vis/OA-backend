@@ -308,15 +308,20 @@ router.post('/delete-account', clerkAuth, async (req: AuthenticatedRequest, res:
     const clerkId = req.auth?.clerkId;
     if (!clerkId) return res.status(401).json({ error: 'Unauthorized' });
 
-    const verifiedEmail = (extractClaimString(req.auth?.claims, ['email', 'email_address', 'primary_email_address']) || '').toLowerCase();
+    // Resolve the account email from the stored profile first — Clerk's default
+    // session token often omits the email claim, so relying on it alone made the
+    // check always fail. Accept the DB email or (as a fallback) the JWT claim.
+    const { data: profile } = await supabase.from('profiles').select('role, full_name, email').eq('clerk_id', clerkId).maybeSingle();
+    const claimEmail = (extractClaimString(req.auth?.claims, ['email', 'email_address', 'primary_email_address']) || '').toLowerCase();
+    const profileEmail = ((profile as { email?: string } | null)?.email || '').toLowerCase();
+    const accountEmail = profileEmail || claimEmail;
     const typed = String(req.body?.email_confirmation ?? '').trim().toLowerCase();
-    if (!verifiedEmail || typed !== verifiedEmail) {
+    if (!accountEmail || typed !== accountEmail) {
       return res.status(400).json({ error: 'The email you typed does not match your account email.' });
     }
 
-    const { data: profile } = await supabase.from('profiles').select('role, full_name, email').eq('clerk_id', clerkId).maybeSingle();
     const role = (profile as { role?: string } | null)?.role ?? 'student';
-    const fullName = (profile as { full_name?: string } | null)?.full_name || verifiedEmail.split('@')[0];
+    const fullName = (profile as { full_name?: string } | null)?.full_name || accountEmail.split('@')[0];
 
     if (role === 'teacher') {
       // Classes cascade to co-teachers, enrolments, assignments, submissions.

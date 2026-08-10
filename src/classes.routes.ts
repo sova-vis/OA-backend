@@ -13,6 +13,7 @@ import {
   syntheticClerkId,
 } from './lib/provisioning';
 import { displayName } from './lib/names';
+import { ensureStudentProfile } from './lib/clerkUser';
 
 /**
  * Teacher Portal — class & enrolment management (spec §3, §4.4, §3.5).
@@ -669,6 +670,10 @@ router.post('/join', async (req: AuthenticatedRequest, res: Response) => {
     const row = klass as ClassRow;
     if (row.archived_at) return res.status(400).json({ error: 'That class is archived' });
 
+    // Capture the student's identity now so the teacher's Requests tab shows a
+    // name/email instead of an anonymous "Student" (they join before onboarding).
+    await ensureStudentProfile(clerkId);
+
     const { data: existing, error: existErr } = await supabase
       .from('class_enrollments')
       .select('id, status, retry_blocked_until')
@@ -677,10 +682,13 @@ router.post('/join', async (req: AuthenticatedRequest, res: Response) => {
       .maybeSingle();
     if (existErr) throw existErr;
 
+    // Class context the join UI uses to pre-fill onboarding and route to Classroom.
+    const classMeta = { class_id: row.id, class_name: row.name, level: row.level, subject: row.subject };
+
     if (existing) {
       const ex = existing as { id: string; status: string; retry_blocked_until: string | null };
-      if (ex.status === 'active') return res.status(200).json({ status: 'active', class_id: row.id, already: true });
-      if (ex.status === 'pending') return res.status(200).json({ status: 'pending', class_id: row.id, already: true });
+      if (ex.status === 'active') return res.status(200).json({ status: 'active', already: true, ...classMeta });
+      if (ex.status === 'pending') return res.status(200).json({ status: 'pending', already: true, ...classMeta });
       if (ex.status === 'rejected' && ex.retry_blocked_until && new Date(ex.retry_blocked_until) > new Date()) {
         return res.status(429).json({ error: 'You were recently declined for this class. Try again later.' });
       }
@@ -698,7 +706,7 @@ router.post('/join', async (req: AuthenticatedRequest, res: Response) => {
         })
         .eq('id', ex.id);
       if (updErr) throw updErr;
-      return res.status(200).json({ status: nextStatus, class_id: row.id });
+      return res.status(200).json({ status: nextStatus, ...classMeta });
     }
 
     const nextStatus = row.auto_approve_joins ? 'active' : 'pending';
@@ -711,7 +719,7 @@ router.post('/join', async (req: AuthenticatedRequest, res: Response) => {
     });
     if (insErr) throw insErr;
 
-    return res.status(201).json({ status: nextStatus, class_id: row.id, class_name: row.name });
+    return res.status(201).json({ status: nextStatus, ...classMeta });
   } catch (err) {
     console.error('Join class error:', err);
     return res.status(500).json({ error: 'Failed to join class' });
