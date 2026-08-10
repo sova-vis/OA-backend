@@ -14,6 +14,8 @@ router.use(clerkAuth);
 router.get('/', async (req: AuthenticatedRequest, res: Response) => {
   try {
     const clerkId = req.auth!.clerkId;
+    const scope = req.query.scope === 'classroom' ? 'classroom' : 'personal';
+
     const { data: profile } = await supabase
       .from('profiles')
       .select('exam_session, selected_subjects, level')
@@ -21,7 +23,22 @@ router.get('/', async (req: AuthenticatedRequest, res: Response) => {
       .maybeSingle();
 
     const session = (profile as { exam_session?: string } | null)?.exam_session || null;
-    const subjects = ((profile as { selected_subjects?: string[] } | null)?.selected_subjects || []).map((s) => s.toLowerCase());
+
+    // Personal scope → the student's own declared subjects. Classroom scope →
+    // the subjects of the classes they've joined (what their teachers teach).
+    let subjectNames: string[];
+    if (scope === 'classroom') {
+      const { data: enr } = await supabase.from('class_enrollments').select('class_id').eq('student_clerk_id', clerkId).eq('status', 'active');
+      const classIds = ((enr ?? []) as { class_id: string }[]).map((e) => e.class_id);
+      if (classIds.length === 0) subjectNames = [];
+      else {
+        const { data: classes } = await supabase.from('classes').select('subject').in('id', classIds);
+        subjectNames = Array.from(new Set(((classes ?? []) as { subject: string }[]).map((c) => c.subject)));
+      }
+    } else {
+      subjectNames = (profile as { selected_subjects?: string[] } | null)?.selected_subjects || [];
+    }
+    const subjects = subjectNames.map((s) => s.toLowerCase());
 
     if (!subjects.length) return res.json({ status: 'no_subjects', session, papers: [], next_exam: null });
     if (!session || /not sure/i.test(session)) return res.json({ status: 'unavailable', session, papers: [], next_exam: null });

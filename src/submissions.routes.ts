@@ -507,11 +507,23 @@ router.get('/result/:assignmentId', async (req: AuthenticatedRequest, res: Respo
 router.get('/weak-spots', async (req: AuthenticatedRequest, res: Response) => {
   try {
     const clerkId = req.auth!.clerkId;
-    const { data: subs } = await supabase
+    const classId = typeof req.query.class_id === 'string' ? req.query.class_id : null;
+
+    // Optionally scope to one class (classroom notebook).
+    let assignmentFilter: string[] | null = null;
+    if (classId) {
+      const { data: asgs } = await supabase.from('assignments').select('id').eq('class_id', classId);
+      assignmentFilter = ((asgs ?? []) as { id: string }[]).map((a) => a.id);
+      if (assignmentFilter.length === 0) return res.json({ topics: [] });
+    }
+
+    let subQuery = supabase
       .from('submissions')
       .select('id, assignment_id, released_at')
       .eq('student_clerk_id', clerkId)
       .not('released_at', 'is', null);
+    if (assignmentFilter) subQuery = subQuery.in('assignment_id', assignmentFilter);
+    const { data: subs } = await subQuery;
     const subRows = (subs ?? []) as { id: string; assignment_id: string }[];
     if (subRows.length === 0) return res.json({ topics: [] });
 
