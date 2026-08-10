@@ -13,7 +13,7 @@ import {
   syntheticClerkId,
 } from './lib/provisioning';
 import { displayName } from './lib/names';
-import { ensureStudentProfile } from './lib/clerkUser';
+import { completeJoinedStudentOnboarding, ensureStudentProfile } from './lib/clerkUser';
 
 /**
  * Teacher Portal — class & enrolment management (spec §3, §4.4, §3.5).
@@ -670,9 +670,11 @@ router.post('/join', async (req: AuthenticatedRequest, res: Response) => {
     const row = klass as ClassRow;
     if (row.archived_at) return res.status(400).json({ error: 'That class is archived' });
 
-    // Capture the student's identity now so the teacher's Requests tab shows a
-    // name/email instead of an anonymous "Student" (they join before onboarding).
+    // Capture the student's identity so the teacher's Requests tab shows a real
+    // name/email, and skip the onboarding survey — a class-joiner is a student
+    // whose level/subject we already know from the class.
     await ensureStudentProfile(clerkId);
+    await completeJoinedStudentOnboarding(clerkId, row.subject);
 
     const { data: existing, error: existErr } = await supabase
       .from('class_enrollments')

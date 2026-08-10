@@ -52,3 +52,19 @@ export async function ensureStudentProfile(clerkId: string): Promise<void> {
     await supabase.from('profiles').insert({ clerk_id: clerkId, email, full_name: fullName, role: 'student', onboarding_complete: false });
   }
 }
+
+/**
+ * A student who joins a class via a link is a student by definition and their
+ * level/subject are known from the class — so we skip the onboarding survey
+ * entirely: mark them onboarded and merge the class subject into their subjects
+ * (never clobbering subjects they already picked).
+ */
+export async function completeJoinedStudentOnboarding(clerkId: string, subject: string | null): Promise<void> {
+  const { data } = await supabase.from('profiles').select('selected_subjects, role').eq('clerk_id', clerkId).maybeSingle();
+  const row = data as { selected_subjects?: string[] | null; role?: string } | null;
+  const subjects = new Set<string>((row?.selected_subjects ?? []).filter(Boolean));
+  if (subject && subject.trim()) subjects.add(subject.trim());
+  const patch = { onboarding_complete: true, role: row?.role || 'student', selected_subjects: Array.from(subjects) };
+  if (row) await supabase.from('profiles').update(patch).eq('clerk_id', clerkId);
+  else await supabase.from('profiles').insert({ clerk_id: clerkId, ...patch });
+}
