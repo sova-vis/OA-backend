@@ -469,7 +469,9 @@ router.get('/result/:assignmentId', async (req: AuthenticatedRequest, res: Respo
         your_images: Array.isArray(ans.images) ? ans.images : [],
         score,
         available,
-        voice_note: release.comments ? (m.voice_note ?? null) : null,
+        // A voice note is deliberate per-question feedback the teacher recorded
+        // for this student — always deliver it once results are released.
+        voice_note: m.voice_note ?? null,
         // §11.3 breakdown: only if enabled.
         criteria: release.breakdown
           ? finalCriteria.map((c, i) => ({
