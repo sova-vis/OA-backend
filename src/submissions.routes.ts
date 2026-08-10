@@ -502,6 +502,63 @@ router.get('/result/:assignmentId', async (req: AuthenticatedRequest, res: Respo
   }
 });
 
+// GET /submissions/weak-spots — the student's mistakes grouped by topic, from
+// their reviewed & released classroom work (for the Classroom dashboard).
+router.get('/weak-spots', async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const clerkId = req.auth!.clerkId;
+    const { data: subs } = await supabase
+      .from('submissions')
+      .select('id, assignment_id, released_at')
+      .eq('student_clerk_id', clerkId)
+      .not('released_at', 'is', null);
+    const subRows = (subs ?? []) as { id: string; assignment_id: string }[];
+    if (subRows.length === 0) return res.json({ topics: [] });
+
+    const subIds = subRows.map((s) => s.id);
+    const asgIds = Array.from(new Set(subRows.map((s) => s.assignment_id)));
+
+    const [{ data: marks }, { data: aqs }] = await Promise.all([
+      supabase.from('submission_marks').select('assignment_question_id, final_criteria, ai_criteria').in('submission_id', subIds),
+      supabase.from('assignment_questions').select('id, snapshot').in('assignment_id', asgIds),
+    ]);
+    const topicByAq = new Map<string, string>();
+    for (const q of (aqs ?? []) as { id: string; snapshot: Record<string, unknown> }[]) topicByAq.set(q.id, String(q.snapshot?.topic ?? 'General'));
+
+    // topic -> { missed, total, mistakes[] }
+    const byTopic = new Map<string, { missed: number; total: number; mistakes: string[] }>();
+    for (const m of (marks ?? []) as Record<string, unknown>[]) {
+      const topic = topicByAq.get(m.assignment_question_id as string) || 'General';
+      const criteria = (m.final_criteria ?? m.ai_criteria ?? []) as { criterion_text?: string; awarded?: boolean }[];
+      const entry = byTopic.get(topic) ?? { missed: 0, total: 0, mistakes: [] };
+      for (const c of criteria) {
+        entry.total += 1;
+        if (!c.awarded) {
+          entry.missed += 1;
+          if (c.criterion_text && entry.mistakes.length < 4 && !entry.mistakes.includes(c.criterion_text)) entry.mistakes.push(c.criterion_text);
+        }
+      }
+      byTopic.set(topic, entry);
+    }
+
+    const topics = Array.from(byTopic, ([topic, v]) => ({
+      topic,
+      missed: v.missed,
+      total: v.total,
+      accuracy: v.total > 0 ? Math.round(((v.total - v.missed) / v.total) * 100) : 0,
+      mistakes: v.mistakes,
+    }))
+      .filter((t) => t.missed > 0 && t.topic !== 'General')
+      .sort((a, b) => b.missed - a.missed)
+      .slice(0, 6);
+
+    return res.json({ topics });
+  } catch (err) {
+    console.error('Weak spots error:', err);
+    return res.status(500).json({ error: 'Failed to load weak spots' });
+  }
+});
+
 // ===========================================================================
 // TEACHER endpoints
 // ===========================================================================
