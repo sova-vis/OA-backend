@@ -79,11 +79,11 @@ async function studentQuestionPayload(assignmentId: string) {
   const bankUids = rows.filter((r) => r.source === 'bank' && r.question_uid).map((r) => r.question_uid as string);
   const customIds = rows.filter((r) => r.source === 'custom' && r.custom_question_id).map((r) => r.custom_question_id as string);
 
-  const bankMap = new Map<string, { type: string; question_text: string; options: unknown; marks: number | null }>();
+  const bankMap = new Map<string, { type: string; question_text: string; options: unknown; marks: number | null; images: unknown }>();
   if (bankUids.length > 0) {
-    const { data } = await supabase.from('questions').select('id, type, question_text, options, marks').in('id', bankUids);
-    for (const q of (data ?? []) as { id: string; type: string; question_text: string; options: unknown; marks: number | null }[]) {
-      bankMap.set(q.id, { type: q.type, question_text: q.question_text, options: q.options, marks: q.marks });
+    const { data } = await supabase.from('questions').select('id, type, question_text, options, marks, images').in('id', bankUids);
+    for (const q of (data ?? []) as { id: string; type: string; question_text: string; options: unknown; marks: number | null; images: unknown }[]) {
+      bankMap.set(q.id, { type: q.type, question_text: q.question_text, options: q.options, marks: q.marks, images: q.images });
     }
   }
   const customMap = new Map<string, { question_type: string; question_text: string; marks: number }>();
@@ -114,8 +114,23 @@ async function studentQuestionPayload(assignmentId: string) {
       question_text: b?.question_text ?? String((r.snapshot as { text?: string })?.text ?? ''),
       options: b?.type === 'mcq' ? normalizeOptions(b?.options) : [],
       marks: b?.marks ?? r.marks ?? 0,
+      // Question figures so the student sees the full question (mark-scheme
+      // "answer" images are excluded — never leak them while they're solving).
+      images: normalizeQuestionImages(b?.images),
     };
   });
+}
+
+/** Question figures for the student, from a bank question's images jsonb. */
+function normalizeQuestionImages(images: unknown): { src: string; alt: string; caption: string | null }[] {
+  if (!Array.isArray(images)) return [];
+  return images
+    .filter((im) => im && typeof im === 'object' && (im as { role?: string }).role !== 'answer')
+    .map((im) => {
+      const o = im as { data_url?: string; public_url?: string; url?: string; alt?: string; caption?: string };
+      return { src: o.data_url || o.public_url || o.url || '', alt: o.alt || 'Question figure', caption: o.caption || null };
+    })
+    .filter((im) => im.src);
 }
 
 function normalizeOptions(options: unknown): { label: string; text: string }[] {
