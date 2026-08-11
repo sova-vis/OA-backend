@@ -442,7 +442,18 @@ router.get('/result/:assignmentId', async (req: AuthenticatedRequest, res: Respo
       .eq('id', req.params.assignmentId)
       .maybeSingle();
     if (!assignmentRow) return res.status(404).json({ error: 'Assignment not found' });
-    const release = (assignmentRow as { release_content: Record<string, boolean> }).release_content || {};
+    // Releasing means the student gets the full feedback — marks, per-criterion
+    // breakdown, mark scheme, teacher comments and reasoning — UNLESS the teacher
+    // explicitly turned a piece off. (Empty/absent config → everything shown.)
+    const rc = (assignmentRow as { release_content: Record<string, boolean> }).release_content || {};
+    const release = {
+      marks: rc.marks !== false,
+      breakdown: rc.breakdown !== false,
+      comments: rc.comments !== false,
+      scheme_missed: rc.scheme_missed !== false,
+      ai_reasoning: rc.ai_reasoning !== false,
+      examiner_notes: rc.examiner_notes !== false,
+    };
 
     const { data: submission } = await supabase
       .from('submissions')
