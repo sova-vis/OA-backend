@@ -22,7 +22,7 @@ router.get('/', async (req: AuthenticatedRequest, res: Response) => {
       .eq('clerk_id', clerkId)
       .maybeSingle();
 
-    const session = (profile as { exam_session?: string } | null)?.exam_session || null;
+    let session = (profile as { exam_session?: string } | null)?.exam_session || null;
 
     // Personal scope → the student's own declared subjects. Classroom scope →
     // the subjects of the classes they've joined (what their teachers teach).
@@ -41,21 +41,38 @@ router.get('/', async (req: AuthenticatedRequest, res: Response) => {
     const subjects = subjectNames.map((s) => s.toLowerCase());
 
     if (!subjects.length) return res.json({ status: 'no_subjects', session, papers: [], next_exam: null });
-    if (!session || /not sure/i.test(session)) return res.json({ status: 'unavailable', session, papers: [], next_exam: null });
 
-    const { data: rows } = await supabase
-      .from('exam_timetable')
-      .select('*')
-      .eq('exam_session', session);
+    // If the student hasn't declared a session (e.g. joined via class link), we
+    // still show their subjects' timetable — falling back to the nearest upcoming
+    // session in the data rather than a blank "unavailable".
+    const sessionUnset = !session || /not sure/i.test(session);
+    let tq = supabase.from('exam_timetable').select('*');
+    if (!sessionUnset) tq = tq.eq('exam_session', session);
+    const { data: rows } = await tq;
+
+    const subjectMatch = (r: Record<string, unknown>) => {
+      const subj = String(r.subject || '').toLowerCase();
+      // Exact match, or one is a whole-word prefix of the other — avoids
+      // "Mathematics" pulling in "Additional Mathematics".
+      return subjects.some((s) => subj === s || subj.startsWith(`${s} `) || s.startsWith(`${subj} `));
+    };
+    let matched = ((rows ?? []) as Record<string, unknown>[]).filter(subjectMatch);
+
+    // No session declared → pick the session with the nearest upcoming paper.
+    if (sessionUnset && matched.length) {
+      const todayStr = new Date().toISOString().slice(0, 10);
+      const rank = (sess: string) => {
+        const dates = matched.filter((r) => r.exam_session === sess).map((r) => String(r.exam_date || r.date_start || '')).filter(Boolean).sort();
+        const future = dates.find((d) => d >= todayStr);
+        return future || dates[0] || '9999';
+      };
+      const sessions = Array.from(new Set(matched.map((r) => String(r.exam_session))));
+      session = sessions.sort((a, b) => rank(a).localeCompare(rank(b)))[0] || session;
+      matched = matched.filter((r) => r.exam_session === session);
+    }
 
     // Filter to the student's subjects (case-insensitive, partial match either way).
-    const papers = ((rows ?? []) as Record<string, unknown>[])
-      .filter((r) => {
-        const subj = String(r.subject || '').toLowerCase();
-        // Exact match, or one is a whole-word prefix of the other — avoids
-        // "Mathematics" pulling in "Additional Mathematics".
-        return subjects.some((s) => subj === s || subj.startsWith(`${s} `) || s.startsWith(`${subj} `));
-      })
+    const papers = matched
       .map((r) => ({
         subject: r.subject,
         component: r.component,
