@@ -351,6 +351,55 @@ router.post('/:id/restore', async (req: AuthenticatedRequest, res: Response) => 
   }
 });
 
+// POST /classes/:id/leave — a student leaves a class they're in (own enrolment).
+router.post('/:id/leave', async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const clerkId = req.auth!.clerkId;
+    const { error } = await supabase
+      .from('class_enrollments')
+      .update({ status: 'removed', removed_at: new Date().toISOString() })
+      .eq('class_id', req.params.id)
+      .eq('student_clerk_id', clerkId);
+    if (error) throw error;
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error('Leave class error:', err);
+    return res.status(500).json({ error: 'Failed to leave class' });
+  }
+});
+
+// POST /classes/:id/delete — permanently delete a class and its data (owner only).
+router.post('/:id/delete', async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const access = await resolveClassAccess(req.params.id, req.auth!.clerkId);
+    if (!access) return res.status(404).json({ error: 'Class not found' });
+    if (!access.isOwner) return res.status(403).json({ error: 'Only the class owner can delete it' });
+    const classId = access.klass.id;
+
+    const { data: aqs } = await supabase.from('assignments').select('id').eq('class_id', classId);
+    const aIds = ((aqs ?? []) as { id: string }[]).map((a) => a.id);
+    if (aIds.length) {
+      const { data: subs } = await supabase.from('submissions').select('id').in('assignment_id', aIds);
+      const sIds = ((subs ?? []) as { id: string }[]).map((s) => s.id);
+      if (sIds.length) {
+        await supabase.from('submission_marks').delete().in('submission_id', sIds);
+        await supabase.from('submission_answers').delete().in('submission_id', sIds);
+      }
+      await supabase.from('submissions').delete().in('assignment_id', aIds);
+      await supabase.from('assignment_questions').delete().in('assignment_id', aIds);
+      await supabase.from('assignment_recipients').delete().in('assignment_id', aIds);
+      await supabase.from('assignments').delete().eq('class_id', classId);
+    }
+    await supabase.from('class_enrollments').delete().eq('class_id', classId);
+    await supabase.from('class_co_teachers').delete().eq('class_id', classId);
+    await supabase.from('classes').delete().eq('id', classId);
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error('Delete class error:', err);
+    return res.status(500).json({ error: 'Failed to delete class' });
+  }
+});
+
 // ---------------------------------------------------------------------------
 // Join-code management (§3.2). Regenerate invalidates the previous code but
 // does not affect enrolled students; disabling stops new joins once full.

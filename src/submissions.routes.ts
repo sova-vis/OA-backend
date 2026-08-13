@@ -169,11 +169,16 @@ router.get('/available', async (req: AuthenticatedRequest, res: Response) => {
     const clerkId = req.auth!.clerkId;
     const { data: enrollments } = await supabase
       .from('class_enrollments')
-      .select('class_id')
+      .select('class_id, approved_at, requested_at, created_at')
       .eq('student_clerk_id', clerkId)
       .eq('status', 'active');
-    const classIds = ((enrollments ?? []) as { class_id: string }[]).map((e) => e.class_id);
+    const enrollRows = (enrollments ?? []) as { class_id: string; approved_at: string | null; requested_at: string | null; created_at: string | null }[];
+    const classIds = enrollRows.map((e) => e.class_id);
     if (classIds.length === 0) return res.json([]);
+    // When the student joined each class — used to hide assignments that were
+    // already set before they joined (new students don't inherit old work).
+    const joinedAtByClass = new Map<string, string>();
+    for (const e of enrollRows) { const t = e.approved_at || e.requested_at || e.created_at; if (t) joinedAtByClass.set(e.class_id, t); }
 
     // Class names for grouping in the classroom hub.
     const classNameById = new Map<string, string>();
@@ -182,7 +187,7 @@ router.get('/available', async (req: AuthenticatedRequest, res: Response) => {
 
     const { data: assignments } = await supabase
       .from('assignments')
-      .select('id, class_id, title, status, deadline_at, timed, duration_minutes, attempt_limit, target_all, mark_scheme_visibility')
+      .select('id, class_id, title, status, deadline_at, timed, duration_minutes, attempt_limit, target_all, mark_scheme_visibility, created_at')
       .in('class_id', classIds)
       .eq('status', 'published')
       .order('deadline_at', { ascending: true });
@@ -207,6 +212,11 @@ router.get('/available', async (req: AuthenticatedRequest, res: Response) => {
       const targeted = await targetedStudents(a);
       if (!targeted.has(clerkId)) continue;
       const sub = subByAssignment.get(a.id);
+      // Skip assignments created before this student joined the class — unless
+      // they already have a submission (were genuinely assigned earlier).
+      const joinedAt = joinedAtByClass.get(a.class_id);
+      const createdAt = (a as AssignmentRow & { created_at?: string | null }).created_at;
+      if (!sub && joinedAt && createdAt && createdAt < joinedAt) continue;
       result.push({
         id: a.id,
         title: a.title,
