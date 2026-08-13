@@ -169,16 +169,16 @@ router.get('/available', async (req: AuthenticatedRequest, res: Response) => {
     const clerkId = req.auth!.clerkId;
     const { data: enrollments } = await supabase
       .from('class_enrollments')
-      .select('class_id, approved_at, requested_at, created_at')
+      .select('class_id, approved_at, requested_at')
       .eq('student_clerk_id', clerkId)
       .eq('status', 'active');
-    const enrollRows = (enrollments ?? []) as { class_id: string; approved_at: string | null; requested_at: string | null; created_at: string | null }[];
+    const enrollRows = (enrollments ?? []) as { class_id: string; approved_at: string | null; requested_at: string | null }[];
     const classIds = enrollRows.map((e) => e.class_id);
     if (classIds.length === 0) return res.json([]);
-    // When the student joined each class — used to hide assignments that were
-    // already set before they joined (new students don't inherit old work).
+    // When the student first joined each class — used to hide whole-class
+    // assignments that were already set before they joined.
     const joinedAtByClass = new Map<string, string>();
-    for (const e of enrollRows) { const t = e.created_at || e.requested_at || e.approved_at; if (t) joinedAtByClass.set(e.class_id, t); }
+    for (const e of enrollRows) { const t = e.requested_at || e.approved_at; if (t) joinedAtByClass.set(e.class_id, t); }
 
     // Class names for grouping in the classroom hub.
     const classNameById = new Map<string, string>();
