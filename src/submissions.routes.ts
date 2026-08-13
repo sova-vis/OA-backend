@@ -674,6 +674,7 @@ router.get('/assignment/:assignmentId', async (req: AuthenticatedRequest, res: R
         extension_until: s?.extension_until ?? null,
         total_score: s?.total_score ?? null,
         total_marks: s?.total_marks ?? null,
+        released: Boolean(s?.released_at),
       };
     });
 
