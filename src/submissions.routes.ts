@@ -178,7 +178,7 @@ router.get('/available', async (req: AuthenticatedRequest, res: Response) => {
     // When the student joined each class — used to hide assignments that were
     // already set before they joined (new students don't inherit old work).
     const joinedAtByClass = new Map<string, string>();
-    for (const e of enrollRows) { const t = e.approved_at || e.requested_at || e.created_at; if (t) joinedAtByClass.set(e.class_id, t); }
+    for (const e of enrollRows) { const t = e.created_at || e.requested_at || e.approved_at; if (t) joinedAtByClass.set(e.class_id, t); }
 
     // Class names for grouping in the classroom hub.
     const classNameById = new Map<string, string>();
@@ -212,11 +212,14 @@ router.get('/available', async (req: AuthenticatedRequest, res: Response) => {
       const targeted = await targetedStudents(a);
       if (!targeted.has(clerkId)) continue;
       const sub = subByAssignment.get(a.id);
-      // Skip assignments created before this student joined the class — unless
-      // they already have a submission (were genuinely assigned earlier).
-      const joinedAt = joinedAtByClass.get(a.class_id);
-      const createdAt = (a as AssignmentRow & { created_at?: string | null }).created_at;
-      if (!sub && joinedAt && createdAt && createdAt < joinedAt) continue;
+      // Only WHOLE-CLASS assignments are hidden from students who joined after
+      // they were set — an explicitly-targeted student was chosen on purpose and
+      // must always receive it. (Also keep it if they already have a submission.)
+      if (a.target_all) {
+        const joinedAt = joinedAtByClass.get(a.class_id);
+        const createdAt = (a as AssignmentRow & { created_at?: string | null }).created_at;
+        if (!sub && joinedAt && createdAt && createdAt < joinedAt) continue;
+      }
       result.push({
         id: a.id,
         title: a.title,
