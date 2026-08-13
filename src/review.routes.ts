@@ -38,6 +38,15 @@ function examinerNote(reference: unknown): string | null {
   return null;
 }
 
+// Question figures (not mark-scheme "answer" images) for the teacher's review view.
+function questionFigures(images: unknown): { src: string; alt: string; caption: string | null }[] {
+  if (!Array.isArray(images)) return [];
+  return images
+    .filter((im) => im && typeof im === 'object' && (im as { role?: string }).role !== 'answer')
+    .map((im) => { const o = im as { data_url?: string; public_url?: string; url?: string; alt?: string; caption?: string }; return { src: o.data_url || o.public_url || o.url || '', alt: o.alt || 'Figure', caption: o.caption || null }; })
+    .filter((im) => im.src);
+}
+
 async function logActivity(actor: string, eventType: string, targetType: string, targetId: string, detail: Record<string, unknown>) {
   await supabase.from('activity_log').insert({ actor_clerk_id: actor, event_type: eventType, target_type: targetType, target_id: targetId, detail });
 }
@@ -110,14 +119,29 @@ router.get('/queue', async (req: AuthenticatedRequest, res: Response) => {
       .filter((q) => q.source === 'bank' && q.question_uid)
       .map((q) => q.question_uid as string);
     const examinerByAq = new Map<string, string>();
+    const qTextByAq = new Map<string, string>();
+    const qImagesByAq = new Map<string, { src: string; alt: string; caption: string | null }[]>();
+    const qPartsByAq = new Map<string, { label: string; body: string; marks: number | null }[]>();
     if (bankUids.length > 0) {
-      const { data: refs } = await supabase.from('questions').select('id, reference').in('id', bankUids);
-      const refByUid = new Map<string, unknown>();
-      for (const r of (refs ?? []) as { id: string; reference: unknown }[]) refByUid.set(r.id, r.reference);
+      const { data: refs } = await supabase.from('questions').select('id, reference, question_text, images').in('id', bankUids);
+      const byUid = new Map<string, { reference: unknown; question_text: string; images: unknown }>();
+      for (const r of (refs ?? []) as { id: string; reference: unknown; question_text: string; images: unknown }[]) byUid.set(r.id, r);
+      const { data: prows } = await supabase.from('question_parts').select('question_uid, label, body, marks, order_index').in('question_uid', bankUids).order('order_index', { ascending: true });
+      const partsByUid = new Map<string, { label: string; body: string; marks: number | null }[]>();
+      for (const p of (prows ?? []) as { question_uid: string; label: string; body: string; marks: number | null }[]) {
+        const l = partsByUid.get(p.question_uid) ?? []; l.push({ label: p.label, body: p.body, marks: p.marks }); partsByUid.set(p.question_uid, l);
+      }
       for (const q of (aqs ?? []) as Record<string, unknown>[]) {
         if (q.source === 'bank' && q.question_uid) {
-          const note = examinerNote(refByUid.get(q.question_uid as string));
-          if (note) examinerByAq.set(q.id as string, note);
+          const uid = q.question_uid as string;
+          const bank = byUid.get(uid);
+          if (bank) {
+            const note = examinerNote(bank.reference);
+            if (note) examinerByAq.set(q.id as string, note);
+            if (bank.question_text) qTextByAq.set(q.id as string, bank.question_text);
+            qImagesByAq.set(q.id as string, questionFigures(bank.images));
+          }
+          qPartsByAq.set(q.id as string, partsByUid.get(uid) ?? []);
         }
       }
     }
@@ -173,8 +197,10 @@ router.get('/queue', async (req: AuthenticatedRequest, res: Response) => {
           number: snap.question_number ?? aq.order_index,
           topic: snap.topic ?? null,
           marks: m.ai_marks_available ?? aq.marks ?? null,
-          text: snap.text ?? '',
+          text: qTextByAq.get(m.assignment_question_id as string) || snap.text || '',
           type: m.question_type,
+          images: qImagesByAq.get(m.assignment_question_id as string) ?? [],
+          parts: qPartsByAq.get(m.assignment_question_id as string) ?? [],
         },
         answer: {
           text: ans.answer_text ?? null,

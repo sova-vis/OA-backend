@@ -93,6 +93,17 @@ async function studentQuestionPayload(assignmentId: string) {
       customMap.set(q.id, { question_type: q.question_type, question_text: q.question_text, marks: q.marks });
     }
   }
+  // Structured sub-parts (a, b, c…) so the full question reaches the student —
+  // answers are NOT included (they're solving it).
+  const partsByUid = new Map<string, { label: string; body: string; marks: number | null }[]>();
+  if (bankUids.length > 0) {
+    const { data } = await supabase.from('question_parts').select('question_uid, label, body, marks, order_index').in('question_uid', bankUids).order('order_index', { ascending: true });
+    for (const p of (data ?? []) as { question_uid: string; label: string; body: string; marks: number | null }[]) {
+      const list = partsByUid.get(p.question_uid) ?? [];
+      list.push({ label: p.label, body: p.body, marks: p.marks });
+      partsByUid.set(p.question_uid, list);
+    }
+  }
 
   return rows.map((r) => {
     if (r.source === 'custom' && r.custom_question_id) {
@@ -117,6 +128,7 @@ async function studentQuestionPayload(assignmentId: string) {
       // Question figures so the student sees the full question (mark-scheme
       // "answer" images are excluded — never leak them while they're solving).
       images: normalizeQuestionImages(b?.images),
+      parts: r.question_uid ? partsByUid.get(r.question_uid) ?? [] : [],
     };
   });
 }
