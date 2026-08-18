@@ -47,6 +47,9 @@ const onlySubject = args.get("subject");
 const dryRun = args.has("dry-run");
 const replaceExisting = args.has("replace");
 const batchSize = Math.max(1, Number.parseInt(args.get("batch-size") || "20", 10) || 20);
+// Which level this import belongs to — keeps O and A content separate.
+// Usage: --level=alevel  (defaults to olevel)
+const LEVEL = /^a/i.test(args.get("level") || "") ? "alevel" : "olevel";
 
 if (!SUPABASE_URL || !SERVICE_KEY) {
   console.error("Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY in OA-backend/.env");
@@ -545,6 +548,7 @@ async function importSubjectFolder(folderName) {
         row: {
           question_id: questionId,
           subject: subj,
+          level: LEVEL,
           type: "mcq",
           exam_year: year,
           session,
@@ -610,6 +614,7 @@ async function importSubjectFolder(folderName) {
         row: {
           question_id: cleanText(raw.question_id),
           subject: subj,
+          level: LEVEL,
           type: "structured",
           exam_year: intOrNull(raw.year, fallbackYear),
           session: cleanText(raw.session),
