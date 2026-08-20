@@ -1,5 +1,6 @@
 import cors from 'cors';
 import { spawn } from 'child_process';
+import dns from 'dns';
 import fs from 'fs';
 import path from 'path';
 
@@ -29,9 +30,15 @@ import teacherInsightsRoutes from './teacherInsights.routes';
 import settingsRoutes from './settings.routes';
 import institutionRoutes from './institution.routes';
 import datesheetRoutes from './datesheet.routes';
-import { clerkAuth } from './lib/clerkAuth';
+import { clerkAuth, warmupClerkVerifier } from './lib/clerkAuth';
 import { rateLimit } from './lib/rateLimit';
 import { logConfigReport, serviceReadinessMap } from './lib/configReport';
+
+try {
+  dns.setDefaultResultOrder('ipv4first');
+} catch {
+  // Node < 17
+}
 
 // per-user throttle for the paid-AI routes (generous — only stops abuse)
 const aiLimit = rateLimit({ windowMs: 60_000, max: 40, name: 'ai' });
@@ -205,8 +212,8 @@ app.use(cors({
   },
   credentials: true,
 }));
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: '2mb' }));
+app.use(express.urlencoded({ extended: true, limit: '2mb' }));
 
 // Auth API
 app.use('/auth', authRoutes);
@@ -294,6 +301,7 @@ app.listen(PORT, () => {
   console.log(`Health check: http://localhost:${PORT}/health`);
   console.log('OA grading sidecar startup is handled by /qa-grading on-demand checks.');
   logConfigReport();
+  void warmupClerkVerifier();
 });
 
 export default app;

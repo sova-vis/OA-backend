@@ -1,4 +1,5 @@
 import { supabase } from './supabase';
+import { PageImage, isSupportedImageType, rasterizePdfPages } from './pdfPages';
 import {
   studentDataSource,
   pgDualWriteEnabled,
@@ -33,6 +34,8 @@ export interface PracticeUpload {
   size: number;
   type: string;
   at: string;
+  /** short-lived signed URL for viewing (present on API responses, not stored) */
+  url?: string;
 }
 
 /** Marks split by assessment objective (Phase 1 · Marks Breakdown). */
@@ -41,6 +44,16 @@ export interface MarkCategory {
   earned: number;
   max: number;
 }
+
+/**
+ * Outcome of reading one question's answer off an uploaded page.
+ *   ok             — read cleanly, graded normally
+ *   low_confidence — read, but the model was unsure; graded AND flagged
+ *   unreadable     — handwriting present but illegible; NOT graded, marks withheld
+ *   blank          — question genuinely left unanswered
+ *   not_found      — question number never appeared on any uploaded page
+ */
+export type ExtractionFlag = 'ok' | 'low_confidence' | 'unreadable' | 'blank' | 'not_found';
 
 export interface GradedQuestion {
   id: string;
@@ -52,6 +65,20 @@ export interface GradedQuestion {
   expectedPoints: string[];
   missingPoints: string[];
   gradingSource: 'deterministic' | 'grok' | 'grok-vision';
+  /** ---- handwritten-upload provenance (absent for typed attempts) ---- */
+  /** what the vision pass read for this question, so the student can verify it */
+  extractedAnswer?: string;
+  /** 0..1 reading confidence reported by the vision pass */
+  extractionConfidence?: number;
+  extractionFlag?: ExtractionFlag;
+  /** 1-based uploaded page numbers this answer was found on */
+  extractionPages?: number[];
+  /** why the read was imperfect, e.g. "second line unclear" */
+  extractionNote?: string;
+  /** true when marks were withheld because the answer could not be read */
+  marksWithheld?: boolean;
+  /** true when scoring failed (API/model error), distinct from unreadable handwriting */
+  gradingFailed?: boolean;
   /** true when a marking scheme was matched for this question; false = examiner-judgement fallback */
   schemeUsed?: boolean;
   /** marks earned vs available per assessment objective */
@@ -62,6 +89,28 @@ export interface GradedQuestion {
   examinerNote?: string;     // "Candidates commonly lose marks here because…"
   /** per sub-part awarded marks (earned vs available), labelled to the scheme parts */
   partScores?: { label: string; earned: number; max: number }[];
+  /** transcribed sub-parts, same keys the typed "Solve here" flow uses */
+  extractedParts?: Record<string, string>;
+  /** transcribed MCQ option letter */
+  extractedOption?: string | null;
+}
+
+/** Summary of the read step, surfaced to the student on handwritten attempts. */
+export interface ExtractionSummary {
+  pageCount: number;
+  /** questions read cleanly */
+  readCount: number;
+  lowConfidenceCount: number;
+  unreadableCount: number;
+  blankCount: number;
+  notFoundCount: number;
+  /** marks not awarded because the answer could not be read */
+  withheldMarks: number;
+  /** page-quality / wrong-paper / dropped-file warnings, safe to show a student */
+  warnings: string[];
+  /** true when the upload looks like it belongs to a different paper */
+  paperMismatch: boolean;
+  visionModel: string;
 }
 
 export interface PracticeReport {
@@ -76,6 +125,8 @@ export interface PracticeReport {
   solveMode: SolveMode;
   model: string;
   gradedAt: string;
+  /** present only for handwritten attempts */
+  extraction?: ExtractionSummary;
 }
 
 export interface PracticeProgressDoc {
@@ -285,25 +336,210 @@ export async function appendAttempts(clerkId: string, incoming: unknown[]): Prom
 
 export async function signUploads(items: PracticeUpload[]): Promise<Array<PracticeUpload & { url?: string }>> {
   if (items.length === 0) return [];
+  const paths = items.map((item) => normalizeStoragePath(item.path)).filter(Boolean);
+  if (paths.length === 0) return items;
   const { data } = await supabase.storage
     .from(PRACTICE_BUCKET)
-    .createSignedUrls(items.map((item) => item.path), SIGNED_URL_TTL);
+    .createSignedUrls(paths, SIGNED_URL_TTL);
   const byPath = new Map((data ?? []).map((entry) => [entry.path, entry.signedUrl]));
-  return items.map((item) => ({ ...item, url: byPath.get(item.path) ?? undefined }));
+  return items.map((item) => {
+    const path = normalizeStoragePath(item.path);
+    return { ...item, path: path || item.path, url: byPath.get(path) ?? undefined };
+  });
 }
 
-/** Download upload binaries as base64 (for vision grading). Skips non-images. */
-export async function downloadUploadImages(
-  uploads: PracticeUpload[],
-  maxImages = 8,
-): Promise<Array<{ base64: string; mimeType: string; name: string }>> {
-  const images = uploads.filter((item) => /^image\//.test(item.type)).slice(0, maxImages);
-  const out: Array<{ base64: string; mimeType: string; name: string }> = [];
-  for (const item of images) {
-    const { data, error } = await supabase.storage.from(PRACTICE_BUCKET).download(item.path);
-    if (error || !data) continue;
-    const buffer = Buffer.from(await data.arrayBuffer());
-    out.push({ base64: buffer.toString('base64'), mimeType: item.type, name: item.name });
+/** Pull a bucket-relative storage key out of a raw path or a signed URL. */
+export function normalizeStoragePath(raw: string | undefined | null): string {
+  const value = (raw || '').trim();
+  if (!value) return '';
+  if (/^https?:\/\//i.test(value)) {
+    try {
+      const url = new URL(value);
+      const parts = url.pathname.split('/').filter(Boolean);
+      const objectAt = parts.indexOf('object');
+      if (objectAt >= 0 && parts.length > objectAt + 3) {
+        return decodeURIComponent(parts.slice(objectAt + 3).join('/'));
+      }
+    } catch {
+      return '';
+    }
   }
-  return out;
+  return value.replace(/^\/+/, '').replace(new RegExp(`^${PRACTICE_BUCKET}/`), '');
+}
+
+function mimeFromName(name: string): string {
+  const ext = name.split('.').pop()?.toLowerCase() || '';
+  if (ext === 'pdf') return 'application/pdf';
+  if (ext === 'png') return 'image/png';
+  if (ext === 'jpg' || ext === 'jpeg') return 'image/jpeg';
+  return '';
+}
+
+function isMissingStorageError(error: unknown): boolean {
+  const message = String((error as { message?: string })?.message || error || '').toLowerCase();
+  return /not found|not_found|does not exist|no such file|object not found/.test(message);
+}
+
+async function downloadStorageBytes(path: string): Promise<{ buffer: Buffer | null; error: unknown }> {
+  const { data, error } = await supabase.storage.from(PRACTICE_BUCKET).download(path);
+  if (error || !data) return { buffer: null, error: error || new Error('empty download') };
+  try {
+    return { buffer: Buffer.from(await data.arrayBuffer()), error: null };
+  } catch (readError) {
+    return { buffer: null, error: readError };
+  }
+}
+
+/** List the binaries actually stored for this paper, used when JSON paths go stale. */
+export async function listPaperUploadFiles(clerkId: string, paperKey: string): Promise<PracticeUpload[]> {
+  const prefix = filesPrefix(clerkId, paperKey);
+  try {
+    const { data, error } = await supabase.storage.from(PRACTICE_BUCKET).list(prefix, {
+      limit: 100,
+      sortBy: { column: 'name', order: 'asc' },
+    });
+    if (error || !data) {
+      if (error) console.warn('[practice] list uploads failed', prefix, error.message);
+      return [];
+    }
+    return data
+      .filter((entry) => entry.name && !entry.name.endsWith('/'))
+      .map((entry) => ({
+        path: `${prefix}/${entry.name}`,
+        name: entry.name.replace(/^\d+_/, ''),
+        size: Number((entry.metadata as { size?: number } | undefined)?.size) || 0,
+        type: mimeFromName(entry.name) || 'application/octet-stream',
+        at: entry.updated_at || new Date().toISOString(),
+      }));
+  } catch (error) {
+    console.warn('[practice] list uploads threw', prefix, error);
+    return [];
+  }
+}
+
+/**
+ * Turn a student's uploads into an ordered list of page images for vision
+ * grading. Images pass through as-is; PDFs are rasterized page by page, so a
+ * multi-page PDF submission becomes N pages instead of being dropped.
+ *
+ * Anything that could not be used is reported back in `skipped` rather than
+ * being silently discarded — a page we never read would otherwise be graded as
+ * an unanswered question and score zero.
+ */
+export interface LoadedPages {
+  pages: PageImage[];
+  /** human-readable reasons a file (or some of its pages) was not used */
+  skipped: string[];
+  /** true when the page budget cut the submission short */
+  truncated: boolean;
+  /** files that produced at least one page */
+  usedFiles: number;
+}
+
+export const MAX_GRADING_PAGES = Number.parseInt(process.env.PRACTICE_MAX_PAGES || '', 10) > 0
+  ? Number.parseInt(process.env.PRACTICE_MAX_PAGES || '', 10)
+  : 40;
+
+export async function loadUploadPages(
+  uploads: PracticeUpload[],
+  maxPages = MAX_GRADING_PAGES,
+  opts?: { clerkId?: string; paperKey?: string },
+): Promise<LoadedPages> {
+  const pages: PageImage[] = [];
+  const skipped: string[] = [];
+  let truncated = false;
+  let usedFiles = 0;
+  const seen = new Set<string>();
+
+  let records = uploads.filter((item) => item && (item.path || item.name));
+  // Same original filename uploaded twice (re-mark without removing) — keep the latest.
+  const byName = new Map<string, PracticeUpload>();
+  for (const item of records) byName.set(item.name, item);
+  if (byName.size < records.length) records = [...byName.values()];
+
+  const consume = async (item: PracticeUpload): Promise<void> => {
+    if (pages.length >= maxPages) {
+      truncated = true;
+      skipped.push(`${item.name}: not read (page limit of ${maxPages} reached)`);
+      return;
+    }
+
+    const path = normalizeStoragePath(item.path);
+    if (path && seen.has(path)) return;
+    if (path) seen.add(path);
+
+    const downloaded = path ? await downloadStorageBytes(path) : { buffer: null, error: new Error('missing path') };
+    if (downloaded.buffer && downloaded.buffer.byteLength === 0) {
+      skipped.push(`${item.name}: file is empty`);
+      return;
+    }
+    let buffer = downloaded.buffer;
+    if (!buffer && item.url && /^https?:\/\//i.test(item.url)) {
+      try {
+        const response = await fetch(item.url);
+        if (response.ok) buffer = Buffer.from(await response.arrayBuffer());
+      } catch (fetchError) {
+        console.warn('[practice] signed-url fallback failed', item.name, fetchError);
+      }
+    }
+    if (!buffer || buffer.byteLength === 0) {
+      const detail = downloaded.error && !isMissingStorageError(downloaded.error)
+        ? ` (${String((downloaded.error as { message?: string }).message || downloaded.error)})`
+        : '';
+      console.warn('[practice] storage download failed', { path: item.path, name: item.name, error: downloaded.error });
+      skipped.push(`${item.name}: could not be downloaded from storage${detail}`);
+      return;
+    }
+
+    const type = item.type || mimeFromName(item.name);
+    if (type === 'application/pdf') {
+      try {
+        const result = await rasterizePdfPages(buffer, pages.length + 1, maxPages - pages.length, item.name);
+        if (result.pages.length === 0) {
+          skipped.push(`${item.name}: no readable pages found`);
+          return;
+        }
+        pages.push(...result.pages);
+        usedFiles += 1;
+        if (result.dropped > 0) {
+          truncated = true;
+          skipped.push(`${item.name}: only the first ${result.pages.length} of ${result.totalPages} pages were read (page limit of ${maxPages})`);
+        }
+      } catch (pdfError) {
+        skipped.push(pdfError instanceof Error ? pdfError.message : `${item.name}: could not be read`);
+      }
+      return;
+    }
+
+    if (isSupportedImageType(type)) {
+      pages.push({
+        base64: buffer.toString('base64'),
+        mimeType: type,
+        page: pages.length + 1,
+        source: item.name,
+      });
+      usedFiles += 1;
+      return;
+    }
+
+    skipped.push(`${item.name}: unsupported file type (${type || 'unknown'}) — upload a JPG, PNG or PDF`);
+  };
+
+  for (const item of records) await consume(item);
+
+  // JSON can list files that were moved/replaced. If nothing readable came out,
+  // grade whatever is actually sitting in this paper's storage folder.
+  if (pages.length === 0 && opts?.clerkId && opts?.paperKey) {
+    const stored = await listPaperUploadFiles(opts.clerkId, opts.paperKey);
+    const fresh = stored.filter((item) => {
+      const path = normalizeStoragePath(item.path);
+      return path && !seen.has(path);
+    });
+    if (fresh.length > 0) {
+      skipped.length = 0;
+      for (const item of fresh) await consume(item);
+    }
+  }
+
+  return { pages, skipped, truncated, usedFiles };
 }

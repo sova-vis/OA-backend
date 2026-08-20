@@ -60,14 +60,15 @@ export function serviceReadiness(): ServiceStatus[] {
     },
     {
       key: 'grokMarking',
-      label: 'Grok — AI marking (text + handwritten), Groq fallback',
+      label: 'Grok — AI marking (text + handwritten), Groq/Gemini fallback',
       ready:
         has(process.env.XAI_API_KEY) ||
         has(process.env.GROK_API_KEY) ||
         has(process.env.GROQ_GRADING_API_KEY) ||
-        has(process.env.GROQ_API_KEY),
+        has(process.env.GROQ_API_KEY) ||
+        has(process.env.GEMINI_API_KEY),
       critical: false,
-      hint: 'Set XAI_API_KEY (primary Grok). Grading falls back to GROQ_GRADING_API_KEY / GROQ_API_KEY.',
+      hint: 'Set XAI_API_KEY (primary). Grading falls back to GROQ_GRADING_API_KEY / GROQ_API_KEY / GEMINI_API_KEY.',
     },
     {
       key: 'groqAskAi',

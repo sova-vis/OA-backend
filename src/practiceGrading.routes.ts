@@ -1,390 +1,33 @@
 import { Router, Response } from 'express';
 import multer from 'multer';
 import { AuthenticatedRequest, clerkAuth } from './lib/clerkAuth';
+import { grokEnabled, grokVisionModel, grokTextModel, grokErrorMessage, grokHttpStatus, GrokError } from './lib/grok';
 import {
-  grokEnabled, grokChatJson, grokVisionModel, grokTextModel, grokErrorMessage, GrokError, GrokImage,
-} from './lib/grok';
-import {
-  PracticeProgressDoc, PracticeReport, GradedQuestion, MarkCategory, SolveMode,
-  ensureBucket, isValidPaperKey, readDoc, writeDoc, signUploads, downloadUploadImages,
+  PracticeProgressDoc, GradedQuestion, ExtractionSummary,
+  ensureBucket, isValidPaperKey, readDoc, writeDoc, signUploads, loadUploadPages,
 } from './lib/practiceStore';
+import { GradeQuestion, extractHandwrittenAnswers } from './lib/handwrittenExtraction';
+import {
+  gradeOne, gradeTyped, gradeHandwritten, gradeExtracted, buildReport, typedAnswersFromGraded,
+} from './lib/practiceMarking';
+import { PageImage, isSupportedImageType, isPracticeUploadType, rasterizePdfPages } from './lib/pdfPages';
+import { SolveMode } from './lib/practiceStore';
+
+/**
+ * HTTP surface for practice-paper marking. All scoring lives in
+ * lib/practiceMarking (one engine for typed and uploaded attempts); handwritten
+ * uploads are transcribed first by lib/handwrittenExtraction.
+ *
+ *   POST /practice-grading/grade            whole paper, typed or handwritten
+ *   POST /practice-grading/grade-one        one question, typed (topic drill)
+ *   POST /practice-grading/grade-one-image  one question, from a photo
+ */
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 15 * 1024 * 1024 } });
 
-/**
- * AI marking for practice papers.
- *
- *   POST /practice-grading/grade   (Clerk auth)
- *
- * Marking-scheme-first: each question is graded against the scheme carried in
- * the request (it already ships with the question bank). MCQs are graded
- * deterministically (no AI needed). Written answers go to Grok's text model;
- * when a question has no scheme, Grok grades as an expert O/A-Level examiner.
- * Handwritten attempts are read + graded from the uploaded images via Grok
- * vision. The resulting report is saved onto the practice-progress document.
- */
-
-interface GradePart {
-  label: string;
-  body: string;
-  marks: number | null;
-  answer: string | null;
-}
-
-interface GradeQuestion {
-  id: string;
-  questionNumber: string;
-  type: 'mcq' | 'structured';
-  questionText: string;
-  maxMarks: number;
-  correctOption?: string | null;
-  markingScheme?: string | null;
-  parts?: GradePart[];
-  studentOption?: string | null;
-  studentParts?: Record<string, string>;
-  studentAnswer?: string | null;
-}
-
-const MAX_QUESTIONS = 60;
-const WRITTEN_CONCURRENCY = 4;
+const MAX_QUESTIONS = 80;
 
 const router = Router();
-
-function clampMarks(value: unknown, fallback: number): number {
-  const n = typeof value === 'number' ? value : Number.parseInt(String(value), 10);
-  if (!Number.isFinite(n) || n <= 0) return fallback;
-  return Math.min(100, Math.round(n));
-}
-
-function verdictFromRatio(ratio: number): GradedQuestion['verdict'] {
-  if (ratio >= 0.85) return 'correct';
-  if (ratio >= 0.4) return 'partial';
-  return 'weak';
-}
-
-function gradeBand(percent: number): string {
-  if (percent >= 90) return 'A* (indicative)';
-  if (percent >= 80) return 'A (indicative)';
-  if (percent >= 70) return 'B (indicative)';
-  if (percent >= 60) return 'C (indicative)';
-  if (percent >= 50) return 'D (indicative)';
-  if (percent >= 40) return 'E (indicative)';
-  return 'U (indicative)';
-}
-
-function schemeText(question: GradeQuestion): string {
-  const chunks: string[] = [];
-  if (question.markingScheme && question.markingScheme.trim()) chunks.push(question.markingScheme.trim());
-  for (const part of question.parts ?? []) {
-    if (part.answer && part.answer.trim()) {
-      chunks.push(`${part.label ? part.label + ' ' : ''}${part.answer.trim()}${part.marks != null ? ` [${part.marks}]` : ''}`);
-    }
-  }
-  return chunks.join('\n');
-}
-
-function studentText(question: GradeQuestion): string {
-  if (question.studentParts && Object.keys(question.studentParts).length > 0) {
-    return Object.entries(question.studentParts)
-      .map(([label, answer]) => `${label}: ${answer}`)
-      .join('\n');
-  }
-  return (question.studentAnswer || '').trim();
-}
-
-function hasStudentWork(question: GradeQuestion): boolean {
-  if (question.type === 'mcq') return Boolean((question.studentOption || '').trim());
-  return studentText(question).length > 0;
-}
-
-function asStringArray(value: unknown, max = 6): string[] {
-  if (!Array.isArray(value)) return [];
-  return value.map((item) => String(item).trim()).filter(Boolean).slice(0, max);
-}
-
-/** MCQ: deterministic against the correct option. */
-function gradeMcq(question: GradeQuestion): GradedQuestion {
-  const correct = (question.correctOption || '').trim().toUpperCase();
-  const chosen = (question.studentOption || '').trim().toUpperCase();
-  const max = clampMarks(question.maxMarks, 1);
-  if (!chosen) {
-    return {
-      id: question.id, questionNumber: question.questionNumber, earned: 0, max,
-      verdict: 'unanswered', feedback: 'Not answered.', expectedPoints: correct ? [`Correct option: ${correct}`] : [],
-      missingPoints: [], gradingSource: 'deterministic',
-    };
-  }
-  const isCorrect = Boolean(correct) && chosen === correct;
-  return {
-    id: question.id, questionNumber: question.questionNumber,
-    earned: isCorrect ? max : 0, max,
-    verdict: isCorrect ? 'correct' : 'weak',
-    feedback: isCorrect
-      ? 'Correct.'
-      : correct ? `Incorrect — you chose ${chosen}, the correct option is ${correct}.` : `You chose ${chosen}.`,
-    expectedPoints: correct ? [`Correct option: ${correct}`] : [],
-    missingPoints: isCorrect ? [] : correct ? [`Review why ${correct} is correct.`] : [],
-    gradingSource: 'deterministic',
-    schemeUsed: Boolean(correct), // the correct option is the scheme
-  };
-}
-
-const BREAKDOWN_INSTRUCTION =
-  'Also split the marks by assessment objective in "breakdown": an array of { "category": "Knowledge"|"Explanation"|"Evaluation", "earned": number, "max": number }. ' +
-  'Only include the objectives this question actually tests, and the earned/max across the breakdown should reconcile with the total marks.';
-
-/** Normalize a model "breakdown" into clamped MarkCategory[] (or undefined). */
-function parseBreakdown(value: unknown, totalMax: number): MarkCategory[] | undefined {
-  if (!Array.isArray(value)) return undefined;
-  const cats: MarkCategory['category'][] = ['Knowledge', 'Explanation', 'Evaluation'];
-  const out: MarkCategory[] = [];
-  for (const raw of value) {
-    if (!raw || typeof raw !== 'object') continue;
-    const r = raw as Record<string, unknown>;
-    const label = String(r.category ?? '').trim();
-    const category = cats.find((c) => c.toLowerCase() === label.toLowerCase());
-    if (!category) continue;
-    const max = Math.max(0, Math.min(totalMax, Math.round(Number(r.max) || 0)));
-    const earned = Math.max(0, Math.min(max, Math.round(Number(r.earned) || 0)));
-    if (max <= 0) continue;
-    out.push({ category, earned, max });
-  }
-  return out.length ? out : undefined;
-}
-
-const EXAMINER_INSTRUCTION =
-  'Also add: "command_word" (the question\'s command word such as Describe/Explain/Evaluate/State/Calculate/Suggest, or "" if none); ' +
-  '"command_word_note" (if the student answered in a style that does not match the command word — e.g. describing when asked to evaluate — one short sentence explaining the gap, otherwise ""); ' +
-  '"examiner_note" (one sentence in the style of a Cambridge examiner report, e.g. "Candidates commonly lose marks here because…").';
-
-function examinerFields(parsed: Record<string, unknown>): Pick<GradedQuestion, 'commandWord' | 'commandWordNote' | 'examinerNote'> {
-  const s = (v: unknown, n: number) => { const t = String(v ?? '').trim(); return t ? t.slice(0, n) : undefined; };
-  return {
-    commandWord: s(parsed.command_word, 40),
-    commandWordNote: s(parsed.command_word_note, 300),
-    examinerNote: s(parsed.examiner_note, 400),
-  };
-}
-
-const PART_SCORES_INSTRUCTION =
-  'Also return "part_scores": an array of { "label": string, "earned": number, "max": number }, one entry per marked sub-part, using the SAME part labels as the marking scheme (e.g. "(a)", "(a)(ii)"). "earned" is the marks you awarded that sub-part; "max" is that sub-part\'s available marks; the sum of earned across parts must equal earned_marks. Return [] when the question has no separate sub-parts.';
-
-const normPartLabel = (value: string) => value.trim().toLowerCase().replace(/\s+/g, '');
-
-/** Normalize a model "part_scores" array into clamped, scheme-labelled scores. */
-function parsePartScores(value: unknown, parts?: GradePart[]): GradedQuestion['partScores'] {
-  if (!Array.isArray(value)) return undefined;
-  const maxByLabel = new Map(
-    (parts ?? []).filter((p) => p.answer && p.answer.trim()).map((p) => [normPartLabel(p.label || ''), p.marks ?? 0]),
-  );
-  const out: NonNullable<GradedQuestion['partScores']> = [];
-  for (const raw of value) {
-    if (!raw || typeof raw !== 'object') continue;
-    const r = raw as Record<string, unknown>;
-    const label = String(r.label ?? '').trim();
-    if (!label) continue;
-    const schemeMax = maxByLabel.get(normPartLabel(label));
-    const max = Math.max(0, Math.round(Number(r.max) || schemeMax || 0));
-    const cap = max > 0 ? max : 999;
-    const earned = Math.max(0, Math.min(cap, Math.round(Number(r.earned) || 0)));
-    out.push({ label, earned, max: max || earned });
-  }
-  return out.length ? out : undefined;
-}
-
-/** Written: Grok grades against the scheme, or as an expert examiner if none. */
-async function gradeWritten(subject: string, question: GradeQuestion): Promise<GradedQuestion> {
-  const max = clampMarks(question.maxMarks, Math.max(1, (question.parts ?? []).reduce((s, p) => s + (p.marks ?? 0), 0) || 1));
-  const scheme = schemeText(question);
-  if (!hasStudentWork(question)) {
-    return {
-      id: question.id, questionNumber: question.questionNumber, earned: 0, max,
-      verdict: 'unanswered', feedback: 'Not answered.', expectedPoints: [], missingPoints: [],
-      gradingSource: 'grok', schemeUsed: scheme.length > 0,
-    };
-  }
-
-  const system = [
-    'You are a strict but fair Cambridge O/A Level examiner.',
-    'Grade the student answer out of max_marks (award whole marks only).',
-    'When a marking scheme is provided, mark strictly against it.',
-    'When marking_scheme is empty, grade using your own expert subject knowledge and standard Cambridge mark-scheme conventions.',
-    'Return JSON ONLY with keys: earned_marks (number), verdict ("correct"|"partial"|"weak"), feedback (string, one or two sentences, addressed to the student), expected_points (array of short strings), missing_points (array of short strings).',
-    BREAKDOWN_INSTRUCTION,
-    EXAMINER_INSTRUCTION,
-    PART_SCORES_INSTRUCTION,
-  ].join(' ');
-  const user = JSON.stringify({
-    subject,
-    question: question.questionText,
-    max_marks: max,
-    marking_scheme: scheme,
-    parts: (question.parts ?? []).filter((p) => p.answer && p.answer.trim()).map((p) => ({ label: p.label, marks: p.marks })),
-    student_answer: studentText(question),
-  });
-
-  const parsed = await grokChatJson({ system, user, temperature: 0, maxTokens: 2000 });
-  const earnedRaw = Number(parsed.earned_marks);
-  const earned = Number.isFinite(earnedRaw) ? Math.max(0, Math.min(max, Math.round(earnedRaw))) : 0;
-  const rawVerdict = String(parsed.verdict || '').toLowerCase();
-  const verdict: GradedQuestion['verdict'] =
-    rawVerdict === 'correct' || rawVerdict === 'partial' || rawVerdict === 'weak'
-      ? rawVerdict
-      : verdictFromRatio(max ? earned / max : 0);
-
-  return {
-    id: question.id, questionNumber: question.questionNumber, earned, max, verdict,
-    feedback: typeof parsed.feedback === 'string' && parsed.feedback.trim() ? parsed.feedback.trim() : 'Graded.',
-    expectedPoints: asStringArray(parsed.expected_points),
-    missingPoints: asStringArray(parsed.missing_points),
-    gradingSource: 'grok', schemeUsed: scheme.length > 0,
-    breakdown: parseBreakdown(parsed.breakdown, max),
-    partScores: parsePartScores(parsed.part_scores, question.parts),
-    ...examinerFields(parsed),
-  };
-}
-
-/** Single handwritten answer (topic drill): read + grade one question from an image. */
-async function gradeOneHandwritten(subject: string, question: GradeQuestion, images: GrokImage[]): Promise<GradedQuestion> {
-  const max = clampMarks(question.maxMarks, Math.max(1, (question.parts ?? []).reduce((s, p) => s + (p.marks ?? 0), 0) || 1));
-  const scheme = schemeText(question);
-  const system = [
-    'You are a strict but fair Cambridge O/A Level examiner grading a scanned handwritten answer to ONE question.',
-    'Read the handwriting in the image(s), then grade the answer out of max_marks (whole marks only).',
-    'Mark strictly against marking_scheme when present; otherwise grade with your own expert subject knowledge.',
-    'If nothing is attempted in the image, give 0 and verdict "unanswered".',
-    'Return JSON ONLY: { "earned_marks": number, "verdict": "correct"|"partial"|"weak"|"unanswered", "feedback": string, "expected_points": string[], "missing_points": string[] }.',
-    BREAKDOWN_INSTRUCTION,
-    EXAMINER_INSTRUCTION,
-    PART_SCORES_INSTRUCTION,
-  ].join(' ');
-  const user = JSON.stringify({
-    subject,
-    question: question.questionText,
-    max_marks: max,
-    marking_scheme: scheme,
-    parts: (question.parts ?? []).filter((p) => p.answer && p.answer.trim()).map((p) => ({ label: p.label, marks: p.marks })),
-  });
-
-  const parsed = await grokChatJson({ system, user, images, model: grokVisionModel(), temperature: 0, maxTokens: 2000 });
-  const earnedRaw = Number(parsed.earned_marks);
-  const earned = Number.isFinite(earnedRaw) ? Math.max(0, Math.min(max, Math.round(earnedRaw))) : 0;
-  const rawVerdict = String(parsed.verdict || '').toLowerCase();
-  const verdict: GradedQuestion['verdict'] =
-    rawVerdict === 'correct' || rawVerdict === 'partial' || rawVerdict === 'weak' || rawVerdict === 'unanswered'
-      ? (rawVerdict as GradedQuestion['verdict'])
-      : verdictFromRatio(max ? earned / max : 0);
-
-  return {
-    id: question.id, questionNumber: question.questionNumber, earned, max, verdict,
-    feedback: typeof parsed.feedback === 'string' && parsed.feedback.trim() ? parsed.feedback.trim() : 'Graded from your uploaded answer.',
-    expectedPoints: asStringArray(parsed.expected_points),
-    missingPoints: asStringArray(parsed.missing_points),
-    gradingSource: 'grok-vision', schemeUsed: scheme.length > 0,
-    breakdown: parseBreakdown(parsed.breakdown, max),
-    partScores: parsePartScores(parsed.part_scores, question.parts),
-    ...examinerFields(parsed),
-  };
-}
-
-async function mapPool<T, R>(items: T[], size: number, fn: (item: T, index: number) => Promise<R>): Promise<R[]> {
-  const results = new Array<R>(items.length);
-  let cursor = 0;
-  const workers = Array.from({ length: Math.min(size, items.length) }, async () => {
-    while (cursor < items.length) {
-      const index = cursor++;
-      results[index] = await fn(items[index], index);
-    }
-  });
-  await Promise.all(workers);
-  return results;
-}
-
-/** Handwritten: one Grok vision pass reads + grades every question from images. */
-async function gradeHandwritten(
-  subject: string,
-  questions: GradeQuestion[],
-  images: GrokImage[],
-): Promise<GradedQuestion[]> {
-  const outline = questions.map((q) => ({
-    question_number: q.questionNumber,
-    max_marks: clampMarks(q.maxMarks, 1),
-    question: q.questionText.slice(0, 1500),
-    marking_scheme: schemeText(q).slice(0, 2000),
-    parts: (q.parts ?? []).filter((p) => p.answer && p.answer.trim()).map((p) => ({ label: p.label, marks: p.marks })),
-  }));
-  const system = [
-    'You are a strict but fair Cambridge O/A Level examiner grading a scanned handwritten attempt.',
-    'The images contain the student\'s handwritten answers. Read the handwriting, match each answer to the question by its number, then grade it.',
-    'Mark against each question\'s marking_scheme when present, otherwise use your own expert subject knowledge.',
-    'Award whole marks only, never more than that question\'s max_marks. If a question is not attempted in the images, give 0 and verdict "unanswered".',
-    'Return JSON ONLY: { "results": [ { "question_number": string, "earned_marks": number, "verdict": "correct"|"partial"|"weak"|"unanswered", "feedback": string, "expected_points": string[], "missing_points": string[], "breakdown": [ { "category": "Knowledge"|"Explanation"|"Evaluation", "earned": number, "max": number } ], "part_scores": [ { "label": string, "earned": number, "max": number } ], "command_word": string, "command_word_note": string, "examiner_note": string } ] }.',
-    'In each breakdown only include the objectives that question tests. part_scores has one entry per marked sub-part using the scheme\'s part labels, where earned is the marks awarded that sub-part and their sum equals earned_marks (use [] if the question has no sub-parts). command_word is the question\'s command word; command_word_note explains any style mismatch (else ""); examiner_note is a one-sentence examiner-report style remark.',
-  ].join(' ');
-  const user = `Subject: ${subject}\nGrade these questions from the attached handwritten pages:\n${JSON.stringify(outline)}`;
-
-  const parsed = await grokChatJson({ system, user, images, model: grokVisionModel(), temperature: 0, maxTokens: 3500 });
-  const results = Array.isArray(parsed.results) ? (parsed.results as Array<Record<string, unknown>>) : [];
-  const byNumber = new Map(results.map((r) => [String(r.question_number).trim(), r]));
-
-  return questions.map((q) => {
-    const max = clampMarks(q.maxMarks, 1);
-    const usedScheme = schemeText(q).length > 0;
-    const r = byNumber.get(String(q.questionNumber).trim());
-    if (!r) {
-      return {
-        id: q.id, questionNumber: q.questionNumber, earned: 0, max, verdict: 'unanswered',
-        feedback: 'No matching answer found in the uploaded pages.', expectedPoints: [], missingPoints: [],
-        gradingSource: 'grok-vision', schemeUsed: usedScheme,
-      };
-    }
-    const earnedRaw = Number(r.earned_marks);
-    const earned = Number.isFinite(earnedRaw) ? Math.max(0, Math.min(max, Math.round(earnedRaw))) : 0;
-    const rawVerdict = String(r.verdict || '').toLowerCase();
-    const verdict: GradedQuestion['verdict'] =
-      rawVerdict === 'correct' || rawVerdict === 'partial' || rawVerdict === 'weak' || rawVerdict === 'unanswered'
-        ? (rawVerdict as GradedQuestion['verdict'])
-        : verdictFromRatio(max ? earned / max : 0);
-    return {
-      id: q.id, questionNumber: q.questionNumber, earned, max, verdict,
-      feedback: typeof r.feedback === 'string' && r.feedback.trim() ? r.feedback.trim() : 'Graded from your uploaded answer.',
-      expectedPoints: asStringArray(r.expected_points),
-      missingPoints: asStringArray(r.missing_points),
-      gradingSource: 'grok-vision', schemeUsed: usedScheme,
-      breakdown: parseBreakdown(r.breakdown, max),
-      partScores: parsePartScores(r.part_scores, q.parts),
-      ...examinerFields(r),
-    };
-  });
-}
-
-function buildReport(graded: GradedQuestion[], solveMode: SolveMode, model: string): PracticeReport {
-  const earned = graded.reduce((s, g) => s + g.earned, 0);
-  const total = graded.reduce((s, g) => s + g.max, 0);
-  const percent = total > 0 ? Math.round((earned / total) * 100) : 0;
-
-  const strengths = graded
-    .filter((g) => g.verdict === 'correct')
-    .map((g) => `Q${g.questionNumber}`);
-  const improvements = graded
-    .filter((g) => g.verdict === 'weak' || g.verdict === 'unanswered')
-    .flatMap((g) => g.missingPoints.length ? g.missingPoints.slice(0, 1).map((p) => `Q${g.questionNumber}: ${p}`) : [`Q${g.questionNumber}: revisit this question`]);
-
-  const summary =
-    percent >= 80 ? 'Excellent — a strong, exam-ready attempt across most of the paper.'
-      : percent >= 60 ? 'Solid work. A few questions need tightening to push into the top band.'
-      : percent >= 40 ? 'A fair attempt. Focus on the flagged questions to build accuracy.'
-      : 'Keep going — review the marking points below and re-attempt the weaker questions.';
-
-  return {
-    earned, total, percent, grade: gradeBand(percent), summary,
-    strengths: strengths.slice(0, 8),
-    improvements: improvements.slice(0, 8),
-    perQuestion: graded,
-    solveMode, model,
-    gradedAt: new Date().toISOString(),
-  };
-}
 
 router.post('/grade', clerkAuth, async (req: AuthenticatedRequest, res: Response) => {
   try {
@@ -412,34 +55,70 @@ router.post('/grade', clerkAuth, async (req: AuthenticatedRequest, res: Response
 
     let graded: GradedQuestion[];
     let model = grokTextModel();
+    let extraction: ExtractionSummary | undefined;
 
     if (solveMode === 'handwritten') {
       const doc = await readDoc(clerkId, paperKey);
-      const images = await downloadUploadImages(doc?.uploads ?? []);
-      if (images.length === 0) {
-        return res.status(400).json({ error: 'Upload a photo or scan of your handwritten answers first.' });
+      const uploads = doc?.uploads ?? [];
+      if (uploads.length === 0) {
+        return res.status(400).json({ error: 'Upload a photo, scan or PDF of your handwritten answers first.' });
       }
+
+      const loaded = await loadUploadPages(uploads, undefined, { clerkId, paperKey });
+      if (loaded.pages.length === 0) {
+        // Every file failed. Say which, and why — the previous behaviour told the
+        // student to upload something they had already uploaded.
+        const storageGone = loaded.skipped.some((reason) => reason.includes('could not be downloaded from storage'));
+        const detail = loaded.skipped.length ? ` ${loaded.skipped.join(' ')}` : '';
+        return res.status(400).json({
+          error: storageGone
+            ? `We couldn't read your upload from storage.${detail} Remove the file and upload it again.`
+            : `None of your uploaded files could be read.${detail} Upload a clear JPG, PNG or PDF of your answers.`,
+          code: 'no_readable_pages',
+          skipped: loaded.skipped,
+        });
+      }
+
       model = grokVisionModel();
-      graded = await gradeHandwritten(subject, questions, images);
+      // Drop any typed answers the client sent — uploaded papers are marked from
+      // the transcription only, so a leftover typed draft cannot mix into marks.
+      const fromUpload = questions.map((question) => ({
+        ...question, studentOption: null, studentParts: {}, studentAnswer: null,
+      }));
+      const result = await gradeHandwritten(subject, fromUpload, loaded.pages, fromUpload.every((q) => q.type === 'mcq'));
+      graded = result.graded;
+      // Files we could not use are warnings on the report, not silent zeros.
+      extraction = { ...result.extraction, warnings: [...loaded.skipped, ...result.extraction.warnings] };
     } else {
-      graded = await mapPool(questions, WRITTEN_CONCURRENCY, async (q) =>
-        q.type === 'mcq' ? gradeMcq(q) : gradeWritten(subject, q),
-      );
+      graded = await gradeTyped(subject, questions);
     }
 
-    const report = buildReport(graded, solveMode, model);
+    const report = buildReport(graded, solveMode, model, extraction);
 
     // Persist the report onto the progress doc and mark the paper completed.
+    // Handwritten attempts also store the transcription in the same answer slots
+    // Solve here uses, so the report UI can render both paths identically.
     const segments = paperKey.split('|');
     const existing = await readDoc(clerkId, paperKey);
     const now = new Date().toISOString();
+    const extractedAnswers = solveMode === 'handwritten' ? typedAnswersFromGraded(questions, graded) : null;
+    const answeredCount = graded.filter((g) => {
+      if (g.extractionFlag === 'blank' || g.extractionFlag === 'not_found') return false;
+      if (g.marksWithheld) return true;
+      if (g.verdict === 'unanswered' && !g.extractedAnswer) return false;
+      return true;
+    }).length;
+    const totalCount = graded.length;
     const doc: PracticeProgressDoc = existing
-      ? { ...existing, report, status: 'completed', updatedAt: now }
+      ? {
+          ...existing, report, status: 'completed', answeredCount, totalCount, updatedAt: now,
+          ...(extractedAnswers ? { answers: extractedAnswers } : {}),
+        }
       : {
           paperKey, subject, year: segments[1], session: segments[2], paper: segments[3], variant: segments[4],
           isMcq: questions.every((q) => q.type === 'mcq'), solveMode, status: 'completed',
-          answers: { mcq: {}, parts: {} }, uploads: [], report,
-          answeredCount: graded.filter((g) => g.verdict !== 'unanswered').length, totalCount: graded.length,
+          answers: extractedAnswers ?? { mcq: {}, parts: {} }, uploads: [], report,
+          answeredCount, totalCount,
           timerDurationSeconds: 0, timerElapsedSeconds: 0, startedAt: now, updatedAt: now,
         };
     await writeDoc(clerkId, doc);
@@ -448,8 +127,7 @@ router.post('/grade', clerkAuth, async (req: AuthenticatedRequest, res: Response
   } catch (error) {
     console.error('Practice grading error:', error);
     const message = grokErrorMessage(error);
-    const status = error instanceof GrokError && (error.code === 'no_key' || error.code === 'invalid_key') ? 503 : 500;
-    return res.status(status).json({ error: message });
+    return res.status(grokHttpStatus(error)).json({ error: message });
   }
 });
 
@@ -468,26 +146,22 @@ router.post('/grade-one', clerkAuth, async (req: AuthenticatedRequest, res: Resp
     if (!question || !question.id) return res.status(400).json({ error: 'question is required' });
     const subject = (body.subject || '').trim();
 
-    if (question.type === 'mcq') {
-      return res.json({ result: gradeMcq(question) });
-    }
-    if (!grokEnabled()) {
+    if (question.type !== 'mcq' && !grokEnabled()) {
       return res.status(503).json({ error: grokErrorMessage(new GrokError('', 'no_key')), code: 'no_key' });
     }
-    const result = await gradeWritten(subject, question);
-    return res.json({ result });
+    return res.json({ result: await gradeOne(subject, question) });
   } catch (error) {
     console.error('Single-question grading error:', error);
     const message = grokErrorMessage(error);
-    const status = error instanceof GrokError && (error.code === 'no_key' || error.code === 'invalid_key') ? 503 : 500;
-    return res.status(status).json({ error: message });
+    return res.status(grokHttpStatus(error)).json({ error: message });
   }
 });
 
 /**
  * POST /practice-grading/grade-one-image  (Clerk auth, multipart)
- * Grade one topic-drill question from a photo of a handwritten answer, against
- * its own marking scheme. Stateless — the image is graded in-memory, not stored.
+ * Grade one topic-drill question from a photo of a handwritten answer. The photo
+ * is transcribed and then marked by the shared scorer, so it agrees with the
+ * typed path. Stateless — the image is read in-memory, not stored.
  * Fields: subject, question (JSON string); file: the answer image.
  */
 router.post('/grade-one-image', clerkAuth, upload.single('file'), async (req: AuthenticatedRequest, res: Response) => {
@@ -506,21 +180,39 @@ router.post('/grade-one-image', clerkAuth, upload.single('file'), async (req: Au
 
     const file = req.file;
     if (!file) return res.status(400).json({ error: 'No file provided' });
-    if (!/^image\//.test(file.mimetype)) {
-      return res.status(400).json({ error: 'Upload a photo (JPG or PNG) of your answer.' });
+    if (!isPracticeUploadType(file.mimetype, file.originalname) && !isSupportedImageType(file.mimetype)) {
+      return res.status(400).json({ error: 'Upload a photo (JPG or PNG) or a PDF of your answer.' });
     }
+    if (!file.buffer?.byteLength) return res.status(400).json({ error: 'That file is empty.' });
     if (!grokEnabled()) {
       return res.status(503).json({ error: grokErrorMessage(new GrokError('', 'no_key')), code: 'no_key' });
     }
 
-    const images: GrokImage[] = [{ base64: file.buffer.toString('base64'), mimeType: file.mimetype }];
-    const result = await gradeOneHandwritten(subject, question, images);
+    const isPdf = (file.mimetype || '').toLowerCase() === 'application/pdf'
+      || (file.originalname || '').toLowerCase().endsWith('.pdf');
+    let pages: PageImage[];
+    if (isPdf) {
+      const raster = await rasterizePdfPages(file.buffer, 1, 8, file.originalname);
+      if (raster.pages.length === 0) {
+        return res.status(400).json({ error: 'That PDF has no readable pages.' });
+      }
+      pages = raster.pages;
+    } else {
+      const mime = isSupportedImageType(file.mimetype) ? file.mimetype : 'image/jpeg';
+      pages = [{
+        base64: file.buffer.toString('base64'), mimeType: mime, page: 1, source: file.originalname,
+      }];
+    }
+    const read = await extractHandwrittenAnswers([question], pages, {
+      isMcqPaper: question.type === 'mcq',
+      singleQuestion: true,
+    });
+    const result = await gradeExtracted(subject, question, read.byQuestionId.get(question.id));
     return res.json({ result });
   } catch (error) {
     console.error('Single-question image grading error:', error);
     const message = grokErrorMessage(error);
-    const status = error instanceof GrokError && (error.code === 'no_key' || error.code === 'invalid_key') ? 503 : 500;
-    return res.status(status).json({ error: message });
+    return res.status(grokHttpStatus(error)).json({ error: message });
   }
 });
 

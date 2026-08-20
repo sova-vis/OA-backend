@@ -8,6 +8,7 @@ import {
 } from './lib/practiceStore';
 import { supabase } from './lib/supabase';
 import { PRACTICE_BUCKET } from './lib/practiceStore';
+import { isPracticeUploadType } from './lib/pdfPages';
 
 /**
  * Practice-paper progress: answers autosaved as the student types, handwritten
@@ -176,8 +177,12 @@ router.post(
 
       const file = req.file;
       if (!file) return res.status(400).json({ error: 'No file provided' });
-      const isAllowed = /^image\//.test(file.mimetype) || file.mimetype === 'application/pdf';
-      if (!isAllowed) return res.status(400).json({ error: 'Only images and PDFs are allowed' });
+      if (!isPracticeUploadType(file.mimetype, file.originalname)) {
+        return res.status(400).json({ error: 'Only JPG, PNG and PDF files are allowed' });
+      }
+      if (!file.buffer?.byteLength) {
+        return res.status(400).json({ error: 'That file is empty.' });
+      }
       await ensureBucket();
 
       const existing = await readDoc(clerkId, paperKey);
@@ -186,22 +191,38 @@ router.post(
       }
 
       const cleanName = (file.originalname || 'upload').replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 120);
+      const ext = (file.originalname || cleanName).split('.').pop()?.toLowerCase() || '';
+      const storedType =
+        file.mimetype === 'application/pdf' || ext === 'pdf' ? 'application/pdf'
+          : file.mimetype === 'image/png' || ext === 'png' ? 'image/png'
+          : 'image/jpeg';
       const path = `${filesPrefix(clerkId, paperKey)}/${Date.now()}_${cleanName}`;
       const { error: uploadError } = await supabase.storage
         .from(PRACTICE_BUCKET)
-        .upload(path, file.buffer, { contentType: file.mimetype, upsert: false });
+        .upload(path, file.buffer, { contentType: storedType, upsert: false });
       if (uploadError) throw uploadError;
+
+      const { data: readBack, error: readError } = await supabase.storage.from(PRACTICE_BUCKET).download(path);
+      if (readError || !readBack) {
+        console.error('Practice upload not readable after write', { path, readError });
+        await supabase.storage.from(PRACTICE_BUCKET).remove([path]);
+        return res.status(500).json({ error: 'Upload did not save correctly. Please try again.' });
+      }
 
       const record: PracticeUpload = {
         path,
         name: file.originalname || cleanName,
         size: file.size,
-        type: file.mimetype,
+        type: storedType,
         at: new Date().toISOString(),
       };
 
       const base = existing ?? normalizeDoc(paperKey, { solveMode: 'handwritten' }, null);
-      base.uploads = [...(base.uploads ?? []), record];
+      const previous = (base.uploads ?? []).filter((item) => item.name === record.name);
+      if (previous.length > 0) {
+        await supabase.storage.from(PRACTICE_BUCKET).remove(previous.map((item) => item.path));
+      }
+      base.uploads = [...(base.uploads ?? []).filter((item) => item.name !== record.name), record];
       base.solveMode = 'handwritten';
       base.updatedAt = record.at;
       await writeDoc(clerkId, base);

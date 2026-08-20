@@ -5,8 +5,9 @@ import { AuthenticatedRequest, clerkAuth } from './lib/clerkAuth';
 import { supabase } from './lib/supabase';
 import { PRACTICE_BUCKET, ensureBucket, SIGNED_URL_TTL } from './lib/practiceStore';
 import {
-  grokEnabled, grokChatJson, grokVisionModel, grokErrorMessage, GrokError, GrokImage,
+  grokEnabled, grokChatJson, grokVisionModel, grokErrorMessage, grokHttpStatus, GrokError, GrokImage,
 } from './lib/grok';
+import { rasterizePdfPages } from './lib/pdfPages';
 
 /**
  * Standalone "upload & mark" flow (separate from the question-bank practice).
@@ -27,14 +28,6 @@ const PAGE_W = 595; // A4 points
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_FILE_BYTES, files: 12 } });
 const router = Router();
-
-// Preserve a real ESM import in the CJS build (mupdf ships as ESM w/ top-level await).
-const importEsm = new Function('m', 'return import(m)') as (m: string) => Promise<any>;
-let mupdfPromise: Promise<any> | null = null;
-function loadMupdf(): Promise<any> {
-  if (!mupdfPromise) mupdfPromise = importEsm('mupdf');
-  return mupdfPromise;
-}
 
 export type PaperType = 'topical' | 'questions' | 'mcqs' | 'mixed';
 const PAPER_TYPES: PaperType[] = ['topical', 'questions', 'mcqs', 'mixed'];
@@ -105,18 +98,8 @@ function verdictOf(value: unknown): UploadGradedQuestion['verdict'] {
 
 /** Rasterize a PDF (buffer) to page PNGs at ~2x via mupdf. */
 export async function rasterizePdf(buffer: Buffer, startPage: number, budget: number): Promise<PageImage[]> {
-  const mupdf = await loadMupdf();
-  const doc = mupdf.Document.openDocument(new Uint8Array(buffer), 'application/pdf');
-  const count = Math.min(doc.countPages(), budget);
-  const scale = mupdf.Matrix.scale(2, 2);
-  const out: PageImage[] = [];
-  for (let i = 0; i < count; i++) {
-    const page = doc.loadPage(i);
-    const pixmap = page.toPixmap(scale, mupdf.ColorSpace.DeviceRGB, false, true);
-    const png = pixmap.asPNG();
-    out.push({ base64: Buffer.from(png).toString('base64'), mimeType: 'image/png', page: startPage + i });
-  }
-  return out;
+  const { pages } = await rasterizePdfPages(buffer, startPage, budget);
+  return pages.map((page) => ({ base64: page.base64, mimeType: page.mimeType, page: page.page }));
 }
 
 /** Turn uploaded files (images + PDFs) into an ordered list of page images. */
@@ -383,7 +366,7 @@ router.post('/', clerkAuth, upload.array('files', 12), async (req: Authenticated
   } catch (error) {
     console.error('Upload check error:', error);
     const message = grokErrorMessage(error);
-    const status = error instanceof GrokError && (error.code === 'no_key' || error.code === 'invalid_key') ? 503 : 500;
+    const status = grokHttpStatus(error);
     return res.status(status).json({ error: message });
   }
 });
