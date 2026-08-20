@@ -36,12 +36,47 @@ export function grokVisionModel(): string {
   return (process.env.XAI_VISION_MODEL || 'grok-2-vision-1212').trim();
 }
 
+/**
+ * Groq IDs that 404 on free/developer tiers after the July 2026 shutdowns.
+ * Production may still have these in GROQ_VISION_MODEL / GROQ_GRADING_MODEL
+ * from an older .env.example — skip them instead of failing every page.
+ * @see https://console.groq.com/docs/deprecations
+ */
+const RETIRED_GROQ_MODELS = new Set([
+  'meta-llama/llama-4-scout-17b-16e-instruct',
+  'llama-3.3-70b-versatile',
+  'llama-3.1-8b-instant',
+  'qwen/qwen3-32b',
+  'mixtral-8x7b-32768',
+  'gemma-7b-it',
+]);
+
+const GROQ_TEXT_FALLBACKS = ['openai/gpt-oss-120b', 'qwen/qwen3.6-27b'];
+const GROQ_VISION_FALLBACKS = ['qwen/qwen3.6-27b'];
+
+function uniqueLiveGroqModels(names: string[]): string[] {
+  const out: string[] = [];
+  for (const name of names) {
+    const trimmed = name.trim();
+    if (!trimmed || RETIRED_GROQ_MODELS.has(trimmed) || out.includes(trimmed)) continue;
+    out.push(trimmed);
+  }
+  return out;
+}
+
 export function groqTextModel(): string {
-  return (process.env.GROQ_GRADING_MODEL || process.env.GROQ_MODEL || 'openai/gpt-oss-120b').trim();
+  return uniqueLiveGroqModels([
+    process.env.GROQ_GRADING_MODEL || '',
+    process.env.GROQ_MODEL || '',
+    ...GROQ_TEXT_FALLBACKS,
+  ])[0] || GROQ_TEXT_FALLBACKS[0];
 }
 
 export function groqVisionModel(): string {
-  return (process.env.GROQ_VISION_MODEL || 'qwen/qwen3.6-27b').trim();
+  return uniqueLiveGroqModels([
+    process.env.GROQ_VISION_MODEL || '',
+    ...GROQ_VISION_FALLBACKS,
+  ])[0] || GROQ_VISION_FALLBACKS[0];
 }
 
 export function geminiModel(): string {
@@ -180,6 +215,9 @@ export function classifyGrokHttpError(status: number, bodyText: string): GrokErr
     return 'parse';
   }
   if (status === 429 || status === 502 || status === 503 || status === 529) return 'rate_limit';
+  if (status === 413 || /request too large|tokens per minute|please reduce your message size/.test(lowered)) {
+    return 'rate_limit';
+  }
   if (/unavailable|high demand|overloaded|try again later|temporarily|resource_exhausted/.test(lowered)) {
     return 'rate_limit';
   }
@@ -249,7 +287,11 @@ function providerUrl(provider: Provider): string {
 
 function providerModels(provider: Provider, hasImages: boolean, requested?: string): string[] {
   if (provider === 'xai') return [requested || (hasImages ? grokVisionModel() : grokTextModel())];
-  if (provider === 'groq') return [hasImages ? groqVisionModel() : groqTextModel()];
+  if (provider === 'groq') {
+    return hasImages
+      ? uniqueLiveGroqModels([groqVisionModel(), ...GROQ_VISION_FALLBACKS])
+      : uniqueLiveGroqModels([groqTextModel(), ...GROQ_TEXT_FALLBACKS]);
+  }
   // gemini-2.5-flash / 2.0-flash 404 for new keys. Each flash SKU has its own
   // free-tier RPM, so a 429 on 3.6-flash can still succeed on lite/latest.
   const primary = geminiModel();
@@ -283,12 +325,16 @@ async function chatCompletions(
 
   // Reasoning models (Groq gpt-oss / Qwen, xAI grok-4.x) spend tokens on hidden
   // thinking; keep a floor so JSON mode is not starved into an empty completion.
+  // Groq on_demand TPM is 8000 and counts reserved max_completion_tokens, so an
+  // 8192 completion budget plus a page image 413s (Requested 11330). Cap Groq.
   const xaiReasoning = provider === 'xai' && /grok-4/i.test(String(options.model || ''));
-  const tokenBudget = Math.max(
-    options.maxTokens ?? 2048,
-    provider === 'groq' ? 4096 : 0,
-    xaiReasoning ? 8192 : 0,
-  );
+  const hasImages = Array.isArray(options.images) && options.images.length > 0;
+  let tokenBudget = options.maxTokens ?? 2048;
+  if (provider === 'groq') {
+    tokenBudget = Math.min(Math.max(tokenBudget, 1024), hasImages ? 2500 : 4096);
+  } else if (xaiReasoning) {
+    tokenBudget = Math.max(tokenBudget, 8192);
+  }
   const payload: Record<string, unknown> = {
     model: options.model,
     temperature: options.temperature ?? 0,
@@ -376,8 +422,14 @@ async function tryProvider(
         const hasMoreModels = m < models.length - 1;
         // A 429 on gemini-3.6-flash still has quota on lite/latest — switch
         // models immediately instead of sitting out the retry-after.
-        if (error instanceof GrokError && error.code === 'rate_limit' && hasMoreModels) {
-          console.warn(`${provider}/${model} rate_limit; trying next model.`);
+        // A 404 model_not_found (retired Groq IDs) is the same: try the next ID.
+        if (error instanceof GrokError && (error.code === 'rate_limit' || error.code === 'model') && hasMoreModels) {
+          console.warn(`${provider}/${model} ${reason}; trying next model.`);
+          break;
+        }
+        // 413 TPM "request too large" will 413 again at the same size — skip retry.
+        if (error instanceof GrokError && error.status === 413) {
+          console.warn(`${provider}/${model} payload too large; trying next.`);
           break;
         }
         if (isTransientGrokError(error) && attempt === 0) {
@@ -404,7 +456,9 @@ function coolDown(provider: Provider, error: unknown): void {
   if (!(error instanceof GrokError)) return;
   let ms = 0;
   if (error.code === 'quota' || error.code === 'invalid_key') ms = COOLDOWN_QUOTA_MS;
-  else if (error.code === 'rate_limit') ms = Math.max(error.retryAfterMs || 15_000, 8_000);
+  else if (error.code === 'rate_limit' && error.status !== 413) {
+    ms = Math.max(error.retryAfterMs || 15_000, 8_000);
+  }
   if (!ms) return;
   const prev = providerCooldownUntil.get(provider) || 0;
   const until = Date.now() + ms;

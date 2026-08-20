@@ -922,7 +922,35 @@ test('HTTP 503 high-demand is a retryable rate limit, not a dead question', () =
     'Groq JSON-mode 400 is a parse miss, not a missing model',
   );
   equal(grok.classifyGrokHttpError(403, 'Your team has used all available credits'), 'quota');
+  equal(
+    grok.classifyGrokHttpError(404, '{"error":{"message":"The model `meta-llama/llama-4-scout-17b-16e-instruct` does not exist or you do not have access to it.","code":"model_not_found"}}'),
+    'model',
+  );
+  equal(
+    grok.classifyGrokHttpError(413, 'Request too large for model qwen/qwen3.6-27b on tokens per minute (TPM): Limit 8000, Requested 11330, please reduce your message size'),
+    'rate_limit',
+  );
   equal(grok.retryAfterMsFrom('Please retry in 17s.'), 17000);
+});
+
+test('retired Groq vision/text IDs are skipped so production env cannot 404 every page', () => {
+  const prevVision = process.env.GROQ_VISION_MODEL;
+  const prevGrading = process.env.GROQ_GRADING_MODEL;
+  const prevModel = process.env.GROQ_MODEL;
+  process.env.GROQ_VISION_MODEL = 'meta-llama/llama-4-scout-17b-16e-instruct';
+  process.env.GROQ_GRADING_MODEL = 'llama-3.3-70b-versatile';
+  process.env.GROQ_MODEL = 'llama-3.1-8b-instant';
+  try {
+    equal(grok.groqVisionModel(), 'qwen/qwen3.6-27b');
+    equal(grok.groqTextModel(), 'openai/gpt-oss-120b');
+  } finally {
+    if (prevVision === undefined) delete process.env.GROQ_VISION_MODEL;
+    else process.env.GROQ_VISION_MODEL = prevVision;
+    if (prevGrading === undefined) delete process.env.GROQ_GRADING_MODEL;
+    else process.env.GROQ_GRADING_MODEL = prevGrading;
+    if (prevModel === undefined) delete process.env.GROQ_MODEL;
+    else process.env.GROQ_MODEL = prevModel;
+  }
 });
 
 test('JSON wrapped in an array or markdown still parses', () => {
