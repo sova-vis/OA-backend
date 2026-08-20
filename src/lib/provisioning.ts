@@ -1,4 +1,5 @@
 import bcrypt from 'bcrypt';
+import crypto from 'crypto';
 import { supabase } from './supabase';
 
 /**
@@ -10,9 +11,11 @@ import { supabase } from './supabase';
 const PASSWORD_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789';
 
 export function generatePassword(length = 8): string {
+  // CSPRNG — these become one-time login passwords and synthetic ids, so the
+  // sequence must not be predictable from observed outputs (Math.random isn't).
   let out = '';
   for (let i = 0; i < length; i += 1) {
-    out += PASSWORD_ALPHABET[Math.floor(Math.random() * PASSWORD_ALPHABET.length)];
+    out += PASSWORD_ALPHABET[crypto.randomInt(PASSWORD_ALPHABET.length)];
   }
   return out;
 }

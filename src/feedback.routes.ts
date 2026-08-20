@@ -3,6 +3,7 @@ import { AuthenticatedRequest, clerkAuth } from './lib/clerkAuth';
 import { supabase } from './lib/supabase';
 import { resolveClassAccess } from './lib/portalAccess';
 import { grokChatJson, grokEnabled } from './lib/grok';
+import { rateLimit } from './lib/rateLimit';
 
 /**
  * Teacher Portal — feedback (spec feature group 10). Per-criterion comments
@@ -11,6 +12,9 @@ import { grokChatJson, grokEnabled } from './lib/grok';
 
 const router = Router();
 router.use(clerkAuth);
+
+// Throttle the paid-AI feedback-draft endpoint against cost-abuse loops.
+const aiLimit = rateLimit({ windowMs: 60_000, max: 40, name: 'ai' });
 
 interface Criterion {
   criterion_text: string;
@@ -85,7 +89,7 @@ router.post('/submissions/:id/overall', async (req: AuthenticatedRequest, res: R
 });
 
 // POST /feedback/submissions/:id/draft — AI-draft overall feedback from marks (§10.2).
-router.post('/submissions/:id/draft', async (req: AuthenticatedRequest, res: Response) => {
+router.post('/submissions/:id/draft', aiLimit, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const ctx = await submissionAccess(req.params.id, req.auth!.clerkId);
     if (!ctx || !ctx.access) return res.status(404).json({ error: 'Submission not found' });

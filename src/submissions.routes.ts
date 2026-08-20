@@ -4,6 +4,7 @@ import { supabase } from './lib/supabase';
 import { resolveClassAccess } from './lib/portalAccess';
 import { markSubmission } from './lib/marking';
 import { grokChatJson, grokEnabled } from './lib/grok';
+import { rateLimit } from './lib/rateLimit';
 
 /**
  * Teacher Portal — submissions: student take/submit flow and teacher tracking
@@ -12,6 +13,9 @@ import { grokChatJson, grokEnabled } from './lib/grok';
 
 const router = Router();
 router.use(clerkAuth);
+
+// Throttle the paid-AI OCR endpoint so a caller can't loop it to run up cost.
+const aiLimit = rateLimit({ windowMs: 60_000, max: 40, name: 'ai' });
 
 interface AssignmentRow {
   id: string;
@@ -355,7 +359,7 @@ router.post('/:id/answer', async (req: AuthenticatedRequest, res: Response) => {
 // POST /submissions/:id/answer/ocr — upload a handwritten answer photo, OCR it
 // with Grok vision, and store image + extracted text (§8.2). The original image
 // is retained and shown to the teacher alongside the text at review time.
-router.post('/:id/answer/ocr', async (req: AuthenticatedRequest, res: Response) => {
+router.post('/:id/answer/ocr', aiLimit, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const clerkId = req.auth!.clerkId;
     const { data: submission } = await supabase.from('submissions').select('id, student_clerk_id, status').eq('id', req.params.id).maybeSingle();
