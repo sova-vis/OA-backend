@@ -60,10 +60,14 @@ export function serviceReadiness(): ServiceStatus[] {
     },
     {
       key: 'grokMarking',
-      label: 'Grok — AI marking (text + handwritten)',
-      ready: has(process.env.XAI_API_KEY) || has(process.env.GROK_API_KEY),
+      label: 'Grok — AI marking (text + handwritten), Groq fallback',
+      ready:
+        has(process.env.XAI_API_KEY) ||
+        has(process.env.GROK_API_KEY) ||
+        has(process.env.GROQ_GRADING_API_KEY) ||
+        has(process.env.GROQ_API_KEY),
       critical: false,
-      hint: 'Set XAI_API_KEY — AI marking will error without it.',
+      hint: 'Set XAI_API_KEY (primary Grok). Grading falls back to GROQ_GRADING_API_KEY / GROQ_API_KEY.',
     },
     {
       key: 'groqAskAi',

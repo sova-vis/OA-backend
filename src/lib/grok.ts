@@ -1,19 +1,31 @@
 /**
- * Minimal xAI Grok client over the OpenAI-compatible REST endpoint.
+ * Minimal grading client over the OpenAI-compatible chat/completions REST API.
  *
- * One XAI_API_KEY drives both written grading (text model) and handwritten
- * OCR/grading (vision model). Called via fetch so it works with any current
- * Grok model without an SDK dependency.
+ * Primary provider is xAI Grok (XAI_API_KEY); if that call fails for any reason
+ * (no key, invalid key, rate limit, model or timeout), the exact same request is
+ * retried against Groq (GROQ_API_KEY) as a fallback. Both providers speak the
+ * same wire format, so no SDK and no per-call branching in the callers.
  */
 
 const GROK_URL = 'https://api.x.ai/v1/chat/completions';
+const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
 
 export function grokApiKey(): string {
   return (process.env.XAI_API_KEY || process.env.GROK_API_KEY || '').trim();
 }
 
+/**
+ * Groq fallback key for grading (OpenAI-compatible, api.groq.com). Prefers a
+ * dedicated GROQ_GRADING_API_KEY so grading can use a different key than the
+ * shared GROQ_API_KEY (Ask-AI / paper parsing); falls back to GROQ_API_KEY.
+ */
+export function groqApiKey(): string {
+  return (process.env.GROQ_GRADING_API_KEY || process.env.GROQ_API_KEY || '').trim();
+}
+
+/** Grading works if EITHER provider is configured. */
 export function grokEnabled(): boolean {
-  return grokApiKey().length > 0;
+  return grokApiKey().length > 0 || groqApiKey().length > 0;
 }
 
 export function grokTextModel(): string {
@@ -22,6 +34,16 @@ export function grokTextModel(): string {
 
 export function grokVisionModel(): string {
   return (process.env.XAI_VISION_MODEL || 'grok-2-vision-1212').trim();
+}
+
+/** Groq text model — override with GROQ_GRADING_MODEL. */
+export function groqTextModel(): string {
+  return (process.env.GROQ_GRADING_MODEL || 'llama-3.3-70b-versatile').trim();
+}
+
+/** Groq vision model (must support image input) — override with GROQ_VISION_MODEL. */
+export function groqVisionModel(): string {
+  return (process.env.GROQ_VISION_MODEL || 'meta-llama/llama-4-scout-17b-16e-instruct').trim();
 }
 
 export type GrokErrorCode = 'no_key' | 'invalid_key' | 'rate_limit' | 'model' | 'timeout' | 'other';
@@ -42,7 +64,7 @@ export function grokErrorMessage(error: unknown): string {
   if (error instanceof GrokError) {
     switch (error.code) {
       case 'no_key':
-        return 'AI grading is not configured yet. Add a valid XAI_API_KEY (your Grok key) in OA-backend/.env.';
+        return 'AI grading is not configured yet. Add XAI_API_KEY (Grok) and/or GROQ_API_KEY in OA-backend/.env.';
       case 'invalid_key':
         return 'The Grok API key is invalid or expired. Update XAI_API_KEY in OA-backend/.env.';
       case 'rate_limit':
@@ -95,16 +117,76 @@ interface GrokChatOptions {
   timeoutMs?: number;
 }
 
+interface Provider {
+  name: 'xai' | 'groq';
+  url: string;
+  apiKey: string;
+  model: string;
+}
+
+/** One completion against a single OpenAI-compatible provider. Throws GrokError. */
+async function completeOnce(
+  provider: Provider,
+  userContent: unknown,
+  options: GrokChatOptions,
+): Promise<Record<string, unknown>> {
+  const payload: Record<string, unknown> = {
+    model: provider.model,
+    temperature: options.temperature ?? 0,
+    max_tokens: options.maxTokens ?? 2048,
+    messages: [
+      { role: 'system', content: options.system },
+      { role: 'user', content: userContent },
+    ],
+  };
+
+  let response: globalThis.Response;
+  try {
+    response = await fetch(provider.url, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${provider.apiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(options.timeoutMs ?? 60_000),
+    });
+  } catch (error) {
+    if (error instanceof Error && error.name === 'TimeoutError') {
+      throw new GrokError(`${provider.name} request timed out`, 'timeout');
+    }
+    throw new GrokError(error instanceof Error ? error.message : `${provider.name} request failed`, 'other');
+  }
+
+  if (!response.ok) {
+    const bodyText = await response.text().catch(() => '');
+    const lowered = bodyText.toLowerCase();
+    // A bad key can surface as HTTP 400 with a key-ish body, so inspect the body
+    // to tell key vs model apart rather than trusting the status alone.
+    const looksLikeKey = /api key|api_key|incorrect key|authenticat|unauthor|invalid.token|credential/.test(lowered);
+    const looksLikeModel = /model/.test(lowered);
+    const code: GrokErrorCode =
+      response.status === 401 || response.status === 403 ? 'invalid_key'
+        : response.status === 429 ? 'rate_limit'
+        : looksLikeKey ? 'invalid_key'
+        : response.status === 404 || looksLikeModel ? 'model'
+        : response.status === 400 ? 'model'
+        : 'other';
+    throw new GrokError(`${provider.name} API error ${response.status}: ${bodyText.slice(0, 300)}`, code, response.status);
+  }
+
+  const data = (await response.json()) as { choices?: Array<{ message?: { content?: string } }> };
+  const content = data.choices?.[0]?.message?.content || '';
+  const parsed = parseJsonObject(content);
+  if (!parsed) throw new GrokError(`${provider.name} returned no parseable JSON`, 'other');
+  return parsed;
+}
+
 /**
  * Single chat completion that must return a JSON object. Uses the vision model
- * automatically when images are supplied. Throws GrokError with a typed code.
+ * automatically when images are supplied. Tries xAI Grok first, then falls back
+ * to Groq if Grok fails for any reason. Throws GrokError with a typed code when
+ * every configured provider fails.
  */
 export async function grokChatJson(options: GrokChatOptions): Promise<Record<string, unknown>> {
-  const apiKey = grokApiKey();
-  if (!apiKey) throw new GrokError('XAI_API_KEY is not set', 'no_key');
-
   const hasImages = Array.isArray(options.images) && options.images.length > 0;
-  const model = options.model || (hasImages ? grokVisionModel() : grokTextModel());
 
   const userContent: unknown = hasImages
     ? [
@@ -116,51 +198,40 @@ export async function grokChatJson(options: GrokChatOptions): Promise<Record<str
       ]
     : options.user;
 
-  const payload: Record<string, unknown> = {
-    model,
-    temperature: options.temperature ?? 0,
-    max_tokens: options.maxTokens ?? 2048,
-    messages: [
-      { role: 'system', content: options.system },
-      { role: 'user', content: userContent },
-    ],
-  };
-
-  let response: globalThis.Response;
-  try {
-    response = await fetch(GROK_URL, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(options.timeoutMs ?? 60_000),
+  // Priority order: xAI Grok (primary), then Groq (fallback). A caller-supplied
+  // options.model only overrides the primary's model.
+  const providers: Provider[] = [];
+  const xaiKey = grokApiKey();
+  if (xaiKey) {
+    providers.push({
+      name: 'xai',
+      url: GROK_URL,
+      apiKey: xaiKey,
+      model: options.model || (hasImages ? grokVisionModel() : grokTextModel()),
     });
-  } catch (error) {
-    if (error instanceof Error && error.name === 'TimeoutError') {
-      throw new GrokError('Grok request timed out', 'timeout');
+  }
+  const groqKey = groqApiKey();
+  if (groqKey) {
+    providers.push({
+      name: 'groq',
+      url: GROQ_URL,
+      apiKey: groqKey,
+      model: hasImages ? groqVisionModel() : groqTextModel(),
+    });
+  }
+
+  if (providers.length === 0) {
+    throw new GrokError('No grading key set (XAI_API_KEY or GROQ_API_KEY)', 'no_key');
+  }
+
+  let lastError: GrokError = new GrokError('Grading failed', 'other');
+  for (const provider of providers) {
+    try {
+      return await completeOnce(provider, userContent, options);
+    } catch (error) {
+      lastError = error instanceof GrokError ? error : new GrokError(String(error), 'other');
+      // Try the next provider (if any). If this was the last one, we throw below.
     }
-    throw new GrokError(error instanceof Error ? error.message : 'Grok request failed', 'other');
   }
-
-  if (!response.ok) {
-    const bodyText = await response.text().catch(() => '');
-    const lowered = bodyText.toLowerCase();
-    // xAI returns HTTP 400 for a bad key ("Incorrect API key provided"), so the
-    // status alone is ambiguous — inspect the body to tell key vs model apart.
-    const looksLikeKey = /api key|api_key|incorrect key|authenticat|unauthor|invalid.token|credential/.test(lowered);
-    const looksLikeModel = /model/.test(lowered);
-    const code: GrokErrorCode =
-      response.status === 401 || response.status === 403 ? 'invalid_key'
-        : response.status === 429 ? 'rate_limit'
-        : looksLikeKey ? 'invalid_key'
-        : response.status === 404 || looksLikeModel ? 'model'
-        : response.status === 400 ? 'model'
-        : 'other';
-    throw new GrokError(`Grok API error ${response.status}: ${bodyText.slice(0, 300)}`, code, response.status);
-  }
-
-  const data = (await response.json()) as { choices?: Array<{ message?: { content?: string } }> };
-  const content = data.choices?.[0]?.message?.content || '';
-  const parsed = parseJsonObject(content);
-  if (!parsed) throw new GrokError('Grok returned no parseable JSON', 'other');
-  return parsed;
+  throw lastError;
 }
