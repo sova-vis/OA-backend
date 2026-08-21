@@ -211,10 +211,24 @@ router.get('/available', async (req: AuthenticatedRequest, res: Response) => {
       }
     }
 
+    // Whether this student is a recipient of each explicitly-targeted assignment,
+    // in ONE query (not one per assignment — that N+1 made this page slow).
+    // Whole-class (target_all) assignments always target the student, since the
+    // assignments were already filtered to classes they're actively enrolled in.
+    const targetedAsgIds = rows.filter((a) => !a.target_all).map((a) => a.id);
+    const iAmRecipient = new Set<string>();
+    if (targetedAsgIds.length > 0) {
+      const { data: recs } = await supabase
+        .from('assignment_recipients')
+        .select('assignment_id')
+        .eq('student_clerk_id', clerkId)
+        .in('assignment_id', targetedAsgIds);
+      for (const r of (recs ?? []) as { assignment_id: string }[]) iAmRecipient.add(r.assignment_id);
+    }
+
     const result = [];
     for (const a of rows) {
-      const targeted = await targetedStudents(a);
-      if (!targeted.has(clerkId)) continue;
+      if (!a.target_all && !iAmRecipient.has(a.id)) continue;
       const sub = subByAssignment.get(a.id);
       // Only WHOLE-CLASS assignments are hidden from students who joined after
       // they were set — an explicitly-targeted student was chosen on purpose and
@@ -296,7 +310,7 @@ router.post('/start', async (req: AuthenticatedRequest, res: Response) => {
       studentQuestionPayload(assignmentId),
       supabase
         .from('submission_answers')
-        .select('assignment_question_id, answer_text, selected_option, answered')
+        .select('assignment_question_id, answer_text, selected_option, answered, part_answers')
         .eq('submission_id', submission!.id as string),
     ]);
 
@@ -335,19 +349,31 @@ router.post('/:id/answer', async (req: AuthenticatedRequest, res: Response) => {
     if (!aqId) return res.status(400).json({ error: 'assignment_question_id is required' });
     const answerText = typeof req.body?.answer_text === 'string' ? req.body.answer_text : null;
     const selectedOption = typeof req.body?.selected_option === 'string' ? req.body.selected_option : null;
-    const answered = Boolean((answerText && answerText.trim()) || selectedOption);
 
-    const { error } = await supabase.from('submission_answers').upsert(
-      {
-        submission_id: req.params.id,
-        assignment_question_id: aqId,
-        answer_text: answerText,
-        selected_option: selectedOption,
-        answered,
-        updated_at: new Date().toISOString(),
-      },
-      { onConflict: 'submission_id,assignment_question_id' }
-    );
+    // Per-part answers { "0": "...", "1": "..." } — kept so each box rehydrates on
+    // reload; `answer_text` still holds the combined text used for AI marking.
+    let partAnswers: Record<string, string> | null = null;
+    const rawParts = req.body?.part_answers;
+    if (rawParts && typeof rawParts === 'object' && !Array.isArray(rawParts)) {
+      partAnswers = {};
+      for (const [k, v] of Object.entries(rawParts as Record<string, unknown>)) {
+        if (typeof v === 'string') partAnswers[String(k)] = v;
+      }
+    }
+    const partHasText = partAnswers ? Object.values(partAnswers).some((v) => v.trim()) : false;
+    const answered = Boolean((answerText && answerText.trim()) || selectedOption || partHasText);
+
+    const payload: Record<string, unknown> = {
+      submission_id: req.params.id,
+      assignment_question_id: aqId,
+      answer_text: answerText,
+      selected_option: selectedOption,
+      answered,
+      updated_at: new Date().toISOString(),
+    };
+    if (partAnswers) payload.part_answers = partAnswers;
+
+    const { error } = await supabase.from('submission_answers').upsert(payload, { onConflict: 'submission_id,assignment_question_id' });
     if (error) throw error;
     return res.json({ ok: true });
   } catch (err) {
