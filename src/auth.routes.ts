@@ -136,15 +136,43 @@ router.patch('/profile', clerkAuth, async (req: AuthenticatedRequest, res: Respo
       return res.status(401).json({ error: 'Unauthorized' });
     }
 
-    const body = (req.body ?? {}) as { selected_subjects?: unknown };
+    const body = (req.body ?? {}) as {
+      selected_subjects?: unknown;
+      subjects_by_level?: unknown;
+      active_level?: unknown;
+    };
     const payload: Record<string, unknown> = {};
 
+    const cleanNames = (arr: unknown): string[] =>
+      Array.isArray(arr)
+        ? Array.from(
+            new Map(
+              arr
+                .filter((item): item is string => typeof item === 'string')
+                .map((item) => item.trim())
+                .filter(Boolean)
+                .map((name) => [name.toLowerCase(), name] as const)
+            ).values()
+          )
+        : [];
+
     if (Array.isArray(body.selected_subjects)) {
-      payload.selected_subjects = body.selected_subjects
-        .filter((item) => typeof item === 'string')
-        .map((item) => item.trim())
-        .filter(Boolean)
-        .slice(0, 30);
+      payload.selected_subjects = cleanNames(body.selected_subjects).slice(0, 40);
+    }
+
+    // Per-level subjects are the source of truth; keep the flat list (read by the
+    // datesheet + mentoring routes) in sync as the union of both levels.
+    if (body.subjects_by_level && typeof body.subjects_by_level === 'object' && !Array.isArray(body.subjects_by_level)) {
+      const src = body.subjects_by_level as Record<string, unknown>;
+      const byLevel = { olevel: cleanNames(src.olevel).slice(0, 30), alevel: cleanNames(src.alevel).slice(0, 30) };
+      payload.subjects_by_level = byLevel;
+      if (!('selected_subjects' in payload)) {
+        payload.selected_subjects = cleanNames([...byLevel.olevel, ...byLevel.alevel]).slice(0, 40);
+      }
+    }
+
+    if (body.active_level === 'olevel' || body.active_level === 'alevel') {
+      payload.active_level = body.active_level;
     }
 
     if (Object.keys(payload).length === 0) {
@@ -261,7 +289,15 @@ router.post('/complete-onboarding', clerkAuth, async (req: AuthenticatedRequest,
 
     if (role === 'student') {
       if (typeof b.level === 'string') common.level = b.level;
-      if (Array.isArray(b.selected_subjects)) common.selected_subjects = b.selected_subjects.filter((s) => typeof s === 'string').slice(0, 20);
+      if (Array.isArray(b.selected_subjects)) {
+        const subs = b.selected_subjects.filter((s): s is string => typeof s === 'string').map((s) => s.trim()).filter(Boolean).slice(0, 20);
+        common.selected_subjects = subs;
+        // Seed the per-level store + active level so it's server-backed (and thus
+        // cross-device) from the very first login. "Both" defaults to O-Level.
+        const lv = /a level/i.test(String(b.level ?? '')) ? 'alevel' : 'olevel';
+        common.active_level = lv;
+        common.subjects_by_level = lv === 'alevel' ? { olevel: [], alevel: subs } : { olevel: subs, alevel: [] };
+      }
       if (typeof b.exam_session === 'string') common.exam_session = b.exam_session;
       if (typeof b.target_grade === 'string') common.target_grade = b.target_grade;
       if (typeof b.study_days === 'string') common.study_days = b.study_days;
