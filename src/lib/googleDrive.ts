@@ -1,4 +1,4 @@
-import { google } from 'googleapis';
+import { google, drive_v3 } from 'googleapis';
 import { env } from './env';
 
 // Initialize Google Drive API with OAuth2
@@ -60,13 +60,20 @@ export interface DriveFile {
  */
 export async function listFilesInFolder(folderId: string): Promise<DriveFile[]> {
   try {
-    const response = await drive.files.list({
-      q: `'${folderId}' in parents and trashed=false`,
-      fields: 'files(id, name, mimeType, webViewLink, webContentLink, size, modifiedTime)',
-      orderBy: 'name',
-    });
-
-    return response.data.files as DriveFile[] || [];
+    const files: DriveFile[] = [];
+    let pageToken: string | undefined;
+    do {
+      const response = await drive.files.list({
+        q: `'${folderId}' in parents and trashed=false`,
+        fields: 'nextPageToken, files(id, name, mimeType, webViewLink, webContentLink, size, modifiedTime)',
+        orderBy: 'name',
+        pageSize: 1000,
+        pageToken,
+      });
+      files.push(...((response.data.files as DriveFile[]) || []));
+      pageToken = response.data.nextPageToken || undefined;
+    } while (pageToken);
+    return files;
   } catch (error) {
     console.error('Error listing files from Google Drive:', error);
     throw new Error('Failed to fetch files from Google Drive');
@@ -78,17 +85,26 @@ export async function listFilesInFolder(folderId: string): Promise<DriveFile[]> 
  */
 export async function listFoldersAndFiles(folderId: string) {
   try {
-    const response = await drive.files.list({
-      q: `'${folderId}' in parents and trashed=false`,
-      fields: 'files(id, name, mimeType, webViewLink, size, modifiedTime)',
-      orderBy: 'name',
-    });
+    // Page through every child — the Drive default caps at 100, which silently
+    // truncated large subject/year/paper folders.
+    const items: drive_v3.Schema$File[] = [];
+    let pageToken: string | undefined;
+    do {
+      const response = await drive.files.list({
+        q: `'${folderId}' in parents and trashed=false`,
+        fields: 'nextPageToken, files(id, name, mimeType, webViewLink, size, modifiedTime)',
+        orderBy: 'name',
+        pageSize: 1000,
+        pageToken,
+      });
+      items.push(...(response.data.files || []));
+      pageToken = response.data.nextPageToken || undefined;
+    } while (pageToken);
 
-    const items = response.data.files || [];
-    
     return items.map(item => ({
       id: item.id!,
-      name: item.name!,
+      // Trim stray whitespace so "Chemistry " matches "Chemistry" downstream.
+      name: (item.name || '').trim(),
       mimeType: item.mimeType!,
       isFolder: item.mimeType === 'application/vnd.google-apps.folder',
       size: item.size,
