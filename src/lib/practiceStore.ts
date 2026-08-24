@@ -244,6 +244,11 @@ export interface AttemptRecord {
   paper?: string;
   variant?: string;
   at: string;            // ISO timestamp
+  // What the student wrote vs the correct answer — powers the notebook's per-row
+  // answer dropdown. Present only on attempts logged after this shipped.
+  questionText?: string;
+  yourAnswer?: string;
+  correctAnswer?: string;
 }
 
 export const MAX_ATTEMPTS = 3000;
@@ -280,6 +285,9 @@ function normalizeAttempt(raw: unknown): AttemptRecord | null {
     paper: r.paper ? String(r.paper).slice(0, 40) : undefined,
     variant: r.variant ? String(r.variant).slice(0, 40) : undefined,
     at,
+    questionText: r.questionText ? String(r.questionText).slice(0, 1200) : undefined,
+    yourAnswer: r.yourAnswer ? String(r.yourAnswer).slice(0, 2000) : undefined,
+    correctAnswer: r.correctAnswer ? String(r.correctAnswer).slice(0, 2000) : undefined,
   };
 }
 
