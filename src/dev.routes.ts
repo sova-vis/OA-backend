@@ -134,7 +134,7 @@ router.patch('/questions/:id', requireDev, async (req: AuthenticatedRequest, res
   res.json({ ok: true, updated: Object.keys(patch) });
 });
 
-// PATCH /dev/parts/:id — a structured question's part (body / marks / answer)
+// PATCH /dev/parts/:id — a structured question's part (body / marks / answer / label / order)
 router.patch('/parts/:id', requireDev, async (req: AuthenticatedRequest, res: Response) => {
   const id = req.params.id;
   const b = req.body || {};
@@ -142,11 +142,64 @@ router.patch('/parts/:id', requireDev, async (req: AuthenticatedRequest, res: Re
   if (typeof b.body === 'string') patch.body = b.body.slice(0, 20_000);
   if (typeof b.answer === 'string') patch.answer = b.answer.slice(0, 20_000);
   if (b.marks === null || typeof b.marks === 'number') patch.marks = b.marks;
+  if (typeof b.label === 'string') patch.label = b.label.slice(0, 40);
+  if (typeof b.order_index === 'number') patch.order_index = b.order_index;
   if (Object.keys(patch).length === 0) return res.status(400).json({ error: 'nothing to update' });
 
   const { error } = await supabase.from('question_parts').update(patch).eq('id', id);
   if (error) return res.status(500).json({ error: error.message });
   res.json({ ok: true, updated: Object.keys(patch) });
+});
+
+// PUT /dev/questions/:id/parts — replace the whole ordered set of parts in one
+// shot. This single call covers add / delete / rename / reorder: the client
+// sends the full ordered list and order_index becomes the array position.
+// New rows are inserted BEFORE the old ones are removed, so a failure mid-way
+// never loses the existing parts.
+router.put('/questions/:id/parts', requireDev, async (req: AuthenticatedRequest, res: Response) => {
+  const questionUid = req.params.id;
+  const incoming = Array.isArray(req.body?.parts) ? req.body.parts : null;
+  if (!incoming) return res.status(400).json({ error: 'parts array required' });
+  if (incoming.length > 60) return res.status(400).json({ error: 'too many parts (max 60)' });
+
+  const rows = incoming.map((p: Record<string, unknown>, i: number) => ({
+    question_uid: questionUid,
+    label: typeof p.label === 'string' && p.label.trim() ? p.label.trim().slice(0, 40) : String.fromCharCode(97 + (i % 26)),
+    order_index: i,
+    body: typeof p.body === 'string' ? p.body.slice(0, 20_000) : '',
+    marks: typeof p.marks === 'number' ? p.marks : null,
+    answer: typeof p.answer === 'string' ? p.answer.slice(0, 20_000) : null,
+  }));
+
+  // capture the current part ids so they can be removed only after a good insert
+  const { data: oldRows, error: readErr } = await supabase
+    .from('question_parts').select('id').eq('question_uid', questionUid);
+  if (readErr) return res.status(500).json({ error: readErr.message });
+
+  let inserted: unknown[] = [];
+  if (rows.length > 0) {
+    const ins = await supabase
+      .from('question_parts').insert(rows).select('id,label,order_index,body,marks,answer');
+    if (ins.error) return res.status(500).json({ error: ins.error.message });
+    inserted = ins.data || [];
+  }
+  const oldIds = (oldRows || []).map((r: { id: string }) => r.id);
+  if (oldIds.length > 0) {
+    const del = await supabase.from('question_parts').delete().in('id', oldIds);
+    if (del.error) return res.status(500).json({ error: del.error.message });
+  }
+  res.json({ ok: true, parts: inserted });
+});
+
+// DELETE /dev/questions/:id — remove a whole question and its parts, for when a
+// question is beyond fixing and the dev wants to rebuild from scratch.
+router.delete('/questions/:id', requireDev, async (req: AuthenticatedRequest, res: Response) => {
+  const id = req.params.id;
+  const delParts = await supabase.from('question_parts').delete().eq('question_uid', id);
+  if (delParts.error) return res.status(500).json({ error: delParts.error.message });
+  const { error } = await supabase.from('questions').delete().eq('id', id);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ ok: true, deleted: id });
 });
 
 export default router;
