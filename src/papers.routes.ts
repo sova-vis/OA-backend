@@ -369,8 +369,11 @@ router.get('/find-qp', clerkAuth, async (req, res) => {
     if (q.name) {
       stem = q.name.split(/[\\/]/).pop()!.replace(/\.pdf$/i, '').replace(/_(QP|MS)$/i, '');
     } else if (q.subject && q.year && q.session && q.paper) {
+      // A-Level questions carry a "(A Level)" tag on the subject to keep them
+      // separate from O-Level; the PDF filenames in Drive don't, so strip it.
+      const cleanSubject = q.subject.trim().replace(/\s*\(A Level\)\s*$/i, '');
       const parts = [
-        q.subject.trim().replace(/\s+/g, '_'),
+        cleanSubject.replace(/\s+/g, '_'),
         q.year, q.session, q.paper,
         q.variant && q.variant.trim() ? q.variant.trim() : '',
       ].filter(Boolean);

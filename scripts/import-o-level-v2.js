@@ -50,6 +50,17 @@ const batchSize = Math.max(1, Number.parseInt(args.get("batch-size") || "20", 10
 // Which level this import belongs to — keeps O and A content separate.
 // Usage: --level=alevel  (defaults to olevel)
 const LEVEL = /^a/i.test(args.get("level") || "") ? "alevel" : "olevel";
+// A-Level rows share subject names (Physics, Chemistry…) and question_id shapes
+// with existing O-Level rows. Since the composite unique key is (subject, year,
+// session, paper, variant, question_number) without level, namespace A-Level
+// subjects and prefix their ids so the two levels never collide or mix.
+const AL = LEVEL === "alevel";
+// A-Level keeps CLEAN subject names — segregation from O-Level is by the `level`
+// column, which the composite unique key and every practice query include (and
+// Past Papers/Drive use clean names too). Ids still get an AL_ prefix because
+// question_id is globally unique with no level component.
+const alSubject = (s) => (s || "").replace(/\s*\(A Level\)\s*$/i, "");
+const alQid = (q) => (AL && q && !String(q).startsWith("AL_")) ? `AL_${q}` : q;
 
 if (!SUPABASE_URL || !SERVICE_KEY) {
   console.error("Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY in OA-backend/.env");
@@ -351,8 +362,8 @@ async function resolveTopicId(subject, name, theme, syllabusRef) {
   const { data, error } = await supabase
     .from("topics")
     .upsert(
-      { subject, name: cleanName, theme: cleanText(theme) || null, syllabus_ref: cleanText(syllabusRef) || null },
-      { onConflict: "subject,name" },
+      { subject, name: cleanName, theme: cleanText(theme) || null, syllabus_ref: cleanText(syllabusRef) || null, level: LEVEL },
+      { onConflict: "subject,name,level" },
     )
     .select("id")
     .single();
@@ -431,11 +442,13 @@ async function clearSubject(subject) {
   // Postgres's statement_timeout under load. 100 keeps each statement small, and
   // a timeout is retried a few times before giving up.
   let deleted = 0;
+  const clearName = alSubject(subject);   // namespaced for A-Level
   while (true) {
     const { data: rows, error } = await supabase
       .from("questions")
       .select("id")
-      .eq("subject", subject)
+      .eq("subject", clearName)
+      .eq("level", LEVEL)                  // never cross levels
       .limit(100);
     if (error) throw new Error(`Could not select existing ${subject} questions: ${error.message}`);
     if (!rows || rows.length === 0) break;
@@ -516,7 +529,7 @@ async function importSubjectFolder(folderName) {
     const seqByGroup = new Map();
 
     for (const raw of questions) {
-      const subj = cleanText(raw.subject) || subject;
+      const subj = alSubject(cleanText(raw.subject) || subject);
       const year = intOrNull(raw.year, fallbackYear);
       const session = cleanText(raw.session);
       const paper = cleanText(raw.paper);
@@ -546,7 +559,7 @@ async function importSubjectFolder(folderName) {
       const topicId = await resolveTopicId(subj, raw.topic, raw.theme, raw.syllabus_ref);
       batch.push({
         row: {
-          question_id: questionId,
+          question_id: alQid(questionId),
           subject: subj,
           level: LEVEL,
           type: "mcq",
@@ -584,7 +597,7 @@ async function importSubjectFolder(folderName) {
     const questions = Array.isArray(data.questions) ? data.questions : [];
 
     for (const raw of questions) {
-      const subj = cleanText(raw.subject) || subject;
+      const subj = alSubject(cleanText(raw.subject) || subject);
       const topicId = await resolveTopicId(subj, raw.topic, raw.theme, raw.syllabus_ref);
       // Flatten parts+subparts and resolve answers from the answers map (new schema);
       // old shapes pass through unchanged.
@@ -612,7 +625,7 @@ async function importSubjectFolder(folderName) {
       }
       batch.push({
         row: {
-          question_id: cleanText(raw.question_id),
+          question_id: alQid(cleanText(raw.question_id)),
           subject: subj,
           level: LEVEL,
           type: "structured",
