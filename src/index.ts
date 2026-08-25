@@ -14,6 +14,7 @@ import contentRoutes from './content.routes';
 import qaGradingRoutes from './qaGrading.routes';
 import paperTrackingRoutes from './paperTracking.routes';
 import practiceProgressRoutes from './practiceProgress.routes';
+import devRoutes from './dev.routes';
 import uploadCheckRoutes from './uploadCheck.routes';
 import insightsRoutes from './insights.routes';
 import practiceGradingRoutes from './practiceGrading.routes';
@@ -235,6 +236,7 @@ app.use('/tracking', paperTrackingRoutes);
 
 // Practice-paper progress API (autosave, timers, handwritten uploads)
 app.use('/practice', practiceProgressRoutes);
+app.use('/dev', clerkAuth, devRoutes);
 
 // AI marking for practice papers (Grok text + vision) — auth in-module + AI limit
 app.use('/practice-grading', clerkAuth, aiLimit, practiceGradingRoutes);
