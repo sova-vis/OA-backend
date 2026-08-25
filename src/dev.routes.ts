@@ -100,6 +100,24 @@ router.post('/unlock', async (req: AuthenticatedRequest, res: Response) => {
 // --- editors (require the dev token) ---------------------------------------
 const OPTION_LETTER = /^[A-D]$/;
 
+// Normalise an images payload for either a question or a part: keep only
+// well-formed objects, cap the count, and drop anything without a data URL or
+// larger than ~8 MB. Same shape used at ingestion time.
+function cleanImages(arr: unknown): Array<{ role: string; caption: string | null; width: number | null; height: number | null; data_url: string }> {
+  if (!Array.isArray(arr)) return [];
+  return arr
+    .filter((im): im is Record<string, unknown> => Boolean(im) && typeof im === 'object')
+    .slice(0, 20)
+    .map((im) => ({
+      role: typeof im.role === 'string' ? im.role : 'figure',
+      caption: typeof im.caption === 'string' ? im.caption : null,
+      width: typeof im.width === 'number' ? im.width : null,
+      height: typeof im.height === 'number' ? im.height : null,
+      data_url: typeof im.data_url === 'string' ? im.data_url : '',
+    }))
+    .filter((im) => im.data_url && im.data_url.length < 8_000_000);
+}
+
 // PATCH /dev/questions/:id — text / options / correct_option / marking / images
 router.patch('/questions/:id', requireDev, async (req: AuthenticatedRequest, res: Response) => {
   const id = req.params.id;
@@ -112,20 +130,7 @@ router.patch('/questions/:id', requireDev, async (req: AuthenticatedRequest, res
     patch.correct_option = b.correct_option ? b.correct_option.toUpperCase() : null;
   }
   if (b.options && typeof b.options === 'object') patch.options = b.options;
-  if (Array.isArray(b.images)) {
-    // keep only well-formed image objects, cap count and per-image size
-    patch.images = b.images
-      .filter((im: unknown) => im && typeof im === 'object')
-      .slice(0, 20)
-      .map((im: Record<string, unknown>) => ({
-        role: typeof im.role === 'string' ? im.role : 'figure',
-        caption: typeof im.caption === 'string' ? im.caption : null,
-        width: typeof im.width === 'number' ? im.width : null,
-        height: typeof im.height === 'number' ? im.height : null,
-        data_url: typeof im.data_url === 'string' ? im.data_url : null,
-      }))
-      .filter((im: { data_url: string | null }) => im.data_url && im.data_url.length < 8_000_000);
-  }
+  if (Array.isArray(b.images)) patch.images = cleanImages(b.images);
 
   if (Object.keys(patch).length === 0) return res.status(400).json({ error: 'nothing to update' });
 
@@ -144,6 +149,7 @@ router.patch('/parts/:id', requireDev, async (req: AuthenticatedRequest, res: Re
   if (b.marks === null || typeof b.marks === 'number') patch.marks = b.marks;
   if (typeof b.label === 'string') patch.label = b.label.slice(0, 40);
   if (typeof b.order_index === 'number') patch.order_index = b.order_index;
+  if (Array.isArray(b.images)) patch.images = cleanImages(b.images);
   if (Object.keys(patch).length === 0) return res.status(400).json({ error: 'nothing to update' });
 
   const { error } = await supabase.from('question_parts').update(patch).eq('id', id);
@@ -169,6 +175,7 @@ router.put('/questions/:id/parts', requireDev, async (req: AuthenticatedRequest,
     body: typeof p.body === 'string' ? p.body.slice(0, 20_000) : '',
     marks: typeof p.marks === 'number' ? p.marks : null,
     answer: typeof p.answer === 'string' ? p.answer.slice(0, 20_000) : null,
+    images: cleanImages((p as { images?: unknown }).images),
   }));
 
   // capture the current part ids so they can be removed only after a good insert
@@ -179,7 +186,7 @@ router.put('/questions/:id/parts', requireDev, async (req: AuthenticatedRequest,
   let inserted: unknown[] = [];
   if (rows.length > 0) {
     const ins = await supabase
-      .from('question_parts').insert(rows).select('id,label,order_index,body,marks,answer');
+      .from('question_parts').insert(rows).select('id,label,order_index,body,marks,answer,images');
     if (ins.error) return res.status(500).json({ error: ins.error.message });
     inserted = ins.data || [];
   }
