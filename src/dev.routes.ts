@@ -130,6 +130,7 @@ router.patch('/questions/:id', requireDev, async (req: AuthenticatedRequest, res
     patch.correct_option = b.correct_option ? b.correct_option.toUpperCase() : null;
   }
   if (b.options && typeof b.options === 'object') patch.options = b.options;
+  if (b.stem_answerable === null || typeof b.stem_answerable === 'boolean') patch.stem_answerable = b.stem_answerable;
   if (Array.isArray(b.images)) patch.images = cleanImages(b.images);
 
   if (Object.keys(patch).length === 0) return res.status(400).json({ error: 'nothing to update' });
