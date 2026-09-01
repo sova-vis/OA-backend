@@ -246,11 +246,49 @@ export async function findFilesByNameGlobal(
   const mimeClause = opts?.mimeType ? ` and mimeType='${opts.mimeType}'` : '';
   const response = await drive.files.list({
     q: `name contains '${term}' and trashed=false${mimeClause}`,
-    fields: 'files(id, name, mimeType, size, modifiedTime)',
+    fields: 'files(id, name, mimeType, size, modifiedTime, parents)',
     orderBy: 'name',
     pageSize: opts?.pageSize ?? 25,
   });
   return (response.data.files as DriveFile[]) || [];
+}
+
+const parentsCache = new Map<string, string[]>();
+
+async function getParents(id: string): Promise<string[]> {
+  if (parentsCache.has(id)) return parentsCache.get(id)!;
+  try {
+    const resp = await drive.files.get({ fileId: id, fields: 'parents' });
+    const parents = (resp.data.parents as string[]) || [];
+    parentsCache.set(id, parents);
+    return parents;
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Whether a file lives anywhere under `rootId` (walks the parent chain up to the
+ * Drive root). Used to keep O-Level and A-Level papers apart: they share
+ * identical filenames for common subjects (Physics, Chemistry, …) and differ
+ * only by which library root folder they sit under.
+ */
+export async function isDescendantOf(fileId: string, rootId: string, maxDepth = 12): Promise<boolean> {
+  let frontier = [fileId];
+  const seen = new Set<string>();
+  for (let depth = 0; depth < maxDepth && frontier.length; depth++) {
+    const next: string[] = [];
+    for (const id of frontier) {
+      if (id === rootId) return true;
+      if (seen.has(id)) continue;
+      seen.add(id);
+      const parents = await getParents(id);
+      if (parents.includes(rootId)) return true;
+      next.push(...parents);
+    }
+    frontier = next;
+  }
+  return false;
 }
 
 /**

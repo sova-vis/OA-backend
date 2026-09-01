@@ -7,6 +7,7 @@ import {
   getDirectDownloadUrl,
   searchFilesByName,
   findFilesByNameGlobal,
+  isDescendantOf,
   DriveFile,
   getFileStream,
   getFileBuffer,
@@ -387,6 +388,21 @@ router.get('/find-qp', clerkAuth, async (req, res) => {
     // filename; if the exact stem found nothing, retry without the trailing variant
     if (files.length === 0 && /_Variant_\d+$/i.test(stem)) {
       files = await findFilesByNameGlobal(stem.replace(/_Variant_\d+$/i, ''), { mimeType: 'application/pdf' });
+    }
+
+    // O-Level and A-Level papers share identical filenames for common subjects
+    // (Physics, Chemistry, Biology, Economics, Maths, …) and differ only by which
+    // library root they live under. When more than one match comes back, keep only
+    // the ones under THIS level's Drive root so an O-Level question never opens the
+    // A-Level paper (and vice-versa).
+    const level: PaperLevel = q.level === 'alevel' ? 'alevel' : 'olevel';
+    const levelRootId = resolveDriveFolderId(undefined, level);
+    if (levelRootId && files.length > 1) {
+      const scoped: DriveFile[] = [];
+      for (const f of files) {
+        if (await isDescendantOf(f.id, levelRootId)) scoped.push(f);
+      }
+      if (scoped.length) files = scoped;
     }
 
     const wantKind = kind === 'ms' ? /_MS\b/i : /_QP\b/i;
