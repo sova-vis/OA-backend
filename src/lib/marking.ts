@@ -66,9 +66,10 @@ async function resolveQuestion(aq: AssignmentQuestionRow): Promise<ResolvedQuest
     ]);
     const row = cq as { question_type?: string; marks?: number; question_text?: string; subject?: string } | null;
     const type = row?.question_type === 'mcq' ? 'mcq' : 'theory';
+    const cqMarks = Number(row?.marks ?? fallbackMarks);
     return {
       type,
-      marks: Number(row?.marks ?? fallbackMarks),
+      marks: type === 'mcq' && !(cqMarks > 0) ? 1 : cqMarks,
       questionText: row?.question_text ?? '',
       subject: row?.subject ?? null,
       correctOption: null,
@@ -89,7 +90,11 @@ async function resolveQuestion(aq: AssignmentQuestionRow): Promise<ResolvedQuest
     const row = q as { type?: string; marks?: number; correct_option?: string; marking_scheme?: string; question_text?: string; subject?: string } | null;
     const marks = Number(row?.marks ?? fallbackMarks);
     if (row?.type === 'mcq') {
-      return { type: 'mcq', marks, questionText: row?.question_text ?? '', subject: row?.subject ?? null, correctOption: (row.correct_option || '').toUpperCase() || null, criteria: [] };
+      // MCQ bank rows store marks as null; a null/0 here would award 0 for every
+      // answer even when correct. An MCQ is worth 1 mark unless a higher explicit
+      // per-question mark was set on the assignment.
+      const mcqMarks = marks > 0 ? marks : 1;
+      return { type: 'mcq', marks: mcqMarks, questionText: row?.question_text ?? '', subject: row?.subject ?? null, correctOption: (row.correct_option || '').toUpperCase() || null, criteria: [] };
     }
     // Structured/extended: the bank mark scheme is a single text blob, so it
     // becomes one criterion pending content-ingestion structuring (Appendix A).
