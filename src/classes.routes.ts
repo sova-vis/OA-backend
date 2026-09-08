@@ -722,7 +722,10 @@ router.post('/join', async (req: AuthenticatedRequest, res: Response) => {
     // Capture the student's identity so the teacher's Requests tab shows a real
     // name/email, and skip the onboarding survey — a class-joiner is a student
     // whose level/subject we already know from the class.
-    await ensureStudentProfile(clerkId);
+    const claims = req.auth?.claims;
+    const joinEmail = typeof claims?.email === 'string' ? claims.email : null;
+    const joinName = typeof claims?.full_name === 'string' ? claims.full_name : null;
+    await ensureStudentProfile(clerkId, joinEmail, joinName);
     await completeJoinedStudentOnboarding(clerkId, row.subject);
 
     const { data: existing, error: existErr } = await supabase

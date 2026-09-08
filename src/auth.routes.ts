@@ -1,7 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { supabase } from './lib/supabase';
 import { AuthenticatedRequest, clerkAuth } from './lib/clerkAuth';
-import { fetchClerkUserBasics } from './lib/clerkUser';
 
 const router = Router();
 
@@ -345,18 +344,12 @@ router.post('/delete-account', clerkAuth, async (req: AuthenticatedRequest, res:
     const clerkId = req.auth?.clerkId;
     if (!clerkId) return res.status(401).json({ error: 'Unauthorized' });
 
-    // Resolve the account email. Clerk's default session token omits the email
-    // claim, and profiles.email is often blank (it was filled from that same
-    // empty claim at signup) — so fall back to the Clerk Admin API, which is the
-    // authoritative source. Without this the check rejected every attempt.
+    // Resolve the account email from the profile row or the verified token
+    // (Supabase Auth tokens carry the email claim directly).
     const { data: profile } = await supabase.from('profiles').select('role, full_name, email').eq('clerk_id', clerkId).maybeSingle();
     const claimEmail = (extractClaimString(req.auth?.claims, ['email', 'email_address', 'primary_email_address']) || '').toLowerCase();
     const profileEmail = ((profile as { email?: string } | null)?.email || '').toLowerCase();
-    let accountEmail = profileEmail || claimEmail;
-    if (!accountEmail) {
-      const basics = await fetchClerkUserBasics(clerkId);
-      accountEmail = (basics.email || '').toLowerCase();
-    }
+    const accountEmail = profileEmail || claimEmail;
     const typed = String(req.body?.email_confirmation ?? '').trim().toLowerCase();
     if (!accountEmail || typed !== accountEmail) {
       return res.status(400).json({ error: 'The email you typed does not match your account email.' });

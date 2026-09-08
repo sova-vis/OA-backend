@@ -1,61 +1,38 @@
 import { Request, Response, NextFunction } from 'express';
 import { supabase } from './supabase';
 
+/**
+ * Authentication middleware — verifies Supabase Auth (GoTrue) access tokens.
+ *
+ * NOTE: file/export names are kept as `clerkAuth` for backward compatibility
+ * (33 call sites import it) — this project migrated OFF Clerk onto self-hosted
+ * Supabase Auth. Supabase user tokens are HS256, signed with the project's
+ * JWT secret (SUPABASE_JWT_SECRET), and carry:
+ *   sub   -> the user's UUID  (we keep storing this in profiles.clerk_id)
+ *   email -> the user's email
+ *   role  -> "authenticated" (the app role lives in profiles.role, not here)
+ *   user_metadata.full_name -> display name (flattened to `full_name` below)
+ */
+
 export interface AuthenticatedRequest extends Request {
   auth?: {
     userId: string;
-    clerkId: string;
+    clerkId: string; // = Supabase user UUID (column name kept for compatibility)
     token: string;
     claims?: Record<string, unknown>;
   };
 }
 
-const issuer = process.env.CLERK_ISSUER?.replace(/\/$/, '');
-const audience = process.env.CLERK_AUDIENCE;
-const JWKS_TTL_MS = 10 * 60 * 1000;
-const JWKS_TIMEOUT_MS = 15_000;
-const JWKS_ATTEMPTS = 3;
-
-type JwksCache = {
-  verifier: Awaited<ReturnType<typeof import('jose')['createLocalJWKSet']>>;
-  fetchedAt: number;
-};
+const JWT_SECRET = (process.env.SUPABASE_JWT_SECRET || '').trim();
+const JWT_AUD = (process.env.SUPABASE_JWT_AUD || 'authenticated').trim();
 
 let joseModulePromise: Promise<typeof import('jose')> | null = null;
-let jwksCache: JwksCache | null = null;
-let jwksInflight: Promise<JwksCache> | null = null;
-
 function loadJoseModule(): Promise<typeof import('jose')> {
   if (!joseModulePromise) {
-    // Keep true dynamic ESM import at runtime in CJS builds.
+    // Keep a true dynamic ESM import at runtime in CJS builds.
     joseModulePromise = Function('return import("jose")')() as Promise<typeof import('jose')>;
   }
   return joseModulePromise;
-}
-
-function getPublicKeyFromEnv() {
-  const raw = process.env.CLERK_JWT_KEY;
-  if (!raw) return null;
-  const normalized = (raw.includes('\\n') ? raw.replace(/\\n/g, '\n') : raw)
-    .trim()
-    .replace(/^"|"$/g, '');
-
-  // If CLERK_JWT_KEY is not an SPKI PEM, we'll fall back to JWKS verification.
-  if (!normalized.includes('BEGIN PUBLIC KEY')) {
-    return null;
-  }
-
-  // Validate the key has enough content (a real RSA SPKI key is 300+ chars).
-  // Short/malformed keys cause DOMException: Invalid keyData errors.
-  const keyBody = normalized
-    .replace(/-----BEGIN PUBLIC KEY-----/, '')
-    .replace(/-----END PUBLIC KEY-----/, '')
-    .replace(/\s/g, '');
-  if (keyBody.length < 100) {
-    return null;
-  }
-
-  return normalized;
 }
 
 function getBearerToken(authHeader?: string) {
@@ -70,125 +47,47 @@ function errorCode(error: unknown): string {
   return '';
 }
 
-async function fetchJwksDocument(): Promise<{ keys: Record<string, unknown>[] }> {
-  if (!issuer) {
-    throw new Error('Missing Clerk verifier config: set CLERK_JWT_KEY or CLERK_ISSUER');
+async function verifySupabaseJwt(token: string) {
+  if (!JWT_SECRET) {
+    throw new Error('Missing SUPABASE_JWT_SECRET — cannot verify Supabase Auth tokens');
   }
-
-  const url = `${issuer}/.well-known/jwks.json`;
-  let lastError: Error | null = null;
-
-  for (let attempt = 1; attempt <= JWKS_ATTEMPTS; attempt += 1) {
-    try {
-      const response = await fetch(url, {
-        method: 'GET',
-        headers: { Accept: 'application/json' },
-        cache: 'no-store',
-        signal: AbortSignal.timeout(JWKS_TIMEOUT_MS),
-      });
-      const text = await response.text();
-      if (!response.ok) {
-        throw new Error(`Clerk JWKS HTTP ${response.status}`);
-      }
-
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(text);
-      } catch {
-        throw new Error('Clerk JWKS response was not JSON');
-      }
-
-      const keys = (parsed as { keys?: unknown }).keys;
-      if (!Array.isArray(keys) || keys.length === 0) {
-        throw new Error('Clerk JWKS response had no keys');
-      }
-
-      return parsed as { keys: Record<string, unknown>[] };
-    } catch (error) {
-      lastError = error instanceof Error ? error : new Error(String(error));
-      if (attempt < JWKS_ATTEMPTS) {
-        await new Promise((resolve) => setTimeout(resolve, 250 * attempt));
-      }
-    }
-  }
-
-  throw lastError ?? new Error('Failed to fetch Clerk JWKS');
-}
-
-async function getJwksVerifier() {
-  const fresh = jwksCache && Date.now() - jwksCache.fetchedAt < JWKS_TTL_MS;
-  if (fresh && jwksCache) return jwksCache.verifier;
-
-  const pending = jwksInflight ?? (jwksInflight = (async () => {
-    const { createLocalJWKSet } = await loadJoseModule();
-    const body = await fetchJwksDocument();
-    const verifier = createLocalJWKSet(body as Parameters<typeof createLocalJWKSet>[0]);
-    const entry: JwksCache = { verifier, fetchedAt: Date.now() };
-    jwksCache = entry;
-    return entry;
-  })().finally(() => {
-    jwksInflight = null;
-  }));
-
-  try {
-    return (await pending).verifier;
-  } catch (error) {
-    if (jwksCache) {
-      console.warn('Clerk JWKS refresh failed; using cached keys.', errorCode(error) || error);
-      return jwksCache.verifier;
-    }
-    throw error;
-  }
-}
-
-/** Prefetch Clerk JWKS so the first authenticated request is not a network round-trip. */
-export async function warmupClerkVerifier(): Promise<void> {
-  if (!issuer && !getPublicKeyFromEnv()) return;
-  try {
-    if (issuer) {
-      await getJwksVerifier();
-      console.log('Clerk JWKS verifier ready');
-    }
-  } catch (error) {
-    console.warn('Clerk JWKS warmup failed; auth will retry on the first request.', error);
-  }
-}
-
-async function verifyClerkJwt(token: string) {
-  const { importSPKI, jwtVerify } = await loadJoseModule();
-  const verifyOpts = {
-    ...(issuer ? { issuer } : {}),
-    ...(audience ? { audience } : {}),
+  const { jwtVerify } = await loadJoseModule();
+  const key = new TextEncoder().encode(JWT_SECRET);
+  return jwtVerify(token, key, {
+    algorithms: ['HS256'],
+    audience: JWT_AUD,
     clockTolerance: 30,
-  };
+  });
+}
 
-  const publicKey = getPublicKeyFromEnv();
-  if (publicKey) {
-    try {
-      const key = await importSPKI(publicKey, 'RS256');
-      return await jwtVerify(token, key, { ...verifyOpts, algorithms: ['RS256'] });
-    } catch (error) {
-      const code = errorCode(error);
-      // Expired / claim mismatches will fail the same way on JWKS — don't pay another round-trip.
-      if (code === 'ERR_JWT_EXPIRED' || code === 'ERR_JWT_CLAIM_VALIDATION_FAILED') {
-        throw error;
-      }
-      if (!issuer) throw error;
-    }
+/** No-op kept so index.ts's warmup call still resolves (nothing to prefetch for HS256). */
+export async function warmupClerkVerifier(): Promise<void> {
+  if (!JWT_SECRET) {
+    console.warn('SUPABASE_JWT_SECRET is not set — authenticated routes will reject every request.');
+    return;
   }
-
-  if (!issuer) {
-    throw new Error('Missing Clerk verifier config: set CLERK_JWT_KEY or CLERK_ISSUER');
-  }
-
-  const jwks = await getJwksVerifier();
-  return jwtVerify(token, jwks, verifyOpts);
+  console.log('Supabase Auth verifier ready (HS256).');
 }
 
 /**
- * Middleware to verify Clerk JWT tokens in backend API
- * Add this middleware to protected routes:
- * router.get('/route', clerkAuth, handler)
+ * Flatten the useful bits of a Supabase token so downstream claim readers
+ * (which look for top-level `email` / `full_name` / `name`) keep working.
+ */
+function normalizeClaims(payload: Record<string, unknown>): Record<string, unknown> {
+  const meta = (payload.user_metadata as Record<string, unknown> | undefined) || {};
+  const fullName =
+    (typeof meta.full_name === 'string' && meta.full_name.trim()) ? meta.full_name.trim()
+    : (typeof meta.name === 'string' && meta.name.trim()) ? meta.name.trim()
+    : undefined;
+  return {
+    ...payload,
+    ...(fullName ? { full_name: fullName, name: fullName } : {}),
+  };
+}
+
+/**
+ * Middleware to verify the Supabase Auth JWT on protected routes:
+ *   router.get('/route', clerkAuth, handler)
  */
 export async function clerkAuth(
   req: AuthenticatedRequest,
@@ -197,34 +96,35 @@ export async function clerkAuth(
 ) {
   try {
     const token = getBearerToken(req.headers.authorization);
-
     if (!token) {
       return res.status(401).json({ error: 'Unauthorized - No token' });
     }
 
-    const verified = await verifyClerkJwt(token);
-    const clerkId = verified.payload.sub;
-
-    if (!clerkId || typeof clerkId !== 'string') {
+    const verified = await verifySupabaseJwt(token);
+    const userId = verified.payload.sub;
+    if (!userId || typeof userId !== 'string') {
       return res.status(401).json({ error: 'Unauthorized - Invalid token subject' });
     }
 
     req.auth = {
-      userId: clerkId,
-      clerkId,
+      userId,
+      clerkId: userId,
       token,
-      claims: verified.payload as Record<string, unknown>,
+      claims: normalizeClaims(verified.payload as Record<string, unknown>),
     };
 
     next();
   } catch (error) {
-    console.error('Clerk auth error:', errorCode(error) || error);
+    console.error('Auth error:', errorCode(error) || error);
     return res.status(401).json({ error: 'Unauthorized - Invalid token' });
   }
 }
 
+/** Alias for clarity in new code; identical to clerkAuth. */
+export const requireAuth = clerkAuth;
+
 /**
- * Optional: Middleware to check if user has specific role
+ * Middleware to require a specific app role (from profiles.role).
  * Usage: router.get('/admin', clerkAuth, requireRole('admin'), handler)
  */
 export function requireRole(requiredRole: string) {
