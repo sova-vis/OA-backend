@@ -33,7 +33,7 @@ import institutionRoutes from './institution.routes';
 import datesheetRoutes from './datesheet.routes';
 import billingRoutes from './billing.routes';
 import { clerkAuth, warmupClerkVerifier } from './lib/clerkAuth';
-import { requirePro } from './lib/entitlements';
+import { requirePro, BILLING_ENFORCED } from './lib/entitlements';
 import { rateLimit } from './lib/rateLimit';
 import { logConfigReport, serviceReadinessMap } from './lib/configReport';
 
@@ -295,7 +295,7 @@ app.use('/paper-parser', clerkAuth, requirePro, aiLimit, paperParserRoutes);
 // Health check — includes subsystem readiness booleans (never secrets) so a
 // misconfigured deploy is diagnosable without shell access.
 app.get('/health', (_req: Request, res: Response) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString(), services: serviceReadinessMap() });
+  res.json({ status: 'ok', timestamp: new Date().toISOString(), billingEnforced: BILLING_ENFORCED, services: serviceReadinessMap() });
 });
 
 // Root route
