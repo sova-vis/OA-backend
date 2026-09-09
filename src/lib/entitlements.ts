@@ -155,6 +155,16 @@ export async function requirePro(req: AuthenticatedRequest, res: Response, next:
     const clerkId = req.auth?.clerkId;
     if (!clerkId) return res.status(401).json({ error: 'Unauthorized' });
 
+    // Teachers/admins are not on the student plan — never gate them.
+    const prof = await supabase
+      .from('profiles')
+      .select('role')
+      .eq('clerk_id', clerkId)
+      .maybeSingle();
+    if (prof.data && (prof.data.role === 'teacher' || prof.data.role === 'admin')) {
+      return next();
+    }
+
     const row = await ensureBilling(clerkId);
     const access = computeAccess(row);
     if (access.isPro) return next();
