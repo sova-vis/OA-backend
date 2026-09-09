@@ -25,7 +25,7 @@ import {
   PRICE_PKR_MONTHLY,
   PRICE_PKR_ANNUAL,
 } from './lib/entitlements';
-import { SAFEPAY_CONFIGURED, createCheckout, verifyWebhook } from './lib/safepay';
+import { SAFEPAY_CONFIGURED, SAFEPAY_WEBHOOK_READY, createCheckout, verifyWebhook } from './lib/safepay';
 
 const router = Router();
 
@@ -174,7 +174,7 @@ async function activatePaid(clerkId: string, plan: 'monthly' | 'annual', token?:
 }
 
 /** Parse a verified Safepay webhook and, on success, activate the payer. */
-async function handleSafepayWebhook(body: Record<string, unknown> | undefined): Promise<void> {
+async function handleSafepayWebhook(body: Record<string, unknown> | undefined): Promise<Record<string, unknown>> {
   const b = (body || {}) as Record<string, unknown>;
   const data = (b.data && typeof b.data === 'object' ? b.data : {}) as Record<string, unknown>;
   const type = String(b.type || b.event || data.type || '').toLowerCase();
@@ -202,11 +202,13 @@ async function handleSafepayWebhook(body: Record<string, unknown> | undefined): 
   const isSuccess = /paid|complete|succeed|captured/i.test(type)
     || /PAID|COMPLET|SUCCE|CAPTURED|ENDED/.test(state);
 
-  if (!clerkId) { console.warn('[safepay webhook] unresolved user (token=%s order=%s)', token, orderId); return; }
-  if (!isSuccess) { console.log('[safepay webhook] ignored non-success type=%s state=%s', type, state); return; }
+  const diag: Record<string, unknown> = { type, state, token, orderId, resolvedClerkId: clerkId, plan, isSuccess };
+  if (!clerkId) { console.warn('[safepay webhook] unresolved user (token=%s order=%s)', token, orderId); return { ...diag, outcome: 'unresolved_user' }; }
+  if (!isSuccess) { console.log('[safepay webhook] ignored non-success type=%s state=%s', type, state); return { ...diag, outcome: 'non_success' }; }
 
   await activatePaid(clerkId, plan, token || undefined);
   console.log('[safepay webhook] activated Pro for %s (%s)', clerkId, plan);
+  return { ...diag, outcome: 'activated' };
 }
 
 /**
@@ -215,19 +217,40 @@ async function handleSafepayWebhook(body: Record<string, unknown> | undefined): 
  * and marks the payment succeeded. Logs the payload (sandbox) so the exact
  * success/identifier fields can be confirmed from a real event, then tightened.
  */
+// TEMP sandbox diagnostic: the most recent webhook the server received.
+let lastWebhook: Record<string, unknown> | null = null;
+
 router.post('/webhook', async (req: Request, res: Response) => {
   const valid = verifyWebhook({ body: req.body, headers: req.headers });
   try {
     console.log('[safepay webhook] valid=%s body=%s', valid, JSON.stringify(req.body).slice(0, 2000));
   } catch { /* ignore log errors */ }
-  if (!valid) return res.status(400).json({ error: 'invalid_signature' });
-  try {
-    await handleSafepayWebhook(req.body as Record<string, unknown>);
-  } catch (error) {
-    console.error('[safepay webhook] handler error:', error);
+  let diag: Record<string, unknown> = {};
+  if (valid) {
+    try {
+      diag = await handleSafepayWebhook(req.body as Record<string, unknown>);
+    } catch (error) {
+      console.error('[safepay webhook] handler error:', error);
+      diag = { outcome: 'handler_error', error: String((error as Error)?.message || error) };
+    }
   }
-  // Always 200 after a valid signature so Safepay doesn't retry-storm; we logged.
+  lastWebhook = {
+    at: new Date().toISOString(),
+    valid,
+    webhookSecretPresent: SAFEPAY_WEBHOOK_READY,
+    sigHeaders: Object.keys(req.headers).filter((k) => /sig|sfpy|safepay/i.test(k)),
+    headerKeys: Object.keys(req.headers),
+    body: req.body,
+    diag,
+  };
+  if (!valid) return res.status(400).json({ error: 'invalid_signature' });
   res.status(200).json({ received: true });
+});
+
+// TEMP sandbox diagnostic — returns the last webhook the server saw (fields +
+// signature result) so the wiring can be confirmed. Remove once payments verified.
+router.get('/_debug/last-webhook', (_req: Request, res: Response) => {
+  res.json(lastWebhook || { none: true });
 });
 
 /**
