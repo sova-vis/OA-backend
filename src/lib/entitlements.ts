@@ -84,23 +84,31 @@ export interface AccessInfo {
 export function computeAccess(row: BillingRow): AccessInfo {
   const now = Date.now();
   const status = (row.status || 'free') as BillingStatus;
+  const ceilDays = (ms: number) => Math.max(0, Math.ceil(ms / DAY_MS));
   let isPro = false;
-  let accessEnd: number | null = null;
+  let daysLeft: number | null = null;
 
   if (status === 'trialing' && row.trial_ends_at) {
-    accessEnd = Date.parse(row.trial_ends_at);
-    isPro = now < accessEnd;
-  } else if ((status === 'active' || status === 'canceled') && row.current_period_end) {
-    accessEnd = Date.parse(row.current_period_end);
-    isPro = now < accessEnd;
-  } else if (status === 'past_due' && row.current_period_end) {
-    // Still full access during the grace window after the paid month ended.
-    accessEnd = Date.parse(row.current_period_end) + GRACE_DAYS * DAY_MS;
-    isPro = now < accessEnd;
+    const end = Date.parse(row.trial_ends_at);
+    isPro = now < end;
+    daysLeft = ceilDays(end - now); // trial days remaining
+  } else if ((status === 'active' || status === 'past_due') && row.current_period_end) {
+    // The GRACE buffer always applies after the paid period ends — so a student is
+    // never cut off the instant the month lapses, even if the nightly tick hasn't
+    // yet relabeled 'active' -> 'past_due'.
+    const end = Date.parse(row.current_period_end);
+    isPro = now < end + GRACE_DAYS * DAY_MS;
+    daysLeft = status === 'past_due'
+      ? ceilDays(end + GRACE_DAYS * DAY_MS - now) // grace days remaining
+      : ceilDays(end - now);                      // paid days remaining
+  } else if (status === 'canceled' && row.current_period_end) {
+    // Auto-renew turned off: access runs to period end exactly (no extra grace).
+    const end = Date.parse(row.current_period_end);
+    isPro = now < end;
+    daysLeft = ceilDays(end - now);
   }
 
   const trialAvailable = status === 'free' && !row.trial_started_at;
-  const daysLeft = accessEnd != null ? Math.max(0, Math.ceil((accessEnd - now) / DAY_MS)) : null;
 
   return {
     status,
