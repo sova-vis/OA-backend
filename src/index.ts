@@ -35,6 +35,7 @@ import billingRoutes from './billing.routes';
 import { clerkAuth, warmupClerkVerifier } from './lib/clerkAuth';
 import { requirePro, BILLING_ENFORCED } from './lib/entitlements';
 import { supabase } from './lib/supabase';
+import { SAFEPAY_CONFIGURED, SAFEPAY_WEBHOOK_READY, SAFEPAY_ENV } from './lib/safepay';
 import { rateLimit } from './lib/rateLimit';
 import { logConfigReport, serviceReadinessMap } from './lib/configReport';
 
@@ -309,7 +310,7 @@ app.get('/health', async (_req: Request, res: Response) => {
   } catch (e) {
     billingDb = { host: 'error', tableReachable: false, error: String((e as Error)?.message || e).slice(0, 160) };
   }
-  res.json({ status: 'ok', timestamp: new Date().toISOString(), billingEnforced: BILLING_ENFORCED, billingDb, services: serviceReadinessMap() });
+  res.json({ status: 'ok', timestamp: new Date().toISOString(), billingEnforced: BILLING_ENFORCED, billingDb, safepay: { configured: SAFEPAY_CONFIGURED, webhookReady: SAFEPAY_WEBHOOK_READY, env: SAFEPAY_ENV }, services: serviceReadinessMap() });
 });
 
 // Root route
