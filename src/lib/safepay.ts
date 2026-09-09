@@ -66,10 +66,12 @@ export async function createCheckout(params: CheckoutParams): Promise<{ token: s
 }
 
 /** Verify a Safepay webhook (HMAC-SHA512 of body.data with the webhook secret). */
-export function verifyWebhook(req: { body?: unknown; headers?: unknown }): boolean {
+export function verifyWebhook(req: { rawBody?: Buffer; body?: unknown; headers?: unknown }): boolean {
   if (!WEBHOOK_SECRET) return false;
   try {
-    return sp().verify.webhook({ body: req.body as never, headers: req.headers as never });
+    // Safepay signs the RAW request body — prefer it over the re-serialized object.
+    const body = (req.rawBody ? req.rawBody.toString('utf8') : req.body) as never;
+    return sp().verify.webhook({ body, headers: req.headers as never });
   } catch (error) {
     console.error('[safepay] webhook verify threw:', error);
     return false;

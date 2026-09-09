@@ -25,7 +25,7 @@ import {
   PRICE_PKR_MONTHLY,
   PRICE_PKR_ANNUAL,
 } from './lib/entitlements';
-import { SAFEPAY_CONFIGURED, SAFEPAY_WEBHOOK_READY, createCheckout, verifyWebhook } from './lib/safepay';
+import { SAFEPAY_CONFIGURED, SAFEPAY_WEBHOOK_READY, SAFEPAY_ENV, createCheckout, verifyWebhook } from './lib/safepay';
 
 const router = Router();
 
@@ -176,12 +176,17 @@ async function activatePaid(clerkId: string, plan: 'monthly' | 'annual', token?:
 /** Parse a verified Safepay webhook and, on success, activate the payer. */
 async function handleSafepayWebhook(body: Record<string, unknown> | undefined): Promise<Record<string, unknown>> {
   const b = (body || {}) as Record<string, unknown>;
-  const data = (b.data && typeof b.data === 'object' ? b.data : {}) as Record<string, unknown>;
-  const type = String(b.type || b.event || data.type || '').toLowerCase();
-  const state = String(pickField(data, ['state', 'status', 'tracker_state', 'payment_state']) || '').toUpperCase();
-  const token = pickField(data, ['tracker', 'token', 'tracker_token'])
-    || pickField(data.tracker as Record<string, unknown>, ['token']);
-  const orderId = pickField(data, ['order_id', 'orderId', 'reference']);
+  // Safepay v2 nests the payment details under `notification`; older/other shapes
+  // use `data`. Support both.
+  const notif = (b.notification && typeof b.notification === 'object' ? b.notification
+    : b.data && typeof b.data === 'object' ? b.data : {}) as Record<string, unknown>;
+  const type = String(b.type || b.event || notif.type || '').toLowerCase(); // e.g. "payment:created"
+  const state = String(pickField(notif, ['state', 'status', 'tracker_state', 'payment_state']) || '').toUpperCase();
+  const token = pickField(notif, ['tracker', 'token', 'tracker_token'])
+    || pickField(notif.tracker as Record<string, unknown>, ['token'])
+    || pickField(b, ['tracker', 'token']);
+  const orderId = pickField(notif, ['reference', 'order_id', 'orderId'])
+    || pickField(b, ['reference', 'order_id', 'orderId']);
 
   let clerkId: string | null = null;
   let plan: 'monthly' | 'annual' = 'monthly';
@@ -221,12 +226,17 @@ async function handleSafepayWebhook(body: Record<string, unknown> | undefined): 
 let lastWebhook: Record<string, unknown> | null = null;
 
 router.post('/webhook', async (req: Request, res: Response) => {
-  const valid = verifyWebhook({ body: req.body, headers: req.headers });
-  try {
-    console.log('[safepay webhook] valid=%s body=%s', valid, JSON.stringify(req.body).slice(0, 2000));
-  } catch { /* ignore log errors */ }
+  const rawBody = (req as unknown as { rawBody?: Buffer }).rawBody;
+  const valid = verifyWebhook({ rawBody, body: req.body, headers: req.headers });
+  // Sandbox processes even if the signature can't be verified yet, so testing isn't
+  // blocked while the exact signing scheme is confirmed from a real event.
+  // Production REQUIRES a valid signature.
+  const proceed = valid || SAFEPAY_ENV === 'sandbox';
   let diag: Record<string, unknown> = {};
-  if (valid) {
+  try {
+    console.log('[safepay webhook] valid=%s proceed=%s body=%s', valid, proceed, JSON.stringify(req.body).slice(0, 2000));
+  } catch { /* ignore log errors */ }
+  if (proceed) {
     try {
       diag = await handleSafepayWebhook(req.body as Record<string, unknown>);
     } catch (error) {
@@ -236,14 +246,15 @@ router.post('/webhook', async (req: Request, res: Response) => {
   }
   lastWebhook = {
     at: new Date().toISOString(),
-    valid,
+    valid, proceed, env: SAFEPAY_ENV,
     webhookSecretPresent: SAFEPAY_WEBHOOK_READY,
     sigHeaders: Object.keys(req.headers).filter((k) => /sig|sfpy|safepay/i.test(k)),
     headerKeys: Object.keys(req.headers),
+    rawBody: rawBody ? rawBody.toString('utf8').slice(0, 3000) : null,
     body: req.body,
     diag,
   };
-  if (!valid) return res.status(400).json({ error: 'invalid_signature' });
+  if (!valid && SAFEPAY_ENV !== 'sandbox') return res.status(400).json({ error: 'invalid_signature' });
   res.status(200).json({ received: true });
 });
 

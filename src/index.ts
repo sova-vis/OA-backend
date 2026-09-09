@@ -217,7 +217,14 @@ app.use(cors({
   },
   credentials: true,
 }));
-app.use(express.json({ limit: '2mb' }));
+app.use(express.json({
+  limit: '2mb',
+  // Stash the raw body so the Safepay webhook can verify its signature against the
+  // exact bytes Safepay signed (JSON re-serialization would not match).
+  verify: (req: Request, _res: Response, buf: Buffer) => {
+    (req as unknown as { rawBody?: Buffer }).rawBody = buf;
+  },
+}));
 app.use(express.urlencoded({ extended: true, limit: '2mb' }));
 
 // Auth API
