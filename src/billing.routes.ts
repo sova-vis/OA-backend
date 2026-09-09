@@ -242,10 +242,16 @@ async function handleSafepayWebhook(body: Record<string, unknown> | undefined): 
     }
   }
 
-  const isSuccess = /paid|complete|succeed|captured/i.test(type)
-    || /PAID|COMPLET|SUCCE|CAPTURED|ENDED/.test(state);
+  // Treat a payment event (e.g. "payment:created") as success, but never a refund
+  // or error event. State (when present) further confirms a paid/ended tracker.
+  const isRefundOrError = /refund|error|declin|fail|void|reject|cancel/i.test(type)
+    || /DECLIN|FAIL|VOID|REJECT|ERROR|CANCEL/.test(state);
+  const isPaymentEvent = /payment/i.test(type) || !!token || !!orderId;
+  const stateSaysPaid = /PAID|COMPLET|SUCCE|CAPTURED|ENDED/.test(state);
+  const typeSaysPaid = /created|paid|complete|succeed|captured/i.test(type);
+  const isSuccess = !isRefundOrError && isPaymentEvent && (stateSaysPaid || typeSaysPaid);
 
-  const diag: Record<string, unknown> = { type, state, token, orderId, resolvedClerkId: clerkId, plan, isSuccess };
+  const diag: Record<string, unknown> = { type, state, token, orderId, resolvedClerkId: clerkId, plan, isSuccess, isRefundOrError };
   if (!clerkId) { console.warn('[safepay webhook] unresolved user (token=%s order=%s)', token, orderId); return { ...diag, outcome: 'unresolved_user' }; }
   if (!isSuccess) { console.log('[safepay webhook] ignored non-success type=%s state=%s', type, state); return { ...diag, outcome: 'non_success' }; }
 
