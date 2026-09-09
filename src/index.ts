@@ -34,6 +34,7 @@ import datesheetRoutes from './datesheet.routes';
 import billingRoutes from './billing.routes';
 import { clerkAuth, warmupClerkVerifier } from './lib/clerkAuth';
 import { requirePro, BILLING_ENFORCED } from './lib/entitlements';
+import { supabase } from './lib/supabase';
 import { rateLimit } from './lib/rateLimit';
 import { logConfigReport, serviceReadinessMap } from './lib/configReport';
 
@@ -294,8 +295,21 @@ app.use('/paper-parser', clerkAuth, requirePro, aiLimit, paperParserRoutes);
 
 // Health check — includes subsystem readiness booleans (never secrets) so a
 // misconfigured deploy is diagnosable without shell access.
-app.get('/health', (_req: Request, res: Response) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString(), billingEnforced: BILLING_ENFORCED, services: serviceReadinessMap() });
+app.get('/health', async (_req: Request, res: Response) => {
+  // Temporary billing diagnostic (no secrets): which DB the Supabase REST client
+  // points at, and whether student_billing is reachable through it. Remove later.
+  let billingDb: { host: string; tableReachable: boolean; error?: string };
+  try {
+    let host = 'unset';
+    try { host = new URL(process.env.SUPABASE_URL || '').host; } catch { /* keep 'unset' */ }
+    const probe = await supabase.from('student_billing').select('clerk_id').limit(1);
+    billingDb = probe.error
+      ? { host, tableReachable: false, error: String(probe.error.message).slice(0, 160) }
+      : { host, tableReachable: true };
+  } catch (e) {
+    billingDb = { host: 'error', tableReachable: false, error: String((e as Error)?.message || e).slice(0, 160) };
+  }
+  res.json({ status: 'ok', timestamp: new Date().toISOString(), billingEnforced: BILLING_ENFORCED, billingDb, services: serviceReadinessMap() });
 });
 
 // Root route
