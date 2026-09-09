@@ -97,6 +97,44 @@ router.post('/cancel', clerkAuth, async (req: AuthenticatedRequest, res: Respons
 });
 
 /**
+ * Reconcile after returning from checkout: activate the student from their most
+ * recent PENDING payment. This makes activation independent of the webhook (which
+ * can be delayed/lost). In sandbox it trusts the return (for testing); in
+ * production it only activates if the webhook already marked the payment succeeded
+ * OR the (future) status check confirms it — never on the return alone.
+ */
+router.post('/sync', clerkAuth, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const clerkId = req.auth!.clerkId;
+    const p = await supabase
+      .from('payments')
+      .select('provider_tx_id, plan, status')
+      .eq('clerk_id', clerkId)
+      .in('status', ['pending', 'succeeded'])
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    let synced = false;
+    if (p.data) {
+      const plan: 'monthly' | 'annual' = p.data.plan === 'annual' ? 'annual' : 'monthly';
+      const token = typeof p.data.provider_tx_id === 'string' ? p.data.provider_tx_id : undefined;
+      // Sandbox: activate on return. Production: only if the webhook already
+      // succeeded the payment (guards against activating without real payment).
+      if (SAFEPAY_ENV === 'sandbox' || p.data.status === 'succeeded') {
+        await activatePaid(clerkId, plan, token);
+        synced = true;
+      }
+    }
+    const fresh = await ensureBilling(clerkId);
+    res.json({ ok: true, synced, ...computeAccess(fresh) });
+  } catch (error) {
+    console.error('POST /billing/sync error:', error);
+    res.status(500).json({ error: 'server_error' });
+  }
+});
+
+/**
  * Start a Safepay hosted checkout for the monthly (or annual) plan and return the
  * redirect URL. One-time payment — works for cards + JazzCash + Easypaisa. The
  * webhook activates Pro; the tracker token is stored so the webhook can resolve
