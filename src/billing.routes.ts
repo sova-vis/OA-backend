@@ -214,17 +214,26 @@ async function activatePaid(clerkId: string, plan: 'monthly' | 'annual', token?:
 /** Parse a verified Safepay webhook and, on success, activate the payer. */
 async function handleSafepayWebhook(body: Record<string, unknown> | undefined): Promise<Record<string, unknown>> {
   const b = (body || {}) as Record<string, unknown>;
-  // Safepay v2 nests the payment details under `notification`; older/other shapes
-  // use `data`. Support both.
-  const notif = (b.notification && typeof b.notification === 'object' ? b.notification
-    : b.data && typeof b.data === 'object' ? b.data : {}) as Record<string, unknown>;
-  const type = String(b.type || b.event || notif.type || '').toLowerCase(); // e.g. "payment:created"
-  const state = String(pickField(notif, ['state', 'status', 'tracker_state', 'payment_state']) || '').toUpperCase();
+  // Real Safepay shape:
+  //   { data: { type, token, notification: { tracker, state, reference,
+  //     metadata: { order_id } } } }
+  // Support that plus flatter fallbacks.
+  const data = (b.data && typeof b.data === 'object' ? b.data : b) as Record<string, unknown>;
+  const notif = (data.notification && typeof data.notification === 'object' ? data.notification
+    : b.notification && typeof b.notification === 'object' ? b.notification
+    : data) as Record<string, unknown>;
+  const metadata = (notif.metadata && typeof notif.metadata === 'object' ? notif.metadata : {}) as Record<string, unknown>;
+
+  const type = String(data.type || b.type || b.event || notif.type || '').toLowerCase(); // e.g. "payment:created"
+  const state = String(pickField(notif, ['state', 'status', 'tracker_state', 'payment_state']) || '').toUpperCase(); // e.g. "PAID"
   const token = pickField(notif, ['tracker', 'token', 'tracker_token'])
-    || pickField(notif.tracker as Record<string, unknown>, ['token'])
+    || pickField(data, ['token', 'tracker'])
     || pickField(b, ['tracker', 'token']);
-  const orderId = pickField(notif, ['reference', 'order_id', 'orderId'])
-    || pickField(b, ['reference', 'order_id', 'orderId']);
+  // OUR order_id lives in notification.metadata.order_id (notification.reference is
+  // Safepay's own numeric ref, not ours).
+  const orderId = pickField(metadata, ['order_id', 'orderId'])
+    || pickField(notif, ['order_id', 'orderId'])
+    || pickField(data, ['order_id', 'orderId']);
 
   let clerkId: string | null = null;
   let plan: 'monthly' | 'annual' = 'monthly';
