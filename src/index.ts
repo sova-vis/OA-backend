@@ -31,7 +31,9 @@ import teacherInsightsRoutes from './teacherInsights.routes';
 import settingsRoutes from './settings.routes';
 import institutionRoutes from './institution.routes';
 import datesheetRoutes from './datesheet.routes';
+import billingRoutes from './billing.routes';
 import { clerkAuth, warmupClerkVerifier } from './lib/clerkAuth';
+import { requirePro } from './lib/entitlements';
 import { rateLimit } from './lib/rateLimit';
 import { logConfigReport, serviceReadinessMap } from './lib/configReport';
 
@@ -219,6 +221,10 @@ app.use(express.urlencoded({ extended: true, limit: '2mb' }));
 // Auth API
 app.use('/auth', authRoutes);
 
+// Billing / subscriptions — trial, status, checkout (Safepay), renewal tick.
+// Enforcement is gated by BILLING_ENFORCED (default off) inside requirePro.
+app.use('/billing', billingRoutes);
+
 // Admin API
 app.use('/admin', adminRoutes);
 
@@ -228,8 +234,8 @@ app.use('/papers', papersRoutes);
 // Content API (navigation/search) — now requires auth (F-04)
 app.use('/content', clerkAuth, contentRoutes);
 
-// RAG / Ask-AI — auth + AI rate limit (F-04)
-app.use('/rag', clerkAuth, aiLimit, ragRoutes);
+// RAG / Ask-AI — auth + Pro gate + AI rate limit (F-04)
+app.use('/rag', clerkAuth, requirePro, aiLimit, ragRoutes);
 
 // User paper tracking API
 app.use('/tracking', paperTrackingRoutes);
@@ -238,14 +244,14 @@ app.use('/tracking', paperTrackingRoutes);
 app.use('/practice', practiceProgressRoutes);
 app.use('/dev', clerkAuth, devRoutes);
 
-// AI marking for practice papers (Grok text + vision) — auth in-module + AI limit
-app.use('/practice-grading', clerkAuth, aiLimit, practiceGradingRoutes);
+// AI marking for practice papers (Grok text + vision) — auth + Pro gate + AI limit
+app.use('/practice-grading', clerkAuth, requirePro, aiLimit, practiceGradingRoutes);
 
 // Standalone upload-and-mark flow (Grok vision + annotated PDF)
-app.use('/upload-check', clerkAuth, aiLimit, uploadCheckRoutes);
+app.use('/upload-check', clerkAuth, requirePro, aiLimit, uploadCheckRoutes);
 
 // Phase 1 — performance insights (attempts log for Notebook / Weakness Map)
-app.use('/insights', clerkAuth, aiLimit, insightsRoutes);
+app.use('/insights', clerkAuth, requirePro, aiLimit, insightsRoutes);
 
 // Teacher-student meetings and chat API
 app.use('/mentoring', mentoringRoutes);
@@ -279,12 +285,12 @@ app.use('/institution', institutionRoutes);
 // Propel — exam datesheet (student-facing)
 app.use('/datesheet', datesheetRoutes);
 
-// OA / QA grading proxy — now requires auth + AI rate limit (F-04)
-app.use('/oa-grading', clerkAuth, aiLimit, qaGradingRoutes);
-app.use('/qa-grading', clerkAuth, aiLimit, qaGradingRoutes);
+// OA / QA grading proxy — now requires auth + Pro gate + AI rate limit (F-04)
+app.use('/oa-grading', clerkAuth, requirePro, aiLimit, qaGradingRoutes);
+app.use('/qa-grading', clerkAuth, requirePro, aiLimit, qaGradingRoutes);
 
-// Past paper structuring — now requires auth + AI rate limit (F-04)
-app.use('/paper-parser', clerkAuth, aiLimit, paperParserRoutes);
+// Past paper structuring — now requires auth + Pro gate + AI rate limit (F-04)
+app.use('/paper-parser', clerkAuth, requirePro, aiLimit, paperParserRoutes);
 
 // Health check — includes subsystem readiness booleans (never secrets) so a
 // misconfigured deploy is diagnosable without shell access.
