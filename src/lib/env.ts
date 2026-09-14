@@ -35,10 +35,6 @@ const envSchema = z.object({
   STUDENT_DATA_SOURCE: z.preprocess(trimString, z.enum(['storage', 'postgres'])).default('storage'),
   STUDENT_DATA_DUAL_WRITE: z.preprocess(trimString, z.enum(['true', 'false'])).default('true'),
   
-  // Clerk (optional for development)
-  CLERK_SECRET_KEY: z.preprocess(trimString, z.string().optional()),
-  CLERK_JWT_KEY: z.preprocess(trimString, z.string().optional()),
-  NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: z.preprocess(trimString, z.string().optional()),
   
   // Google Drive OAuth
   GOOGLE_CLIENT_ID: z.preprocess(trimString, z.string().optional()),

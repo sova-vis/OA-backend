@@ -1,0 +1,15 @@
+venv/
+.venv/
+__pycache__/
+*.pyc
+.env
+.git/
+.claude/
+logs/
+# Intermediate build artifacts (large, reproducible). The FINAL index under
+# data/vector_store/ is deliberately NOT ignored: if you build from a machine
+# that has it (e.g. `railway up`), it gets baked into the image.
+data/raw/
+data/processed/
+data/chunks/
+data/chunks.jsonl

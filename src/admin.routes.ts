@@ -8,8 +8,8 @@ const router = Router();
 // Deprecated legacy endpoint kept for backward compatibility
 router.post('/login', (req: Request, res: Response) => {
   return res.status(410).json({
-    error: 'Admin login is now handled by Clerk',
-    message: 'Use /sign-in and ensure your profile role is admin',
+    error: 'Admin login is deprecated',
+    message: 'Sign in on the landing page and ensure your profile role is admin.',
   });
 });
 

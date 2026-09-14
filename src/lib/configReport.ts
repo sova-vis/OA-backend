@@ -22,17 +22,6 @@ export type ServiceStatus = {
 
 const has = (value: string | undefined) => Boolean(value && value.trim());
 
-/**
- * Clerk JWT verification is what every protected route now depends on. It works
- * with either a valid SPKI public key (CLERK_JWT_KEY) or an issuer for JWKS
- * (CLERK_ISSUER) — mirror clerkAuth's own requirement so this stays accurate.
- */
-function clerkVerifierReady(): boolean {
-  const jwtKey = process.env.CLERK_JWT_KEY || '';
-  const hasValidKey = jwtKey.includes('BEGIN PUBLIC KEY');
-  return hasValidKey || has(process.env.CLERK_ISSUER);
-}
-
 function driveReady(): boolean {
   return (
     has(process.env.GOOGLE_CLIENT_ID) &&
@@ -52,11 +41,11 @@ export function serviceReadiness(): ServiceStatus[] {
       hint: 'Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY.',
     },
     {
-      key: 'clerkAuth',
-      label: 'Clerk auth (protects every route)',
-      ready: clerkVerifierReady(),
+      key: 'auth',
+      label: 'Supabase Auth (verifies user tokens on every route)',
+      ready: has(process.env.SUPABASE_JWT_SECRET),
       critical: true,
-      hint: 'Set CLERK_JWT_KEY (PEM public key) or CLERK_ISSUER — without it every protected route returns 401.',
+      hint: 'Set SUPABASE_JWT_SECRET (Supabase → Settings → API → JWT Secret) — without it every protected route returns 401.',
     },
     {
       key: 'grokMarking',
@@ -71,18 +60,18 @@ export function serviceReadiness(): ServiceStatus[] {
       hint: 'Set XAI_API_KEY (primary). Grading falls back to GROQ_GRADING_API_KEY / GROQ_API_KEY / GEMINI_API_KEY.',
     },
     {
-      key: 'groqAskAi',
-      label: 'Groq — Ask-AI + paper parsing',
+      key: 'groqPaperParsing',
+      label: 'Groq — paper parsing (PDF → JSON)',
       ready: has(process.env.GROQ_API_KEY),
       critical: false,
-      hint: 'Set GROQ_API_KEY — Ask-AI and paper parsing will error without it.',
+      hint: 'Set GROQ_API_KEY — the paper parser will error without it.',
     },
     {
-      key: 'cohereEmbeddings',
-      label: 'Cohere — Ask-AI retrieval embeddings',
-      ready: has(process.env.COHERE_API_KEY),
+      key: 'askAiChatbot',
+      label: 'Ask-AI RAG service (Past-Paper Chatbot)',
+      ready: has(process.env.CHATBOT_SERVICE_URL),
       critical: false,
-      hint: 'Set COHERE_API_KEY — Ask-AI retrieval quality degrades without it.',
+      hint: 'Set CHATBOT_SERVICE_URL to the deployed Past-Paper Chatbot (defaults to localhost for dev) — Ask/Find text answers 502 without it.',
     },
     {
       key: 'googleDrive',

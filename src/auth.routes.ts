@@ -326,16 +326,15 @@ router.post('/complete-onboarding', clerkAuth, async (req: AuthenticatedRequest,
 /**
  * POST /auth/delete-account
  * Self-service account deletion. Requires the caller to re-type their own email.
- * Removes all their Propel data and the Clerk user. When a student deletes,
- * their teachers are notified that an enrolled student left.
+ * Removes all their Propel data and the Supabase Auth user. When a student
+ * deletes, their teachers are notified that an enrolled student left.
  */
 async function deleteClerkUser(clerkId: string): Promise<void> {
-  const key = process.env.CLERK_SECRET_KEY;
-  if (!key) return;
+  // clerkId is the Supabase Auth user UUID (column name kept for compatibility).
   try {
-    await fetch(`https://api.clerk.com/v1/users/${clerkId}`, { method: 'DELETE', headers: { Authorization: `Bearer ${key}` } });
+    await supabase.auth.admin.deleteUser(clerkId);
   } catch {
-    /* best-effort */
+    /* best-effort — the profile and data rows are already removed by this point */
   }
 }
 

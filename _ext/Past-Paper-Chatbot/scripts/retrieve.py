@@ -20,6 +20,7 @@ Run as a CLI for testing:
 """
 
 import datetime
+import os
 import re
 import sys
 from pathlib import Path
@@ -28,9 +29,18 @@ import chromadb
 from sentence_transformers import SentenceTransformer
 
 PROJECT_DIR = Path(__file__).resolve().parent.parent
-VECTOR_STORE_DIR = PROJECT_DIR / "data" / "vector_store"
+# VECTOR_STORE_DIR env override lets a deploy point at a mounted volume / prebuilt
+# index instead of the in-repo default (which is gitignored and won't exist in a
+# clean checkout — see DEPLOY.md).
+VECTOR_STORE_DIR = Path(os.environ.get("VECTOR_STORE_DIR") or (PROJECT_DIR / "data" / "vector_store"))
 COLLECTION_NAME = "past_papers"
 MODEL_NAME = "all-MiniLM-L6-v2"
+
+
+class VectorStoreUnavailable(RuntimeError):
+    """Raised when the Chroma index hasn't been built / can't be opened, so the
+    HTTP layer can turn it into a clear 503 instead of an opaque 500 and the
+    container can still boot (health check stays green) until the index ships."""
 
 # Phrases that signal the user wants to know *where in the papers* a topic
 # shows up (years/sessions/frequency), not an explanation of the topic.
@@ -118,8 +128,15 @@ def extract_core_topic(query: str, subject: str | None = None) -> str:
 class Retriever:
     def __init__(self):
         self.model = SentenceTransformer(MODEL_NAME)
-        client = chromadb.PersistentClient(path=str(VECTOR_STORE_DIR))
-        self.collection = client.get_collection(COLLECTION_NAME)
+        try:
+            client = chromadb.PersistentClient(path=str(VECTOR_STORE_DIR))
+            self.collection = client.get_collection(COLLECTION_NAME)
+        except Exception as e:
+            raise VectorStoreUnavailable(
+                f"Vector store collection '{COLLECTION_NAME}' is not available at "
+                f"{VECTOR_STORE_DIR}. Build it with scripts/build_vector_store.py "
+                f"(see DEPLOY.md) or set VECTOR_STORE_DIR to a prebuilt index."
+            ) from e
 
     def classify_intent(self, query: str) -> str:
         return "paper_lookup" if PAPER_LOOKUP_RE.search(query) else "general_qa"

@@ -33,6 +33,7 @@ from pydantic import BaseModel
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from generate_answer import DRIVE_FILE_MAP, _normalize_path, generate, question_preview  # noqa: E402
+from retrieve import VectorStoreUnavailable  # noqa: E402
 from drive_pdf import download_pdf_bytes, render_page_image  # noqa: E402
 
 PROJECT_DIR = Path(__file__).resolve().parent.parent
@@ -105,10 +106,16 @@ def build_citation(occurrence: dict) -> dict:
 
 @app.post("/chat")
 def chat(req: ChatRequest):
-    answer, result = generate(
-        req.question, subject=req.subject, mode=req.mode,
-        include_table=False, link_builder=image_link_builder,
-    )
+    try:
+        answer, result = generate(
+            req.question, subject=req.subject, mode=req.mode,
+            include_table=False, link_builder=image_link_builder,
+        )
+    except VectorStoreUnavailable as e:
+        # Index not built/mounted yet: 503 so the caller shows a clear
+        # "temporarily unavailable" instead of a hard crash, and the container
+        # stays up (health check is independent).
+        raise HTTPException(status_code=503, detail=str(e))
 
     occurrences = result.get("occurrences") or []
     is_find = result.get("intent") == "paper_lookup"

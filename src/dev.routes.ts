@@ -14,7 +14,9 @@ import { supabase } from './lib/supabase';
 
 const router = Router();
 
-const DEV_SECRET = process.env.DEV_TOKEN_SECRET || process.env.CLERK_SECRET_KEY || 'dev-mode-fallback-secret';
+// Signs the short-lived dev-unlock token. Set DEV_TOKEN_SECRET in any shared
+// environment; the literal fallback is only for a throwaway local run.
+const DEV_SECRET = process.env.DEV_TOKEN_SECRET || 'dev-mode-fallback-secret';
 const TOKEN_TTL = '8h';
 const MIN_PW_LEN = 6;
 
