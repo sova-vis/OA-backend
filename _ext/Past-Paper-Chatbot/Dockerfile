@@ -16,13 +16,14 @@ WORKDIR /app
 COPY requirements.txt ./
 RUN pip install --upgrade pip && pip install -r requirements.txt
 
-# Bake the MiniLM weights into the image so the first request doesn't pay a
-# cold download (and so the container needs no outbound HF access at runtime).
-RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')"
+# Bake the embedding model into the image so the first request doesn't pay a
+# cold download (and the container needs no outbound HF access at runtime).
+# Must match ASK_AI_EMBED_MODEL / retrieve.py (BAAI/bge-base-en-v1.5, 768-dim).
+RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('BAAI/bge-base-en-v1.5')"
 
-# App code. The Chroma index under data/vector_store/ is gitignored and is NOT
-# in the build context unless you build from a machine that already has it
-# (see DEPLOY.md) — otherwise mount it as a volume at $VECTOR_STORE_DIR.
+# App code. The search index lives in your self-hosted Supabase Postgres
+# (public.ask_ai_chunks / pgvector), NOT in the image — the service reaches it
+# via ASK_AI_DATABASE_URL at runtime. See DEPLOY.md.
 COPY . .
 
 EXPOSE 8002

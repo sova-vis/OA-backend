@@ -30,8 +30,8 @@ router.get("/subjects", async (_req: Request, res: Response) => {
 
 router.post("/query", async (req: Request, res: Response) => {
   try {
-    const { question, history, mode, subject } = req.body as {
-      question?: string; history?: unknown; mode?: string; subject?: string;
+    const { question, history, mode, subject, level } = req.body as {
+      question?: string; history?: unknown; mode?: string; subject?: string; level?: string;
     };
 
     if (!question?.trim()) {
@@ -41,7 +41,7 @@ router.post("/query", async (req: Request, res: Response) => {
     const response = await fetch(`${CHATBOT_SERVICE_URL}/chat`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ question, history, mode, subject }),
+      body: JSON.stringify({ question, history, mode, subject, level }),
       // Ask mode now walks through 3 full worked past-paper answers on top
       // of the explanation, which can genuinely take 45-60s+ from the LLM -
       // 60s was cutting it dangerously close, causing intermittent failures.

@@ -81,6 +81,7 @@ class ChatRequest(BaseModel):
     limit: int | None = None
     history: list[HistoryMessage] | None = None
     subject: str | None = None
+    level: str | None = None  # "olevel" | "alevel" — keeps O/A results from mixing
     mode: str | None = None  # "ask" | "find" | None (auto-detect)
 
 
@@ -90,6 +91,7 @@ def build_citation(occurrence: dict) -> dict:
     needing to parse a markdown table out of the answer text - the
     frontend has no markdown renderer at all, so a table embedded in
     `answer` would only ever show up as raw text."""
+    source_file = occurrence.get("source_file")
     return {
         "subject": occurrence.get("subject"),
         "year": occurrence.get("year"),
@@ -97,10 +99,12 @@ def build_citation(occurrence: dict) -> dict:
         "paper": occurrence.get("paper"),
         "variant": occurrence.get("variant"),
         "questionNumber": occurrence.get("question_number"),
-        "topicGeneral": None,
+        "topicGeneral": occurrence.get("topic"),
         "topicSyllabus": None,
         "preview": question_preview(occurrence.get("question_text", "")),
-        "pageImageUrl": image_link_builder(occurrence.get("source_file", ""), occurrence.get("page", 1)),
+        # DB-sourced questions have no PDF page, so no clickable page image —
+        # the citation still shows the full paper reference (subject/year/paper/Q#).
+        "pageImageUrl": image_link_builder(source_file, occurrence.get("page", 1)) if source_file else None,
     }
 
 
@@ -108,7 +112,7 @@ def build_citation(occurrence: dict) -> dict:
 def chat(req: ChatRequest):
     try:
         answer, result = generate(
-            req.question, subject=req.subject, mode=req.mode,
+            req.question, subject=req.subject, level=req.level, mode=req.mode,
             include_table=False, link_builder=image_link_builder,
         )
     except VectorStoreUnavailable as e:

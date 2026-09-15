@@ -1,66 +1,53 @@
 """
-Step 4: Retrieval logic / query routing.
+Retrieval for Ask-AI over the Supabase REST API (PostgREST) — the same channel
+the app uses for everything else, so it works against the firewalled Oracle
+self-hosted Supabase from anywhere with HTTPS. No direct Postgres connection.
 
-Classifies an incoming user question into one of two modes:
+Semantic search calls the public.match_ask_ai_chunks RPC (migration 024); the
+exact-term boost is a REST `ilike` select. Two modes (unchanged):
+  paper_lookup — "which years / how often was X asked"
+  general_qa   — "explain X" (grounding chunks for the LLM)
 
-  paper_lookup  - "which years was X asked", "how many times has Y come up",
-                   "show me questions about Z" -> pure semantic search over
-                   the question index; the answer is really just "here are
-                   the matching questions and when they appeared."
+Every search is scoped to ONE level (olevel|alevel) so O- and A-level never mix,
+and optionally to a subject.
 
-  general_qa    - "explain X", "what is Y", "how do I calculate Z" -> needs
-                   retrieved chunks as grounding *plus* general knowledge
-                   (and, in Step 5, a web search) to produce an explanation.
-
-This module only does retrieval + classification; turning results into a
-final natural-language answer is Step 5 (LLM generation).
-
-Run as a CLI for testing:
-    venv\\Scripts\\python.exe scripts\\retrieve.py "which years was depreciation asked in accounting"
+CLI test (needs ASK_AI_SUPABASE_URL + ASK_AI_SUPABASE_SERVICE_KEY):
+    python scripts/retrieve.py "which years was electrolysis asked" --level olevel
 """
 
 import datetime
 import os
 import re
 import sys
+import threading
 from pathlib import Path
 
-import chromadb
+from dotenv import load_dotenv
 from sentence_transformers import SentenceTransformer
+from supabase import create_client
 
 PROJECT_DIR = Path(__file__).resolve().parent.parent
-# VECTOR_STORE_DIR env override lets a deploy point at a mounted volume / prebuilt
-# index instead of the in-repo default (which is gitignored and won't exist in a
-# clean checkout — see DEPLOY.md).
-VECTOR_STORE_DIR = Path(os.environ.get("VECTOR_STORE_DIR") or (PROJECT_DIR / "data" / "vector_store"))
-COLLECTION_NAME = "past_papers"
-MODEL_NAME = "all-MiniLM-L6-v2"
+load_dotenv(PROJECT_DIR / ".env")
+
+MODEL_NAME = os.environ.get("ASK_AI_EMBED_MODEL", "BAAI/bge-base-en-v1.5")
+# bge retrieval convention: QUERIES get this instruction; the passages in the
+# index do not (the build job embeds them raw). Keep in sync with the build.
+QUERY_INSTRUCTION = "Represent this sentence for searching relevant passages: "
 
 
 class VectorStoreUnavailable(RuntimeError):
-    """Raised when the Chroma index hasn't been built / can't be opened, so the
-    HTTP layer can turn it into a clear 503 instead of an opaque 500 and the
-    container can still boot (health check stays green) until the index ships."""
+    """The REST index is unreachable or not built (migration 024 not applied) —
+    the HTTP layer turns this into a clear 503, and the container still boots."""
 
-# Phrases that signal the user wants to know *where in the papers* a topic
-# shows up (years/sessions/frequency), not an explanation of the topic.
+
 PAPER_LOOKUP_PATTERNS = [
-    r"\bwhich years?\b",
-    r"\bwhat years?\b",
-    r"\bhow many times\b",
-    r"\bhow often\b",
-    r"\bhas .* (been )?asked\b",
-    r"\bwas .* asked\b",
-    r"\bpast papers?\b",
-    r"\bprevious (years?|papers?|exams?)\b",
-    r"\bshow me questions?\b",
-    r"\bfind questions?\b",
-    r"\blist questions?\b",
+    r"\bwhich years?\b", r"\bwhat years?\b", r"\bhow many times\b", r"\bhow often\b",
+    r"\bhas .* (been )?asked\b", r"\bwas .* asked\b", r"\bpast papers?\b",
+    r"\bprevious (years?|papers?|exams?)\b", r"\bshow me questions?\b",
+    r"\bfind questions?\b", r"\blist questions?\b",
 ]
 PAPER_LOOKUP_RE = re.compile("|".join(PAPER_LOOKUP_PATTERNS), re.IGNORECASE)
 
-# "last 10 years" / "past 3 years" / "previous 8 years" -> use that many most
-# recent years instead of the default window.
 YEAR_LIMIT_RE = re.compile(r"\b(?:last|past|previous|recent)\s+(\d{1,2})\s+years?\b", re.IGNORECASE)
 DEFAULT_YEAR_LIMIT = 5
 
@@ -70,21 +57,23 @@ def requested_year_limit(query: str) -> int:
     return int(m.group(1)) if m else DEFAULT_YEAR_LIMIT
 
 
+# Union of O- and A-level subject names, for auto-detecting a subject from free
+# text when the UI didn't pin one. Longest first so "Business Studies" /
+# "Computer Science" match before a shorter substring would.
 SUBJECTS = [
     "Accounting", "Additional Maths", "Art and Design", "Biology", "Business Studies",
-    "Chemistry", "Commerce", "Computer Science", "Economics", "English",
-    "Environmental Management", "Geography", "History", "Islamiyat", "Mathematics",
-    "Pakistan Studies", "Physics", "Religious Studies", "Sociology", "Statistics",
+    "Business", "Chemistry", "Commerce", "Computer Science", "Economics",
+    "English General Paper", "English Language", "English", "Environmental Management",
+    "Further Mathematics", "Geography", "Global Perspectives", "History",
+    "Information Technology", "Islamiyat", "Law", "Literature in English",
+    "Mathematics", "Pakistan Studies", "Physics", "Psychology", "Religious Studies",
+    "Sociology", "Statistics",
 ]
-# Longest names first so "Computer Science" matches before a shorter substring would.
 _SUBJECT_RES = sorted(
     ((s, re.compile(r"\b" + re.escape(s) + r"\b", re.IGNORECASE)) for s in SUBJECTS),
     key=lambda pair: -len(pair[0]),
 )
 
-# Short (2-6 letter) all-caps tokens in the query, e.g. "SSL", "GDP", "CPU" -
-# dense embeddings are unreliable for acronyms, so these get an exact-text
-# match pass in addition to semantic search.
 ACRONYM_RE = re.compile(r"\b[A-Z]{2,6}\b")
 
 GENERIC_QUERY_WORDS = {
@@ -96,27 +85,14 @@ GENERIC_QUERY_WORDS = {
 }
 
 
-def detect_subject(query: str) -> str | None:
+def detect_subject(query: str):
     for name, pattern in _SUBJECT_RES:
         if pattern.search(query):
             return name
     return None
 
 
-def extract_core_topic(query: str, subject: str | None = None) -> str:
-    """Strip boilerplate phrasing ('which years was ... asked', 'in past N
-    years', the subject name, generic filler words) to get at the actual
-    topic being asked about, e.g. 'photosynthesis' out of 'Which years was
-    photosynthesis asked in Biology in past 8 years?'. Used for an exact
-    substring match pass so results aren't limited to whatever a top-k=10
-    semantic search happens to rank highly.
-
-    Note: deliberately NOT reusing PAPER_LOOKUP_RE here - its `\\bwas .*
-    asked\\b` pattern is greedy and, applied as a substitution, would eat
-    everything between "was" and "asked" - including the topic word itself
-    (e.g. "was photosynthesis asked" -> topic swallowed). Word-level
-    filtering against GENERIC_QUERY_WORDS below handles "was"/"asked" fine
-    without that risk."""
+def extract_core_topic(query: str, subject=None) -> str:
     text = YEAR_LIMIT_RE.sub(" ", query)
     if subject:
         text = re.sub(re.escape(subject), " ", text, flags=re.IGNORECASE)
@@ -125,161 +101,170 @@ def extract_core_topic(query: str, subject: str | None = None) -> str:
     return " ".join(words).strip()
 
 
+def normalize_level(level):
+    """Canonicalize to the value stored in questions.level ('olevel'|'alevel').
+    Accepts 'O'/'A', 'O Level', 'a_level', etc. None -> no level filter."""
+    if not level:
+        return None
+    s = re.sub(r"[^a-z]", "", str(level).lower())
+    if s.startswith("o"):
+        return "olevel"
+    if s.startswith("a"):
+        return "alevel"
+    return None
+
+
+# --- shared, lazily-initialised singletons (model + REST client) --------------
+_model = None
+_model_lock = threading.Lock()
+_sb = None
+_sb_lock = threading.Lock()
+
+
+def get_model() -> SentenceTransformer:
+    global _model
+    if _model is None:
+        with _model_lock:
+            if _model is None:
+                _model = SentenceTransformer(MODEL_NAME)
+    return _model
+
+
+def get_sb():
+    global _sb
+    if _sb is None:
+        url = (os.environ.get("ASK_AI_SUPABASE_URL") or os.environ.get("SUPABASE_URL") or "").strip()
+        key = (os.environ.get("ASK_AI_SUPABASE_SERVICE_KEY")
+               or os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
+               or os.environ.get("SUPABASE_KEY") or "").strip()
+        if not url or not key:
+            raise VectorStoreUnavailable(
+                "Supabase REST not configured (ASK_AI_SUPABASE_URL / ASK_AI_SUPABASE_SERVICE_KEY)."
+            )
+        with _sb_lock:
+            if _sb is None:
+                _sb = create_client(url, key)
+    return _sb
+
+
+_SELECT_COLS = ("question_id,level,subject,type,exam_year,session,paper,variant,"
+                "question_number,topic,content")
+
+
+def _to_hit(r: dict, verified: bool) -> dict:
+    """Map an ask_ai_chunks row to the hit shape generate_answer.py expects
+    (exam_year -> year). No source PDF page from the DB, so source_file/page are
+    None — citations then show the paper reference without a page image."""
+    meta = {
+        "subject": r.get("subject"),
+        "year": r.get("exam_year"),
+        "session": r.get("session"),
+        "paper": r.get("paper"),
+        "variant": r.get("variant"),
+        "question_number": r.get("question_number"),
+        "topic": r.get("topic"),
+        "level": r.get("level"),
+        "type": r.get("type"),
+        "source_file": None,
+        "page": None,
+    }
+    return {
+        "text": r.get("content") or "",
+        "metadata": meta,
+        "distance": float(r.get("distance") or 0.0),
+        "verified": verified,
+    }
+
+
 class Retriever:
     def __init__(self):
-        self.model = SentenceTransformer(MODEL_NAME)
-        try:
-            client = chromadb.PersistentClient(path=str(VECTOR_STORE_DIR))
-            self.collection = client.get_collection(COLLECTION_NAME)
-        except Exception as e:
-            raise VectorStoreUnavailable(
-                f"Vector store collection '{COLLECTION_NAME}' is not available at "
-                f"{VECTOR_STORE_DIR}. Build it with scripts/build_vector_store.py "
-                f"(see DEPLOY.md) or set VECTOR_STORE_DIR to a prebuilt index."
-            ) from e
+        self.model = get_model()
 
     def classify_intent(self, query: str) -> str:
         return "paper_lookup" if PAPER_LOOKUP_RE.search(query) else "general_qa"
 
-    def search(self, query: str, subject: str | None = None, top_k: int = 10,
-               core_topic: str | None = None):
-        where = {"subject": subject} if subject else None
+    def search(self, query: str, subject=None, level=None, top_k: int = 10, core_topic=None):
+        vec = self.model.encode([QUERY_INSTRUCTION + query], normalize_embeddings=True)[0]
+        # pgvector text form — PostgREST casts this string to vector for the RPC.
+        qvec = "[" + ",".join(f"{float(x):.6f}" for x in vec) + "]"
+        level = normalize_level(level)
+        sb = get_sb()
+        try:
+            # Semantic search via the pgvector RPC (always scoped by level).
+            semantic = sb.rpc("match_ask_ai_chunks", {
+                "query_embedding": qvec,
+                "match_level": level,
+                "match_subject": subject,
+                "match_count": top_k,
+            }).execute().data or []
 
-        embedding = self.model.encode([query]).tolist()
-        results = self.collection.query(
-            query_embeddings=embedding, n_results=top_k, where=where
-        )
-        hits = []
-        for doc, meta, dist in zip(
-            results["documents"][0], results["metadatas"][0], results["distances"][0]
-        ):
-            hits.append({"text": doc, "metadata": meta, "distance": dist})
+            # Exact-term boost: acronyms + core topic, so a genuine match just
+            # outside top-k (or an acronym embeddings rank poorly) isn't dropped.
+            terms = set(ACRONYM_RE.findall(query))
+            if core_topic and len(core_topic) >= 4:
+                terms.add(core_topic)
+            verified_ids = set()
+            exact = []
+            for term in terms:
+                q = sb.table("ask_ai_chunks").select(_SELECT_COLS).ilike("content", f"*{term}*").limit(200)
+                if level:
+                    q = q.eq("level", level)
+                if subject:
+                    q = q.eq("subject", subject)
+                for r in (q.execute().data or []):
+                    verified_ids.add(r["question_id"])
+                    exact.append(r)
+        except VectorStoreUnavailable:
+            raise
+        except Exception as e:
+            raise VectorStoreUnavailable(
+                f"Ask-AI index query failed (is migration 024 applied and the index built?): {e}"
+            ) from e
 
-        # Exact-match boost: semantic search alone caps out at top_k, so a
-        # genuine match that just misses the top-k cut (or an acronym like
-        # "SSL"/"GDP" that embeddings handle poorly) can be silently dropped.
-        # This applies both to acronyms AND the query's core topic phrase
-        # (e.g. "photosynthesis") - for a "how many times was X asked"
-        # question we need every real occurrence, not just whatever ranked
-        # highest by semantic similarity. Uncapped by design.
-        # Note: a broad/common term (e.g. "GDP" or "photosynthesis") will
-        # legitimately show a high count since it's referenced across many
-        # genuinely different questions - that's real completeness, not noise,
-        # even though it may include some passing mentions alongside the core
-        # matches. A semantic-relevance gate on top of the exact match (reject
-        # a hit if its embedding is too far from the query) was tried and
-        # reverted: no single threshold behaved consistently across queries -
-        # a margin loose enough to keep legitimate SSL sub-part questions
-        # (where the term appears in part (b)/(c), not the opening line) was
-        # also loose enough to let through nearly all the noise it was meant
-        # to filter for other topics, and a stricter margin wrongly excluded
-        # clearly-relevant matches. Pure exact-match completeness is more
-        # predictable and honest than a fragile approximation of relevance.
-        exact_match_terms = set(ACRONYM_RE.findall(query))
-        if core_topic and len(core_topic) >= 4:
-            exact_match_terms.add(core_topic)
+        by_id: dict = {}
+        for r in semantic:
+            by_id[r["question_id"]] = _to_hit(r, verified=False)
+        for r in exact:
+            if r["question_id"] not in by_id:
+                by_id[r["question_id"]] = _to_hit(r, verified=True)
+        for qid in verified_ids:
+            if qid in by_id:
+                by_id[qid]["verified"] = True
 
-        verified_texts = set()
-        for term in exact_match_terms:
-            variants = {term}
-            if term[:1].islower():
-                variants.add(term[0].upper() + term[1:])  # catch sentence-start capitalization
-            for variant in variants:
-                exact = self.collection.get(
-                    where=where,
-                    where_document={"$contains": variant},
-                    include=["documents", "metadatas"],
-                )
-                for doc, meta in zip(exact["documents"], exact["metadatas"]):
-                    # Only actual exam questions count as "occurrences"; whole-document
-                    # chunks (syllabus, mark schemes, examiner reports) have no question_number.
-                    if meta.get("question_number") is None:
-                        continue
-                    verified_texts.add(doc)
-                    if not any(h["text"] == doc for h in hits):
-                        hits.append({"text": doc, "metadata": meta, "distance": 0.0})
-
-        # Tag each hit so callers can tell a confirmed exact-text match apart
-        # from a purely-semantic neighbor pulled in to fill out top_k. This
-        # matters a lot for rare topics: if only 1 chunk genuinely contains
-        # "franchising", the remaining top_k slots get filled with whatever
-        # is semantically closest - which is NOT the same as containing the
-        # word, and must never be reported as a genuine occurrence.
-        for h in hits:
-            h["verified"] = h["text"] in verified_texts
-
-        # Verified exact matches are NEVER truncated, regardless of whether
-        # they came from semantic search (possibly with a non-zero distance)
-        # or the exact-match pass - a hit that overlapped with the semantic
-        # top_k must not silently reduce how many verified matches survive the
-        # cutoff. Only the purely-semantic (unverified) hits are capped.
-        hits.sort(key=lambda h: h["distance"])
+        hits = sorted(by_id.values(), key=lambda h: h["distance"])
         verified_hits = [h for h in hits if h["verified"]]
         other_hits = [h for h in hits if not h["verified"]]
         return verified_hits + other_hits[: max(0, top_k - len(verified_hits))]
 
-    def paper_lookup_summary(self, hits, year_limit: int | None = None):
-        """Group hits by (subject, year, session, paper, variant, question) so
-        the caller can answer 'which years was this asked' directly.
-
-        year_limit restricts results to a literal recent calendar window
-        anchored on TODAY's real date (e.g. 5 -> only years within
-        [this_year - 4, this_year]) - NOT relative to whichever year this
-        particular topic last happened to appear in. A topic last asked in
-        2019 is genuinely outside "the last 5 years" if today is 2026, even
-        though 2019 is that topic's own most recent occurrence; anchoring on
-        the topic's own max year would wrongly call 2019 "recent" just
-        because nothing more recent existed for that specific topic.
-
-        Only uses exact-text-verified hits when any exist: for a rare topic
-        with few genuine matches, search() pads the remaining top_k slots
-        with the closest semantic neighbors to keep context useful for
-        general_qa answers - but those are NOT confirmed occurrences of the
-        term and must not be reported as "this was asked in year X" (this
-        was a real bug: a semantically-similar-but-unrelated question was
-        being listed as a match for "franchising" purely because it filled a
-        leftover top_k slot). Falls back to all hits only if verification
-        couldn't identify anything at all, so a query that couldn't extract
-        a usable exact-match term doesn't silently return zero results."""
+    def paper_lookup_summary(self, hits, year_limit=None):
         verified_hits = [h for h in hits if h.get("verified")]
         candidates = verified_hits if verified_hits else hits
-
         seen = set()
         occurrences = []
         for h in candidates:
             m = h["metadata"]
             if m.get("question_number") is None:
-                continue  # not an actual exam question (e.g. an examiner report)
+                continue
             key = (m.get("subject"), m.get("year"), m.get("session"), m.get("paper"),
                    m.get("variant"), m.get("question_number"))
             if key in seen:
                 continue
             seen.add(key)
             occurrences.append({**m, "question_text": h["text"]})
-
         if year_limit is not None and occurrences:
             this_year = datetime.date.today().year
             cutoff_year = this_year - year_limit + 1
             occurrences = [m for m in occurrences if (m.get("year") or 0) >= cutoff_year]
-
         occurrences.sort(key=lambda m: (m.get("year") or 0, m.get("session") or ""))
         return occurrences
 
-    def route(self, query: str, subject: str | None = None, top_k: int = 10):
+    def route(self, query: str, subject=None, level=None, top_k: int = 10):
         intent = self.classify_intent(query)
-        # If the caller didn't pin a subject (e.g. via the UI filter), infer
-        # one from the query text itself when it names a subject explicitly.
         if subject is None:
             subject = detect_subject(query)
-        # Strip any "last/past N years" phrase before it's used for semantic
-        # search: leaving it in shifts the embedding away from the actual
-        # topic (e.g. "photosynthesis ... in past 8 years" embeds noticeably
-        # differently than "photosynthesis"), silently changing which chunks
-        # get retrieved based purely on how the year window was phrased -
-        # completely unrelated to the topic itself.
         search_query = YEAR_LIMIT_RE.sub("", query).strip()
         core_topic = extract_core_topic(query, subject)
-        hits = self.search(search_query, subject=subject, top_k=top_k, core_topic=core_topic)
+        hits = self.search(search_query, subject=subject, level=level, top_k=top_k, core_topic=core_topic)
         result = {"intent": intent, "hits": hits}
         if intent == "paper_lookup":
             year_limit = requested_year_limit(query)
@@ -289,20 +274,24 @@ class Retriever:
 
 
 def main():
-    query = sys.argv[1] if len(sys.argv) > 1 else "which years was depreciation asked in accounting"
+    args = sys.argv[1:]
+    level = None
+    if "--level" in args:
+        i = args.index("--level")
+        level = args[i + 1] if i + 1 < len(args) else None
+        del args[i:i + 2]
+    query = args[0] if args else "which years was depreciation asked in accounting"
+
     r = Retriever()
-    result = r.route(query)
-
-    print(f"Query: {query!r}")
+    result = r.route(query, level=level)
+    print(f"Query: {query!r}  (level={level})")
     print(f"Detected intent: {result['intent']}\n")
-
     if result["intent"] == "paper_lookup":
         print("Occurrences found:")
         for m in result["occurrences"]:
             print(f"  - {m.get('subject')} {m.get('year')} {m.get('session')} "
                   f"Paper {m.get('paper')} Variant {m.get('variant')} Q{m.get('question_number')}")
         print()
-
     print("Top retrieved chunks:")
     for h in result["hits"][:5]:
         m = h["metadata"]

@@ -168,7 +168,7 @@ def select_worked_examples(hits: list, year_limit: int, limit: int = 3) -> list:
             continue  # not an actual exam question (e.g. syllabus/examiner report chunk)
         if (m.get("year") or 0) < cutoff_year:
             continue
-        if is_mcq(h["text"]):
+        if m.get("type") == "mcq" or is_mcq(h["text"]):
             continue
         key = (m.get("subject"), m.get("year"), m.get("session"), m.get("paper"),
                m.get("variant"), m.get("question_number"))
@@ -283,6 +283,7 @@ def format_paper_lookup_answer(
 
 
 def generate(query: str, subject: str | None = None, mode: str | None = None,
+             level: str | None = None,
              include_table: bool = True, link_builder=pdf_page_link):
     """mode, when given, is an explicit UI choice ("ask" or "find") that
     overrides the auto-classified intent entirely - "Find" always does a
@@ -298,7 +299,7 @@ def generate(query: str, subject: str | None = None, mode: str | None = None,
     link_builder is forwarded to format_paper_lookup_answer - see its
     docstring."""
     retriever = Retriever()
-    result = retriever.route(query, subject=subject, top_k=10)
+    result = retriever.route(query, subject=subject, level=level, top_k=10)
     natural_intent = result["intent"]  # before any mode override, for the check below
 
     if mode == "find":
