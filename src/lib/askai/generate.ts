@@ -1,201 +1,337 @@
 /**
- * Answer generation for Ask-AI, in-process. Ported from the Python
- * generate_answer.py: retrieves grounding chunks, then asks a free/paid LLM for
- * an explanation + worked past-paper examples, citing the source papers.
+ * Ask-AI orchestrator — LLM first. Every request goes: plan → (search → rank) →
+ * answer.
  *
- * Find mode / paper_lookup returns the occurrences table directly (no LLM).
- * (Web search from the Python version is omitted here; the past-paper grounding
- * is the core — it can be added later behind a search API.)
+ *  - plan   (planner.ts): what does the student want, and is the past-paper index
+ *           worth searching at all? Greetings/meta get a direct reply, no search.
+ *  - search (retrieve.ts): level-scoped pgvector + keyword retrieval on the
+ *           planner's exam-wording phrasings.
+ *  - rank   (rank.ts): the LLM sorts candidates into best / conceptual / related
+ *           matches, each with the paper it appeared in and a one-line reason.
+ *  - answer: Find returns the ranked matches; Ask explains / solves / presents
+ *           real questions, citing papers and never inventing references.
  */
+import { chatText, type Turn } from './llm';
+import { planQuery, type Intent, type Mode, type QueryPlan } from './planner';
+import { rankCandidates, rankedFlat, type RankResult, type Ranked, type Tier } from './rank';
 import {
-  route, paperLookupSummary, requestedYearLimit,
-  type Hit, type Occurrence, type RouteResult,
+  dedupeByPaperQuestion, filterYears, normalizeLevel, refLabel, searchMany,
+  type Hit, type Level,
 } from './retrieve';
 
-interface Provider { name: string; url: string; apiKey: string | undefined; model: string; }
+export { chatText as callLLM };
 
-function providers(): Provider[] {
-  const groq = (process.env.GROQ_API_KEY || '').trim();
-  const groqModel = (process.env.GROQ_MODEL || 'llama-3.3-70b-versatile').trim();
-  const xai = (process.env.XAI_API_KEY || process.env.GROK_API_KEY || '').trim();
-  const samba = (process.env.SAMBANOVA_API_KEY || '').trim();
-  const openrouter = (process.env.OPENROUTER_API_KEY || '').trim();
-  return [
-    // Groq first — it's the key that's configured in Railway, and it's fast.
-    { name: 'groq', url: 'https://api.groq.com/openai/v1/chat/completions', apiKey: groq, model: groqModel },
-    { name: 'xai', url: 'https://api.x.ai/v1/chat/completions', apiKey: xai, model: 'grok-4.5' },
-    { name: 'sambanova', url: 'https://api.sambanova.ai/v1/chat/completions', apiKey: samba, model: 'Meta-Llama-3.3-70B-Instruct' },
-    { name: 'openrouter', url: 'https://openrouter.ai/api/v1/chat/completions', apiKey: openrouter, model: 'openai/gpt-oss-20b:free' },
-    { name: 'openrouter', url: 'https://openrouter.ai/api/v1/chat/completions', apiKey: openrouter, model: 'google/gemma-4-31b-it:free' },
-    { name: 'openrouter', url: 'https://openrouter.ai/api/v1/chat/completions', apiKey: openrouter, model: 'nvidia/nemotron-3-super-120b-a12b:free' },
-  ];
+export interface MatchOut {
+  id: string;
+  tier: Tier;
+  why: string;
+  subject: string | null; year: number | null; session: string | null; paper: string | null;
+  variant: string | null; questionNumber: string | null; topic: string | null;
+  /** kept for the existing citations table */
+  topicGeneral: string | null;
+  type: string | null; level: string | null;
+  reference: string;
+  preview: string;
+  text: string;
 }
 
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-
-export async function callLLMWithFallback(system: string, user: string): Promise<string> {
-  let lastError = 'no provider';
-  for (const p of providers()) {
-    if (!p.apiKey) continue;
-    for (let attempt = 0; attempt < 2; attempt++) {
-      try {
-        const res = await fetch(p.url, {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${p.apiKey}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ model: p.model, messages: [
-            { role: 'system', content: system }, { role: 'user', content: user },
-          ] }),
-          signal: AbortSignal.timeout(90_000),
-        });
-        if (res.status === 429) {
-          lastError = `${p.name}/${p.model} rate-limited`;
-          if (attempt < 1) await sleep(3000 * (attempt + 1));
-          continue;
-        }
-        if (!res.ok) { lastError = `${p.name}/${p.model} ${res.status}`; break; }
-        const data = await res.json();
-        const content = data?.choices?.[0]?.message?.content;
-        if (typeof content === 'string' && content.trim()) return content;
-        lastError = `${p.name}/${p.model} empty`; break;
-      } catch (e) { lastError = `${p.name}/${p.model} ${e instanceof Error ? e.message : e}`; break; }
-    }
-  }
-  throw new Error(`All AI providers are currently unavailable. Last error: ${lastError}`);
+export interface AskAiInput {
+  query: string;
+  mode: Mode;
+  level?: string | null;
+  subject?: string | null;
+  history?: unknown;
 }
 
+export interface AskAiOutput {
+  type: 'exam_question' | 'smalltalk';
+  mode: Mode;
+  intent: Intent;
+  /** full Markdown answer (also what chat history keeps) */
+  answer: string;
+  /** one-line lead for Find results (the UI renders the structured matches under it) */
+  summary: string | null;
+  level: Level;
+  subject: string | null;
+  topic: string | null;
+  searched: boolean;
+  candidates: number;
+  matches: { best: MatchOut[]; conceptual: MatchOut[]; related: MatchOut[] };
+  citations: MatchOut[];
+  planner: 'llm' | 'heuristic';
+  ranker: 'llm' | 'heuristic' | null;
+}
+
+const levelName = (l: Level) => (l === 'olevel' ? 'O Level' : 'A Level');
 const LEADING_QNUM_RE = /^\s*\d{1,2}\s*/;
-const BULLET_OR_PREFIX_RE = /^(\s*-\s+)or\b:?\s*/gim;
-const stripRedundantOrPrefix = (t: string) => t.replace(BULLET_OR_PREFIX_RE, '$1');
+const stripRedundantOrPrefix = (t: string) => t.replace(/^(\s*-\s+)or\b:?\s*/gim, '$1');
 
-export function questionPreview(text: string, numWords = 7): string {
-  let t = text.replace(LEADING_QNUM_RE, '').replace(/\s+/g, ' ').trim();
-  const words = t.split(' ');
-  t = words.slice(0, numWords).join(' ');
-  if (words.length > numWords) t += '...';
-  return t.replace(/\|/g, '\\|').replace(/\[/g, '(').replace(/\]/g, ')');
+const GREEK: Record<string, string> = {
+  alpha: 'α', beta: 'β', gamma: 'γ', delta: 'δ', Delta: 'Δ', theta: 'θ', lambda: 'λ', mu: 'μ',
+  pi: 'π', rho: 'ρ', sigma: 'σ', Sigma: 'Σ', omega: 'ω', Omega: 'Ω', phi: 'φ', epsilon: 'ε', tau: 'τ', nu: 'ν',
+};
+
+/**
+ * The chat UI renders plain text/Markdown only, yet models still slip LaTeX
+ * into worked solutions. Convert the common constructs to readable plain text
+ * rather than showing raw backslash commands to a student.
+ */
+export function plainMath(text: string): string {
+  let t = text
+    .replace(/\\[()]/g, '')               // \( \)
+    .replace(/\\\[|\\\]/g, '')            // \[ \]
+    .replace(/\$\$?([^$]+?)\$\$?/g, '$1') // $...$ / $$...$$
+    .replace(/\\(?:d|t)?frac\{([^{}]*)\}\{([^{}]*)\}/g, '($1)/($2)')
+    .replace(/\\sqrt\{([^{}]*)\}/g, '√($1)')
+    .replace(/\\(?:text|mathrm|mathbf|mathit|operatorname)\{([^{}]*)\}/g, '$1')
+    .replace(/\^\{\\circ\}|\^\\circ|\\degree/g, '°')
+    .replace(/\^\{([^{}]*)\}/g, '^$1')
+    .replace(/_\{([^{}]*)\}/g, '$1')
+    .replace(/\\times/g, '×').replace(/\\cdot/g, '·').replace(/\\div/g, '÷').replace(/\\pm/g, '±')
+    .replace(/\\approx/g, '≈').replace(/\\(?:le|leq)\b/g, '≤').replace(/\\(?:ge|geq)\b/g, '≥').replace(/\\(?:ne|neq)\b/g, '≠')
+    .replace(/\\(?:rightarrow|to|longrightarrow)\b/g, '→').replace(/\\leftrightarrow\b/g, '⇌').replace(/\\rightleftharpoons\b/g, '⇌')
+    .replace(/\\infty\b/g, '∞').replace(/\\propto\b/g, '∝').replace(/\\%/g, '%')
+    .replace(/\\(?:,|;|:|!|quad|qquad)/g, ' ')
+    .replace(/\\(alpha|beta|gamma|delta|Delta|theta|lambda|mu|pi|rho|sigma|Sigma|omega|Omega|phi|epsilon|tau|nu)\b/g, (_, g: string) => GREEK[g] || g)
+    .replace(/\\left|\\right/g, '')
+    .replace(/\\(?:displaystyle|,)/g, '');
+  // Any leftover \command{...} → its content; bare \command → the word itself.
+  t = t.replace(/\\[a-zA-Z]+\{([^{}]*)\}/g, '$1').replace(/\\([a-zA-Z]+)\b/g, '$1');
+  return t;
 }
 
-function buildContext(result: RouteResult): string {
-  const lines: string[] = [];
-  if (result.intent === 'paper_lookup') {
-    lines.push('Matching past-paper questions found (full detail for each occurrence):');
-    for (const m of result.occurrences || []) {
-      lines.push(
-        `- Subject: ${m.subject} | Year: ${m.year} | Session (month): ${m.session} | ` +
-        `Paper: ${m.paper} | Variant: ${m.variant} | Question number: ${m.question_number}\n` +
-        `  Full question text: ${(m.question_text || '').trim()}`,
-      );
-    }
-  } else {
-    lines.push('Retrieved past-paper excerpts:');
-    for (const h of result.hits.slice(0, 6)) {
-      const m = h.metadata;
-      lines.push(`[${m.subject} ${m.year} ${m.session} Paper ${m.paper} Q${m.question_number}]\n${h.text.slice(0, 500)}`);
-    }
+export function questionPreview(text: string, numWords = 9): string {
+  const words = text.replace(LEADING_QNUM_RE, '').replace(/\s+/g, ' ').trim().split(' ');
+  let t = words.slice(0, numWords).join(' ');
+  if (words.length > numWords) t += '…';
+  return t.replace(/\|/g, '\\|');
+}
+
+function toMatch(r: Ranked): MatchOut {
+  const m = r.hit.metadata;
+  return {
+    id: r.hit.id, tier: r.tier, why: r.why,
+    subject: m.subject, year: m.year, session: m.session, paper: m.paper, variant: m.variant,
+    questionNumber: m.question_number, topic: m.topic, topicGeneral: m.topic, type: m.type, level: m.level,
+    reference: refLabel(m),
+    preview: questionPreview(r.hit.text),
+    text: r.hit.text.replace(LEADING_QNUM_RE, '').trim().slice(0, 2500),
+  };
+}
+
+function tiersOut(rank: RankResult) {
+  return { best: rank.best.map(toMatch), conceptual: rank.conceptual.map(toMatch), related: rank.related.map(toMatch) };
+}
+
+function sanitizeHistory(raw: unknown): Turn[] {
+  if (!Array.isArray(raw)) return [];
+  const turns: Turn[] = [];
+  for (const t of raw) {
+    const role = (t as { role?: unknown })?.role;
+    const content = (t as { content?: unknown })?.content;
+    if ((role !== 'user' && role !== 'assistant') || typeof content !== 'string' || !content.trim()) continue;
+    turns.push({ role, content: content.trim().slice(0, 1200) });
   }
-  return lines.join('\n\n');
+  return turns.slice(-6);
 }
 
-function selectWorkedExamples(hits: Hit[], yearLimit: number, limit = 3): Hit[] {
-  const cutoff = new Date().getFullYear() - yearLimit + 1;
-  const seen = new Set<string>();
-  const out: Hit[] = [];
-  for (const h of hits) {
-    const m = h.metadata;
-    if (m.question_number == null) continue;
-    if ((m.year || 0) < cutoff) continue;
-    if (m.type === 'mcq') continue; // worked examples model full written answers, not MCQs
-    const key = [m.subject, m.year, m.session, m.paper, m.variant, m.question_number].join('|');
-    if (seen.has(key)) continue;
-    seen.add(key);
-    out.push(h);
-    if (out.length >= limit) break;
-  }
-  return out;
-}
+// ---- prompts -------------------------------------------------------------------
 
-function formatWorkedExamplesBlock(examples: Hit[]): string {
-  return examples.map((h) => {
-    const m = h.metadata;
-    const session = (m.session || '').replace(/_/g, '/');
-    const variant = m.variant != null ? ` Variant ${m.variant}` : '';
-    const ref = `${m.subject} ${m.year} ${session} Paper ${m.paper}${variant} Q${m.question_number}`;
-    const text = h.text.trim().replace(LEADING_QNUM_RE, '');
-    return `Question [${ref}]:\n${text}`;
+const FORMAT_RULES = String.raw`FORMATTING RULES (the chat UI renders only plain text and Markdown bold/lists/headings; anything else looks broken):
+- Never use LaTeX or math markup of any kind: no \(...\), \[...\], \frac, ^{}, _{} or backslash commands. Write formulas in plain text, e.g. '6CO2 + 6H2O -> C6H12O6 + 6O2', 'v = u + at', 'x^2' as 'x squared' or 'x^2'.
+- Never truncate quoted question text with '...' — quote the relevant part in full or paraphrase cleanly.
+- Short paragraphs; Markdown '- ' bullets for lists of distinct facts or marking points. Every marking point, including alternatives, is its own bullet — never start a bullet with 'OR'.
+- Cite papers exactly as they appear in the context (e.g. 'Chemistry 2023 May/June Paper 2 Variant 1 Q8'). Never invent, alter or guess a paper reference; if the context has no relevant question, say so plainly.`;
+
+const EXPLAIN_SYSTEM = `You are Ask AI, a study assistant for Cambridge O/A Level students, grounded in real past-paper questions. Always respond in English.
+
+${FORMAT_RULES}
+
+Answer in two parts, in this order. The labels 'PART 1'/'PART 2' are instructions for you — never print them, and never put the explanation under its own heading; start straight in with the explanation:
+
+PART 1 — Explanation: a clear, accurate, exam-focused explanation of what the student asked, at the right depth for the level. Use the past-paper context to anchor it in how examiners actually ask about this, citing the paper(s) that informed it. You may draw on standard Cambridge syllabus knowledge for the explanation itself. If the student is asking why they lose marks on something, focus on the common errors and what the mark scheme rewards.
+
+PART 2 — Worked past-paper examples: exactly one heading '### Worked Past-Paper Examples', then answer EACH question listed under 'Questions to answer' in the order given — use the exact question text provided, never substitute different questions, and omit this whole part if none are listed. For each: a level-4 heading ('#### ') with ONLY the paper reference (no 'Question 1' prefix, not bold); restate the question cleanly, bolding each sub-part label together with its instruction sentence (e.g. '**(a) Explain how ...**'), extra data below it in normal weight; then a full answer in normal weight written like a top-scoring candidate: correct terminology, EVERY marking point as its own '- ' bullet, working step by step on its own line for calculations, MCQs as the correct option letter plus a one-line justification. Match depth to the marks available. If a needed numeric value is not present in the question, say so and state the method — never invent a number.`;
+
+const SOLVE_SYSTEM = `You are Ask AI, a Cambridge O/A Level tutor. The student has pasted an exam-style question and wants it solved. Always respond in English.
+
+${FORMAT_RULES}
+
+Answer it the way a top-scoring candidate would, at the level's depth:
+- If the context contains the same or a near-identical past-paper question, say on the first line '**Found in past papers:** <reference>' and use it to match the expected marking points. If not, do not claim it appears anywhere.
+- Then give the full answer: each sub-part with its label bold (e.g. '**(a)**'), EVERY marking point as its own '- ' bullet, working shown step by step on its own line for calculations, MCQs as the correct option letter plus a one-line justification. Match depth to the marks available.
+- Finish with a short '### Examiner tip' section: 2-3 bullets on what candidates typically lose marks on here (draw on the related past-paper questions in the context if useful).
+- If a needed numeric value is missing from the question, say so and state the method — never invent a number.`;
+
+const MAKE_SYSTEM = `You are Ask AI, a Cambridge O/A Level study assistant. The student wants practice questions. Always respond in English.
+
+${FORMAT_RULES}
+
+Use ONLY real past-paper questions from the context — never invent, merge or alter a question. Present the requested number (or all suitable ones if fewer exist, and say so):
+- For each: a level-4 heading '#### <paper reference exactly as given>', then the question text cleanly — MCQ options each on their own line as '- A. ...', structured sub-parts each on their own line with their marks if shown.
+- Then one heading '### Answers' and, per question (same order), a bold label with the paper reference and: for MCQs the correct option letter plus a one-line justification; for structured questions the marking points as '- ' bullets, matched to the marks available.
+- Do not add explanations before the questions; a one-line intro at most.`;
+
+const CHAT_SYSTEM = `You are Ask AI, a friendly study assistant for Cambridge O/A Level students inside the Propel app. Reply briefly (max 3 sentences), warmly, in plain text. You can: explain topics grounded in real past papers, find which past papers a topic or question appeared in (the Find tab), solve pasted exam questions, and give real past-paper practice questions.`;
+
+// ---- context building ----------------------------------------------------------
+
+const snip = (t: string, n: number) => t.replace(LEADING_QNUM_RE, '').replace(/\s+/g, ' ').trim().slice(0, n);
+
+function contextBlock(items: Ranked[], maxChars: number, tierNote = true): string {
+  return items.map((r, i) => {
+    const m = r.hit.metadata;
+    const note = tierNote && r.why ? ` — ${r.tier === 'best' ? 'same question' : r.tier}: ${r.why}` : '';
+    return `[${i + 1}] ${refLabel(m)} (${m.type || 'question'}${m.topic ? `, topic: ${m.topic}` : ''})${note}\n${snip(r.hit.text, maxChars)}`;
   }).join('\n\n');
 }
 
-export function formatPaperLookupAnswer(occurrences: Occurrence[], yearLimit?: number): string {
-  if (!occurrences.length) {
-    return `No matching questions were found${yearLimit ? ` in the last ${yearLimit} years` : ''} for this query.`;
-  }
-  const note = yearLimit ? ` (last ${yearLimit} years)` : '';
-  const lines = [
-    `Found **${occurrences.length}** matching question(s)${note}:\n`,
-    '| # | Year | Session (Month) | Paper | Variant | Question # | Question |',
-    '|---|------|------------------|-------|---------|------------|----------|',
-  ];
-  occurrences.forEach((m, i) => {
-    const session = (m.session || '').replace(/_/g, '/');
-    const variant = m.variant != null ? m.variant : '-';
-    lines.push(`| ${i + 1} | ${m.year} | ${session} | ${m.paper} | ${variant} | ${m.question_number} | ${questionPreview(m.question_text || '')} |`);
-  });
-  return lines.join('\n');
+function pickWorkedExamples(rank: RankResult, limit = 2): Ranked[] {
+  const recent = new Date().getFullYear() - 5;
+  const pool = [...rank.best, ...rank.conceptual, ...rank.related].filter((r) => r.hit.metadata.type !== 'mcq');
+  const out = pool.filter((r) => (r.hit.metadata.year || 0) >= recent).slice(0, limit);
+  if (out.length < limit) for (const r of pool) { if (out.length >= limit) break; if (!out.includes(r)) out.push(r); }
+  return out;
 }
 
-const SYSTEM_PROMPT = String.raw`You are a study assistant for Cambridge O/A Level past exam papers. Answer the user's question using ONLY the provided context (past-paper excerpts). Always respond in English.
+function describeYears(plan: QueryPlan): string {
+  if (plan.yearFrom != null && plan.yearTo != null) return plan.yearFrom === plan.yearTo ? `${plan.yearFrom}` : `${plan.yearFrom}–${plan.yearTo}`;
+  if (plan.yearFrom != null) return `${plan.yearFrom} onwards`;
+  return `up to ${plan.yearTo}`;
+}
 
-FORMATTING RULES (the chat UI only renders plain text and Markdown bold/lists/headings - nothing else renders, so violating these makes the answer look broken):
-- Never use LaTeX or math markup of any kind: no \(...\), \[...\], \mathrm{}, \ldots, ^{}, _{}, or any other backslash command. Write chemical and math formulas in plain text instead, e.g. '6CO2 + 6H2O -> C6H12O6 + 6O2' (plain digits, no subscript/superscript markup, '->' or '→' for arrows).
-- Never truncate quoted question text with '...' or '\ldots' - either quote the relevant part in full or paraphrase it cleanly in your own words; don't leave a dangling ellipsis.
-- Use short paragraphs and Markdown bullet points ('- ') for lists of distinct facts or marking points, not one dense run-on paragraph.
-- Every distinct marking point in an answer, including alternative ('OR ...') marking points, must be its own Markdown bullet line starting with '- ' - never write alternatives as plain lines of text, even in a short answer with only 2-3 points.
+function scopeLine(plan: QueryPlan, level: Level): string {
+  return `${levelName(level)}${plan.subject ? ` ${plan.subject}` : ''}`;
+}
 
-Structure your response in two parts, in this order. These 'PART 1' / 'PART 2' labels below are instructions for YOU only - never print the words 'PART 1' or 'PART 2' in your actual answer, and never print the explanation under its own heading either; start straight in with the explanation text itself:
+// ---- Find -----------------------------------------------------------------------
 
-PART 1 - Explanation: a clear, accurate explanation of the topic grounded in the provided context, citing which paper(s) informed it (e.g. 'Accounting 2023 May_June Paper 1 Q16'). If the context doesn't contain enough information, say so honestly rather than making things up.
+const TIER_TITLES: Record<Tier, string> = {
+  best: 'Best match',
+  conceptual: 'Same concept, different framing',
+  related: 'Related — same technique or syllabus area',
+};
 
-PART 2 - Worked past-paper examples: this part gets exactly one heading, '### Worked Past-Paper Examples', immediately followed by the answers - answer EACH question listed in 'Questions to answer' below, one at a time, in the order given - use the exact question text provided, do not invent or substitute different questions, and skip this part entirely if no questions are listed there. For each one: give the question a level-4 Markdown heading ('#### ') with ONLY its paper reference, no 'Question 1' / 'Question 2' numbering prefix and NOT bold text (e.g. '#### Biology 2025 Oct/Nov Paper 2 Q4', NOT '**Question 1 - Biology 2025 Oct/Nov Paper 2 Q4**'), restate the question text cleanly below it - bold each sub-part label TOGETHER WITH the instruction/question sentence that directly follows it on the same line (e.g. '**(a) Explain how the structure of a leaf is adapted for photosynthesis.**'); any extra data, passages, or context given below that sub-part's instruction (not the instruction itself) stays normal weight - then give a full answer in normal (non-bold) weight, written the way a top-scoring Cambridge O/A Level candidate would: correct subject terminology, EVERY marking point as its own '- ' bullet - never write the answer as flowing prose/sentences, even a single-sentence answer must be a bullet. Never write the word 'OR' at the start of a bullet - each bullet being its own line already shows it's a separate valid alternative. All working shown step-by-step on its own line for calculations, and for multiple-choice questions the correct option letter followed by a one-line justification. Match the depth of the answer to the marks available. If a calculation needs a numeric value that isn't present in the given question text or context, say plainly that the value isn't given and state the method/formula that would be used - never invent, guess, or assume a placeholder number.`;
+function formatFindAnswer(query: string, plan: QueryPlan, rank: RankResult, candidates: number, level: Level, yearNote: string) {
+  const total = rankedFlat(rank).length;
+  const scope = scopeLine(plan, level);
+  const topic = plan.topic ? ` on **${plan.topic}**` : '';
+  if (!total) {
+    const summary = `Searched ${candidates} ${scope} past-paper questions${topic} — none is a genuine match.`;
+    const answer = `${summary}\n\nNothing in the ${scope} index closely matches “${query}”. Try the wording the syllabus uses, pick the subject under Scope, or check you're on the right level (${levelName(level)}).`;
+    return { summary, answer };
+  }
+  const counts: string[] = [];
+  if (rank.best.length) counts.push(`${rank.best.length} best match${rank.best.length > 1 ? 'es' : ''}`);
+  if (rank.conceptual.length) counts.push(`${rank.conceptual.length} on the same concept`);
+  if (rank.related.length) counts.push(`${rank.related.length} related`);
+  const window = plan.yearFrom != null || plan.yearTo != null ? ` (${describeYears(plan)})` : '';
+  const rankNote = rank.source === 'heuristic' ? ' AI ranking was busy, so these are ordered by similarity only.' : '';
+  const summary = `Searched ${candidates} ${scope} past-paper questions${topic}${window}: ${counts.join(', ')}.${yearNote ? ` ${yearNote}` : ''}${rankNote}`;
+  const sections: string[] = [summary];
+  for (const tier of ['best', 'conceptual', 'related'] as Tier[]) {
+    if (!rank[tier].length) continue;
+    sections.push(`### ${TIER_TITLES[tier]}${tier !== 'best' ? ` (${rank[tier].length})` : ''}\n` +
+      rank[tier].map((r) => `- **${refLabel(r.hit.metadata)}**${r.why ? ` — ${r.why}` : ''}\n  “${questionPreview(r.hit.text, 14)}”`).join('\n'));
+  }
+  return { summary, answer: sections.join('\n\n') };
+}
 
-export interface GenerateResult { answer: string; result: RouteResult; }
+// ---- Ask ------------------------------------------------------------------------
 
-/** mode overrides the auto-classified intent: "find" -> paper lookup, "ask" -> explanation. */
-export async function generate(
-  query: string, opts: { subject?: string | null; level?: string | null; mode?: string | null } = {},
-): Promise<GenerateResult> {
-  const result = await route(query, { subject: opts.subject, level: opts.level, topK: 10 });
-  const naturalIntent = result.intent;
-  if (opts.mode === 'find') result.intent = 'paper_lookup';
-  else if (opts.mode === 'ask') result.intent = 'general_qa';
+function askUserPrompt(query: string, plan: QueryPlan, rank: RankResult, allHits: Hit[], level: Level): { system: string; user: string } {
+  const ranked = rankedFlat(rank);
+  const header = `Student (${scopeLine(plan, level)}) asks: ${query}${plan.topic ? `\nInterpreted topic: ${plan.topic}` : ''}`;
 
-  const yearLimit = requestedYearLimit(query);
-
-  if (result.intent === 'paper_lookup') {
-    if (!result.occurrences) {
-      result.year_limit = yearLimit;
-      result.occurrences = paperLookupSummary(result.hits, yearLimit);
-    }
-    return { answer: formatPaperLookupAnswer(result.occurrences, result.year_limit), result };
+  if (plan.intent === 'solve') {
+    const ctx = [...rank.best.slice(0, 2), ...rank.conceptual.slice(0, 3), ...rank.related.slice(0, 2)];
+    return {
+      system: SOLVE_SYSTEM,
+      user: `${header}\n\nPast-paper context (closest first; "same question" = this is the pasted question):\n${ctx.length ? contextBlock(ctx, 1500) : '(no matching past-paper question found — solve from syllabus knowledge and do not claim a paper source)'}`,
+    };
   }
 
-  const context = buildContext(result);
-  const worked = selectWorkedExamples(result.hits, yearLimit);
-  const examplesBlock = worked.length
-    ? `\n\nQuestions to answer (most relevant, last ${yearLimit} years):\n${formatWorkedExamplesBlock(worked)}`
+  if (plan.intent === 'make_questions') {
+    const count = plan.count ?? 5;
+    const pool = (ranked.length ? ranked : allHits.map((h) => ({ hit: h, tier: 'related' as Tier, why: '' })))
+      .filter((r) => !plan.questionType || r.hit.metadata.type === plan.questionType || ranked.length < count);
+    const ctx = pool.slice(0, Math.max(count + 2, 6));
+    return {
+      system: MAKE_SYSTEM,
+      user: `${header}\nRequested: ${count} ${plan.questionType === 'mcq' ? 'MCQs' : plan.questionType === 'structured' ? 'structured questions' : 'questions'}.\n\nReal past-paper questions available (most relevant first):\n${ctx.length ? contextBlock(ctx, 1400, false) : '(none found)'}`,
+    };
+  }
+
+  const ctx = ranked.slice(0, 5);
+  const worked = pickWorkedExamples(rank, 2);
+  const examples = worked.length
+    ? `\n\nQuestions to answer (worked examples, in this order):\n${worked.map((r) => `Question [${refLabel(r.hit.metadata)}]:\n${snip(r.hit.text, 1500)}`).join('\n\n')}`
     : '';
-  const userPrompt = `Question: ${query}\n\nContext:\n${context}${examplesBlock}`;
+  return {
+    system: EXPLAIN_SYSTEM,
+    user: `${header}\n\nPast-paper context (most relevant first):\n${ctx.length ? contextBlock(ctx, 500) : '(no closely related past-paper question was found — explain from syllabus knowledge and say the papers had nothing directly on this)'}${examples}`,
+  };
+}
 
-  let answer = stripRedundantOrPrefix(await callLLMWithFallback(SYSTEM_PROMPT, userPrompt));
+// ---- entry point ----------------------------------------------------------------
 
-  // Surface which past-paper questions this topic shows up in (unless Ask mode is
-  // answering a query naturally phrased as a paper lookup).
-  if (!(opts.mode === 'ask' && naturalIntent === 'paper_lookup')) {
-    const occurrences = paperLookupSummary(result.hits, yearLimit);
-    result.occurrences = occurrences;
-    result.year_limit = yearLimit;
-    if (occurrences.length) {
-      answer += `\n\n---\n\n### Related past-paper questions\n\n${formatPaperLookupAnswer(occurrences, yearLimit)}`;
-    }
+export async function askAi(input: AskAiInput): Promise<AskAiOutput> {
+  const level = normalizeLevel(input.level) ?? 'olevel';
+  const query = input.query.trim();
+  const history = sanitizeHistory(input.history);
+  const mode: Mode = input.mode === 'find' ? 'find' : 'ask';
+
+  const plan = await planQuery(query, { mode, level, subject: input.subject, history });
+  const empty = { best: [], conceptual: [], related: [] };
+
+  if (!plan.needsSearch) {
+    const answer = plainMath(plan.reply
+      || await chatText(CHAT_SYSTEM, query, { tier: 'fast', maxTokens: 300, temperature: 0.5, history, timeoutMs: 30_000 }));
+    return {
+      type: 'smalltalk', mode, intent: plan.intent, answer, summary: null, level,
+      subject: plan.subject, topic: plan.topic, searched: false, candidates: 0,
+      matches: empty, citations: [], planner: plan.source, ranker: null,
+    };
   }
-  return { answer, result };
+
+  const isFind = mode === 'find' || plan.intent === 'find_questions';
+  // Candidate counts are sized for Groq's per-minute token budget as much as quality.
+  const topK = isFind ? 24 : plan.intent === 'make_questions' ? 14 : 12;
+  const hasYears = plan.yearFrom != null || plan.yearTo != null;
+  let hits = dedupeByPaperQuestion(await searchMany(plan.searchQueries, {
+    level, subject: plan.subject, topK: hasYears ? topK * 2 : topK,
+    keywords: plan.keywords, questionType: plan.questionType,
+  }));
+  let yearNote = '';
+  if (hasYears) {
+    const inWindow = filterYears(hits, plan.yearFrom, plan.yearTo);
+    if (inWindow.length) hits = inWindow.slice(0, topK);
+    else { yearNote = `Nothing matched in ${describeYears(plan)}, so these are the closest from other years.`; hits = hits.slice(0, topK); }
+  }
+
+  const rank = await rankCandidates(query, plan, hits, level, isFind ? 'smart' : 'fast');
+  const matches = tiersOut(rank);
+  const citations = [...matches.best, ...matches.conceptual, ...matches.related];
+
+  if (isFind) {
+    const { summary, answer } = formatFindAnswer(query, plan, rank, hits.length, level, yearNote);
+    return {
+      type: 'exam_question', mode: 'find', intent: plan.intent, answer, summary, level,
+      subject: plan.subject, topic: plan.topic, searched: true, candidates: hits.length,
+      matches, citations, planner: plan.source, ranker: rank.source,
+    };
+  }
+
+  // The UI lists best/conceptual matches ("Where this appears in past papers")
+  // from `matches` under the answer, so nothing is appended to the Markdown here.
+  const { system, user } = askUserPrompt(query, plan, rank, hits, level);
+  const answer = plainMath(stripRedundantOrPrefix(await chatText(system, user, {
+    tier: 'smart', maxTokens: 2600, temperature: 0.2, history, timeoutMs: 90_000,
+  })));
+
+  return {
+    type: 'exam_question', mode: 'ask', intent: plan.intent, answer, summary: null, level,
+    subject: plan.subject, topic: plan.topic, searched: true, candidates: hits.length,
+    matches, citations, planner: plan.source, ranker: rank.source,
+  };
 }

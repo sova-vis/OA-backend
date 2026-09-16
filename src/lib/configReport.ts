@@ -68,12 +68,13 @@ export function serviceReadiness(): ServiceStatus[] {
     },
     {
       key: 'askAiLlm',
-      label: 'Ask-AI answers (in-process; LLM for "Ask" mode)',
+      label: 'Ask-AI (in-process; Groq LLM plans, ranks and answers)',
       ready:
+        has(process.env.GROQ_API_KEY) ||
         has(process.env.XAI_API_KEY) || has(process.env.GROK_API_KEY) ||
         has(process.env.SAMBANOVA_API_KEY) || has(process.env.OPENROUTER_API_KEY),
       critical: false,
-      hint: 'Set XAI_API_KEY (or SAMBANOVA_API_KEY / OPENROUTER_API_KEY) — "Ask" explanations need an LLM; "Find" works without. Retrieval uses the pgvector index in Supabase.',
+      hint: 'Set GROQ_API_KEY (primary; XAI_API_KEY / SAMBANOVA_API_KEY / OPENROUTER_API_KEY are fallbacks) — Ask AI plans, ranks and answers with it. Retrieval uses the pgvector index in Supabase.',
     },
     {
       key: 'googleDrive',

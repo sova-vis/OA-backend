@@ -33,8 +33,8 @@ import institutionRoutes from './institution.routes';
 import datesheetRoutes from './datesheet.routes';
 import billingRoutes from './billing.routes';
 import { clerkAuth, warmupClerkVerifier } from './lib/clerkAuth';
+import { warmupEmbedder } from './lib/askai/embed';
 import { requirePro, BILLING_ENFORCED } from './lib/entitlements';
-import { supabase } from './lib/supabase';
 import { SAFEPAY_CONFIGURED, SAFEPAY_WEBHOOK_READY, SAFEPAY_ENV } from './lib/safepay';
 import { rateLimit } from './lib/rateLimit';
 import { logConfigReport, serviceReadinessMap } from './lib/configReport';
@@ -304,20 +304,9 @@ app.use('/paper-parser', clerkAuth, requirePro, aiLimit, paperParserRoutes);
 // Health check — includes subsystem readiness booleans (never secrets) so a
 // misconfigured deploy is diagnosable without shell access.
 app.get('/health', async (_req: Request, res: Response) => {
-  // Temporary billing diagnostic (no secrets): which DB the Supabase REST client
-  // points at, and whether student_billing is reachable through it. Remove later.
-  let billingDb: { host: string; tableReachable: boolean; error?: string };
-  try {
-    let host = 'unset';
-    try { host = new URL(process.env.SUPABASE_URL || '').host; } catch { /* keep 'unset' */ }
-    const probe = await supabase.from('student_billing').select('clerk_id').limit(1);
-    billingDb = probe.error
-      ? { host, tableReachable: false, error: String(probe.error.message).slice(0, 160) }
-      : { host, tableReachable: true };
-  } catch (e) {
-    billingDb = { host: 'error', tableReachable: false, error: String((e as Error)?.message || e).slice(0, 160) };
-  }
-  res.json({ status: 'ok', timestamp: new Date().toISOString(), billingEnforced: BILLING_ENFORCED, billingDb, safepay: { configured: SAFEPAY_CONFIGURED, webhookReady: SAFEPAY_WEBHOOK_READY, env: SAFEPAY_ENV }, services: serviceReadinessMap() });
+  // Non-secret readiness booleans only — the temporary billingDb probe (a live DB
+  // query + internal host echoed on every public /health hit) has been removed.
+  res.json({ status: 'ok', timestamp: new Date().toISOString(), billingEnforced: BILLING_ENFORCED, safepay: { configured: SAFEPAY_CONFIGURED, webhookReady: SAFEPAY_WEBHOOK_READY, env: SAFEPAY_ENV }, services: serviceReadinessMap() });
 });
 
 // Root route
@@ -332,6 +321,9 @@ app.listen(PORT, () => {
   console.log('OA grading sidecar startup is handled by /qa-grading on-demand checks.');
   logConfigReport();
   void warmupClerkVerifier();
+  // Load the Ask-AI embedding model now (~430 MB, cached) so the first student
+  // question after a deploy doesn't wait for it. ASK_AI_WARMUP=false to skip.
+  if (process.env.ASK_AI_WARMUP !== 'false') void warmupEmbedder();
 });
 
 export default app;

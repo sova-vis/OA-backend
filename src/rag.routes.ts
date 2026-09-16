@@ -1,69 +1,46 @@
 import { Router, Request, Response } from "express";
 import multer from "multer";
 import { grokEnabled, grokChatJson, grokVisionModel, grokErrorMessage } from "./lib/grok";
-import { generate, questionPreview, callLLMWithFallback } from "./lib/askai/generate";
-import { AskAiIndexUnavailable, type Occurrence } from "./lib/askai/retrieve";
+import { askAi, plainMath } from "./lib/askai/generate";
+import { chatText } from "./lib/askai/llm";
+import { ALL_SUBJECTS, AskAiIndexUnavailable } from "./lib/askai/retrieve";
 
-// Ask AI runs IN-PROCESS now (no separate Python service): /query embeds the
-// question with bge-base, searches the pgvector index in Supabase (the
-// match_ask_ai_chunks RPC), and generates the answer via the LLM — see
+// Ask AI runs IN-PROCESS (no separate Python service) and LLM-first: /query plans
+// the request with the LLM (search or not, how to search), embeds with bge-base,
+// searches the pgvector index in Supabase (match_ask_ai_chunks RPC), has the LLM
+// rank the matches (best / conceptual / related), then answers — see
 // src/lib/askai/*. /ask-image is a separate photo/diagram Q&A via Grok vision.
 
 const router = Router();
 const visionUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 12 * 1024 * 1024 } });
 
-function buildCitation(o: Occurrence) {
-  return {
-    subject: o.subject, year: o.year, session: o.session, paper: o.paper,
-    variant: o.variant, questionNumber: o.question_number,
-    topicGeneral: o.topic, topicSyllabus: null,
-    preview: questionPreview(o.question_text || ""),
-    pageImageUrl: null, // DB-sourced questions have no PDF page image
-  };
-}
-
-// Subjects covered by the chatbot's vector store (see scripts/retrieve.py's
-// SUBJECTS list in the Past-Paper Chatbot project) - hardcoded here since
-// that service has no /subjects endpoint of its own.
-const SUBJECTS = [
-  "Accounting", "Additional Maths", "Art and Design", "Biology", "Business Studies",
-  "Chemistry", "Commerce", "Computer Science", "Economics", "English",
-  "Environmental Management", "Geography", "History", "Islamiyat", "Mathematics",
-  "Pakistan Studies", "Physics", "Religious Studies", "Sociology", "Statistics",
-];
-
 router.get("/subjects", async (_req: Request, res: Response) => {
-  return res.json(SUBJECTS.map((s) => ({ name: s })));
+  return res.json(ALL_SUBJECTS.map((s) => ({ name: s })));
 });
 
 router.post("/query", async (req: Request, res: Response) => {
   try {
-    const { question, mode, subject, level } = req.body as {
-      question?: string; mode?: string; subject?: string; level?: string;
+    const { question, mode, subject, level, history } = req.body as {
+      question?: string; mode?: string; subject?: string; level?: string; history?: unknown;
     };
-
     if (!question?.trim()) {
       return res.status(400).json({ error: "Question is required" });
     }
-
-    const { answer, result } = await generate(question, {
-      subject: subject || null, level: level || null, mode: mode || null,
+    const out = await askAi({
+      query: question.slice(0, 4000), mode: mode === "find" ? "find" : "ask",
+      subject: subject || null, level: level || null, history,
     });
-    const occurrences = result.occurrences || [];
-    return res.json({
-      type: "exam_question",
-      mode: result.intent === "paper_lookup" ? "find" : "ask",
-      answer,
-      citations: occurrences.map(buildCitation),
-      source_type: occurrences.length ? "past_paper" : "none",
-      subject: subject || result.hits[0]?.metadata.subject || undefined,
-    });
+    return res.json({ ...out, source_type: out.citations.length ? "past_paper" : "none" });
   } catch (err: any) {
     if (err instanceof AskAiIndexUnavailable) {
       console.error("[RAG] index unavailable:", err.message);
       return res.status(503).json({ error: "Ask AI is still being set up — the question index isn't ready yet." });
     }
-    console.error("[RAG] query failed:", err?.message || err);
+    const msg = String(err?.message || err);
+    console.error("[RAG] query failed:", msg);
+    if (/AI providers? (are|is) currently unavailable|No AI provider/i.test(msg)) {
+      return res.status(503).json({ error: "The AI model is busy or unavailable right now — please try again in a moment." });
+    }
     return res.status(500).json({ error: "Ask AI couldn't answer right now. Please try again." });
   }
 });
@@ -95,7 +72,7 @@ router.post("/explain-mcq", async (req: Request, res: Response) => {
       `Question: ${questionText}\n${optionsText ? "Options:\n" + optionsText + "\n" : ""}` +
       `Correct answer: ${correctAnswer}\nStudent chose: ${studentAnswer || "(none)"}\n\n` +
       `Explain why ${correctAnswer} is correct${wrong ? ` and why ${studentAnswer} is wrong` : ""}.`;
-    const answer = await callLLMWithFallback(system, user);
+    const answer = plainMath(await chatText(system, user, { tier: "smart", maxTokens: 600, temperature: 0.2 }));
     return res.json({ answer });
   } catch (err: any) {
     console.error("[RAG] explain-mcq failed:", err?.message || err);
