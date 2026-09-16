@@ -1,18 +1,26 @@
 import { Router, Request, Response } from "express";
 import multer from "multer";
 import { grokEnabled, grokChatJson, grokVisionModel, grokErrorMessage } from "./lib/grok";
+import { generate, questionPreview } from "./lib/askai/generate";
+import { AskAiIndexUnavailable, type Occurrence } from "./lib/askai/retrieve";
 
-// The main "Ask AI" endpoints (/subjects, /query) are a thin proxy to the
-// Past-Paper Chatbot's own Python service, which already does retrieval +
-// generation + Drive-hosted page images - replacing the previous ~4000-line
-// implementation that lived directly in this file. /ask-image is a separate,
-// self-contained feature (photo/diagram Q&A via Grok vision) that doesn't
-// touch the /query pipeline at all, so it's kept as-is alongside the proxy.
+// Ask AI runs IN-PROCESS now (no separate Python service): /query embeds the
+// question with bge-base, searches the pgvector index in Supabase (the
+// match_ask_ai_chunks RPC), and generates the answer via the LLM — see
+// src/lib/askai/*. /ask-image is a separate photo/diagram Q&A via Grok vision.
 
 const router = Router();
 const visionUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 12 * 1024 * 1024 } });
 
-const CHATBOT_SERVICE_URL = (process.env.CHATBOT_SERVICE_URL || "http://127.0.0.1:8002").replace(/\/$/, "");
+function buildCitation(o: Occurrence) {
+  return {
+    subject: o.subject, year: o.year, session: o.session, paper: o.paper,
+    variant: o.variant, questionNumber: o.question_number,
+    topicGeneral: o.topic, topicSyllabus: null,
+    preview: questionPreview(o.question_text || ""),
+    pageImageUrl: null, // DB-sourced questions have no PDF page image
+  };
+}
 
 // Subjects covered by the chatbot's vector store (see scripts/retrieve.py's
 // SUBJECTS list in the Past-Paper Chatbot project) - hardcoded here since
@@ -30,37 +38,33 @@ router.get("/subjects", async (_req: Request, res: Response) => {
 
 router.post("/query", async (req: Request, res: Response) => {
   try {
-    const { question, history, mode, subject, level } = req.body as {
-      question?: string; history?: unknown; mode?: string; subject?: string; level?: string;
+    const { question, mode, subject, level } = req.body as {
+      question?: string; mode?: string; subject?: string; level?: string;
     };
 
     if (!question?.trim()) {
       return res.status(400).json({ error: "Question is required" });
     }
 
-    const response = await fetch(`${CHATBOT_SERVICE_URL}/chat`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ question, history, mode, subject, level }),
-      // Ask mode now walks through 3 full worked past-paper answers on top
-      // of the explanation, which can genuinely take 45-60s+ from the LLM -
-      // 60s was cutting it dangerously close, causing intermittent failures.
-      signal: AbortSignal.timeout(120000),
+    const { answer, result } = await generate(question, {
+      subject: subject || null, level: level || null, mode: mode || null,
     });
-
-    if (!response.ok) {
-      const body = await response.text();
-      console.error(`[RAG] Chatbot service returned ${response.status}: ${body.slice(0, 300)}`);
-      return res.status(502).json({ error: "Chatbot service error" });
-    }
-
-    const data = await response.json();
-    return res.json(data);
+    const occurrences = result.occurrences || [];
+    return res.json({
+      type: "exam_question",
+      mode: result.intent === "paper_lookup" ? "find" : "ask",
+      answer,
+      citations: occurrences.map(buildCitation),
+      source_type: occurrences.length ? "past_paper" : "none",
+      subject: subject || result.hits[0]?.metadata.subject || undefined,
+    });
   } catch (err: any) {
-    console.error("[RAG] Failed to reach chatbot service:", err?.message || err);
-    return res.status(502).json({
-      error: "Could not reach the chatbot service. Is it running on " + CHATBOT_SERVICE_URL + "?",
-    });
+    if (err instanceof AskAiIndexUnavailable) {
+      console.error("[RAG] index unavailable:", err.message);
+      return res.status(503).json({ error: "Ask AI is still being set up — the question index isn't ready yet." });
+    }
+    console.error("[RAG] query failed:", err?.message || err);
+    return res.status(500).json({ error: "Ask AI couldn't answer right now. Please try again." });
   }
 });
 

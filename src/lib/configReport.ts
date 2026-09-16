@@ -67,11 +67,13 @@ export function serviceReadiness(): ServiceStatus[] {
       hint: 'Set GROQ_API_KEY — the paper parser will error without it.',
     },
     {
-      key: 'askAiChatbot',
-      label: 'Ask-AI RAG service (Past-Paper Chatbot)',
-      ready: has(process.env.CHATBOT_SERVICE_URL),
+      key: 'askAiLlm',
+      label: 'Ask-AI answers (in-process; LLM for "Ask" mode)',
+      ready:
+        has(process.env.XAI_API_KEY) || has(process.env.GROK_API_KEY) ||
+        has(process.env.SAMBANOVA_API_KEY) || has(process.env.OPENROUTER_API_KEY),
       critical: false,
-      hint: 'Set CHATBOT_SERVICE_URL to the deployed Past-Paper Chatbot (defaults to localhost for dev) — Ask/Find text answers 502 without it.',
+      hint: 'Set XAI_API_KEY (or SAMBANOVA_API_KEY / OPENROUTER_API_KEY) — "Ask" explanations need an LLM; "Find" works without. Retrieval uses the pgvector index in Supabase.',
     },
     {
       key: 'googleDrive',
