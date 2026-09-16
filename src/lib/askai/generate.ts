@@ -81,6 +81,13 @@ const levelName = (l: Level) => (l === 'olevel' ? 'O Level' : 'A Level');
 const LEADING_QNUM_RE = /^\s*\d{1,2}\s*/;
 const stripRedundantOrPrefix = (t: string) => t.replace(/^(\s*-\s+)or\b:?\s*/gim, '$1');
 
+// Models sometimes print the prompt's internal section labels ("**Explanation
+// (PART 1)**", "PART 2 — Worked examples:") despite being told not to.
+// Only whole label lines are removed — a label with content on the same line
+// is left alone rather than risk deleting the content.
+const PART_LABEL_LINE_RE = /^[ \t]*(?:\*\*|__|#{1,6}[ \t]*)?[ \t]*(?:PART[ \t]*[12]\b[^\n:]{0,40}:?|Explanation(?:[ \t]*\(PART[ \t]*1\))?[ \t]*:?)[ \t]*(?:\*\*|__)?[ \t]*:?[ \t]*\r?\n/gim;
+const stripPartLabels = (t: string) => t.replace(PART_LABEL_LINE_RE, '').replace(/^\s+/, '');
+
 const GREEK: Record<string, string> = {
   alpha: 'α', beta: 'β', gamma: 'γ', delta: 'δ', Delta: 'Δ', theta: 'θ', lambda: 'λ', mu: 'μ',
   pi: 'π', rho: 'ρ', sigma: 'σ', Sigma: 'Σ', omega: 'ω', Omega: 'Ω', phi: 'φ', epsilon: 'ε', tau: 'τ', nu: 'ν',
@@ -367,9 +374,9 @@ export async function askAi(input: AskAiInput): Promise<AskAiOutput> {
   // The UI lists best/conceptual matches ("Where this appears in past papers")
   // from `matches` under the answer, so nothing is appended to the Markdown here.
   const { system, user } = askUserPrompt(query, plan, rank, hits, level);
-  const answer = plainMath(stripRedundantOrPrefix(await chatText(system, user, {
+  const answer = plainMath(stripPartLabels(stripRedundantOrPrefix(await chatText(system, user, {
     tier: 'smart', maxTokens: 2600, temperature: 0.2, history, timeoutMs: 90_000,
-  })));
+  }))));
 
   return {
     type: 'exam_question', mode: 'ask', intent: plan.intent, answer, summary: null, level,
