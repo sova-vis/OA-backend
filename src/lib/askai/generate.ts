@@ -15,10 +15,14 @@ import {
 interface Provider { name: string; url: string; apiKey: string | undefined; model: string; }
 
 function providers(): Provider[] {
+  const groq = (process.env.GROQ_API_KEY || '').trim();
+  const groqModel = (process.env.GROQ_MODEL || 'llama-3.3-70b-versatile').trim();
   const xai = (process.env.XAI_API_KEY || process.env.GROK_API_KEY || '').trim();
   const samba = (process.env.SAMBANOVA_API_KEY || '').trim();
   const openrouter = (process.env.OPENROUTER_API_KEY || '').trim();
   return [
+    // Groq first — it's the key that's configured in Railway, and it's fast.
+    { name: 'groq', url: 'https://api.groq.com/openai/v1/chat/completions', apiKey: groq, model: groqModel },
     { name: 'xai', url: 'https://api.x.ai/v1/chat/completions', apiKey: xai, model: 'grok-4.5' },
     { name: 'sambanova', url: 'https://api.sambanova.ai/v1/chat/completions', apiKey: samba, model: 'Meta-Llama-3.3-70B-Instruct' },
     { name: 'openrouter', url: 'https://openrouter.ai/api/v1/chat/completions', apiKey: openrouter, model: 'openai/gpt-oss-20b:free' },
@@ -29,7 +33,7 @@ function providers(): Provider[] {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-async function callLLMWithFallback(system: string, user: string): Promise<string> {
+export async function callLLMWithFallback(system: string, user: string): Promise<string> {
   let lastError = 'no provider';
   for (const p of providers()) {
     if (!p.apiKey) continue;

@@ -1,7 +1,7 @@
 import { Router, Request, Response } from "express";
 import multer from "multer";
 import { grokEnabled, grokChatJson, grokVisionModel, grokErrorMessage } from "./lib/grok";
-import { generate, questionPreview } from "./lib/askai/generate";
+import { generate, questionPreview, callLLMWithFallback } from "./lib/askai/generate";
 import { AskAiIndexUnavailable, type Occurrence } from "./lib/askai/retrieve";
 
 // Ask AI runs IN-PROCESS now (no separate Python service): /query embeds the
@@ -65,6 +65,41 @@ router.post("/query", async (req: Request, res: Response) => {
     }
     console.error("[RAG] query failed:", err?.message || err);
     return res.status(500).json({ error: "Ask AI couldn't answer right now. Please try again." });
+  }
+});
+
+/**
+ * POST /rag/explain-mcq — one quick LLM call explaining why an MCQ answer is
+ * wrong, shown inline under the question (no navigation to the Ask AI page).
+ */
+router.post("/explain-mcq", async (req: Request, res: Response) => {
+  try {
+    const { questionText, options, correctAnswer, studentAnswer } = req.body as {
+      questionText?: string; options?: Array<{ label?: string; text?: string }>;
+      correctAnswer?: string; studentAnswer?: string;
+    };
+    if (!questionText?.trim() || !correctAnswer) {
+      return res.status(400).json({ error: "Missing question or correct answer" });
+    }
+    const optionsText = Array.isArray(options)
+      ? options.map((o) => `${o.label}. ${o.text}`).join("\n")
+      : "";
+    const system =
+      "You are a concise Cambridge O/A Level tutor. In 2-4 short sentences or a few " +
+      "'- ' Markdown bullets, explain why the correct option is right and, if the " +
+      "student picked a different one, why theirs is wrong. Plain text / Markdown " +
+      "only — never LaTeX; write any formula in plain text (e.g. '6CO2 + 6H2O -> ...'). " +
+      "Be specific to this question; don't restate the whole question.";
+    const wrong = studentAnswer && studentAnswer !== correctAnswer;
+    const user =
+      `Question: ${questionText}\n${optionsText ? "Options:\n" + optionsText + "\n" : ""}` +
+      `Correct answer: ${correctAnswer}\nStudent chose: ${studentAnswer || "(none)"}\n\n` +
+      `Explain why ${correctAnswer} is correct${wrong ? ` and why ${studentAnswer} is wrong` : ""}.`;
+    const answer = await callLLMWithFallback(system, user);
+    return res.json({ answer });
+  } catch (err: any) {
+    console.error("[RAG] explain-mcq failed:", err?.message || err);
+    return res.status(500).json({ error: "Couldn't explain that right now. Please try again." });
   }
 });
 
