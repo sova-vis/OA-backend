@@ -12,10 +12,10 @@
  *           real questions, citing papers and never inventing references.
  */
 import { chatText, type Turn } from './llm';
-import { planQuery, type Intent, type Mode, type QueryPlan } from './planner';
-import { rankCandidates, rankedFlat, type RankResult, type Ranked, type Tier } from './rank';
+import { planQuery, type Intent, type Mode, type QueryPlan, type SearchKind } from './planner';
+import { TIER_LABELS, TIER_TITLES, rankCandidates, rankedFlat, type RankResult, type Ranked, type Tier } from './rank';
 import {
-  dedupeByPaperQuestion, filterYears, normalizeLevel, refLabel, searchMany,
+  dedupeByPaperQuestion, fetchByReference, filterYears, normalizeLevel, refLabel, searchMany,
   type Hit, type Level,
 } from './retrieve';
 
@@ -57,10 +57,25 @@ export interface AskAiOutput {
   searched: boolean;
   candidates: number;
   matches: { best: MatchOut[]; conceptual: MatchOut[]; related: MatchOut[] };
+  /** UI section titles / badge labels for the tiers (differ for topic vs question searches) */
+  tierTitles: Record<Tier, string>;
+  tierLabels: Record<Tier, string>;
   citations: MatchOut[];
   planner: 'llm' | 'heuristic';
   ranker: 'llm' | 'heuristic' | null;
+  /** what the planner decided (no secrets) — handy in the browser's network tab */
+  plan: {
+    intent: Intent; kind: SearchKind; subject: string | null; topic: string | null;
+    searchQueries: string[]; keywords: string[]; count: number | null; reference: string | null;
+    yearFrom: number | null; yearTo: number | null; questionType: string | null;
+  };
 }
+
+const planOut = (p: QueryPlan): AskAiOutput['plan'] => ({
+  intent: p.intent, kind: p.kind, subject: p.subject, topic: p.topic, searchQueries: p.searchQueries,
+  keywords: p.keywords, count: p.count, reference: p.reference, yearFrom: p.yearFrom, yearTo: p.yearTo,
+  questionType: p.questionType,
+});
 
 const levelName = (l: Level) => (l === 'olevel' ? 'O Level' : 'A Level');
 const LEADING_QNUM_RE = /^\s*\d{1,2}\s*/;
@@ -206,13 +221,19 @@ function scopeLine(plan: QueryPlan, level: Level): string {
 
 // ---- Find -----------------------------------------------------------------------
 
-const TIER_TITLES: Record<Tier, string> = {
-  best: 'Best match',
-  conceptual: 'Same concept, different framing',
-  related: 'Related — same technique or syllabus area',
-};
+/** "Only 5" → keep the first N in tier order (best, then same concept, then related). */
+function capRank(rank: RankResult, count: number | null): RankResult {
+  if (!count || rankedFlat(rank).length <= count) return rank;
+  const out: RankResult = { best: [], conceptual: [], related: [], source: rank.source };
+  let left = count;
+  for (const t of ['best', 'conceptual', 'related'] as Tier[]) {
+    out[t] = rank[t].slice(0, Math.max(0, left));
+    left -= out[t].length;
+  }
+  return out;
+}
 
-function formatFindAnswer(query: string, plan: QueryPlan, rank: RankResult, candidates: number, level: Level, yearNote: string) {
+function formatFindAnswer(query: string, plan: QueryPlan, rank: RankResult, candidates: number, level: Level, yearNote: string, totalBeforeCap: number) {
   const total = rankedFlat(rank).length;
   const scope = scopeLine(plan, level);
   const topic = plan.topic ? ` on **${plan.topic}**` : '';
@@ -221,17 +242,20 @@ function formatFindAnswer(query: string, plan: QueryPlan, rank: RankResult, cand
     const answer = `${summary}\n\nNothing in the ${scope} index closely matches “${query}”. Try the wording the syllabus uses, pick the subject under Scope, or check you're on the right level (${levelName(level)}).`;
     return { summary, answer };
   }
+  const isTopic = plan.kind === 'topic';
   const counts: string[] = [];
-  if (rank.best.length) counts.push(`${rank.best.length} best match${rank.best.length > 1 ? 'es' : ''}`);
-  if (rank.conceptual.length) counts.push(`${rank.conceptual.length} on the same concept`);
+  if (rank.best.length) counts.push(isTopic ? `${rank.best.length} squarely on it` : `${rank.best.length} best match${rank.best.length > 1 ? 'es' : ''}`);
+  if (rank.conceptual.length) counts.push(isTopic ? `${rank.conceptual.length} testing part of it` : `${rank.conceptual.length} on the same concept`);
   if (rank.related.length) counts.push(`${rank.related.length} related`);
   const window = plan.yearFrom != null || plan.yearTo != null ? ` (${describeYears(plan)})` : '';
+  const capNote = totalBeforeCap > total ? ` Showing the ${total} you asked for (out of ${totalBeforeCap} matches).` : '';
   const rankNote = rank.source === 'heuristic' ? ' AI ranking was busy, so these are ordered by similarity only.' : '';
-  const summary = `Searched ${candidates} ${scope} past-paper questions${topic}${window}: ${counts.join(', ')}.${yearNote ? ` ${yearNote}` : ''}${rankNote}`;
+  const summary = `Searched ${candidates} ${scope} past-paper questions${topic}${window}: ${counts.join(', ')}.${capNote}${yearNote ? ` ${yearNote}` : ''}${rankNote}`;
   const sections: string[] = [summary];
+  const titles = TIER_TITLES[plan.kind];
   for (const tier of ['best', 'conceptual', 'related'] as Tier[]) {
     if (!rank[tier].length) continue;
-    sections.push(`### ${TIER_TITLES[tier]}${tier !== 'best' ? ` (${rank[tier].length})` : ''}\n` +
+    sections.push(`### ${titles[tier]} (${rank[tier].length})\n` +
       rank[tier].map((r) => `- **${refLabel(r.hit.metadata)}**${r.why ? ` — ${r.why}` : ''}\n  “${questionPreview(r.hit.text, 14)}”`).join('\n'));
   }
   return { summary, answer: sections.join('\n\n') };
@@ -241,7 +265,8 @@ function formatFindAnswer(query: string, plan: QueryPlan, rank: RankResult, cand
 
 function askUserPrompt(query: string, plan: QueryPlan, rank: RankResult, allHits: Hit[], level: Level): { system: string; user: string } {
   const ranked = rankedFlat(rank);
-  const header = `Student (${scopeLine(plan, level)}) asks: ${query}${plan.topic ? `\nInterpreted topic: ${plan.topic}` : ''}`;
+  const header = `Student (${scopeLine(plan, level)}) asks: ${query}${plan.topic ? `\nInterpreted topic: ${plan.topic}` : ''}` +
+    (plan.reference ? `\nThe student is referring to this question from earlier in the conversation: ${plan.reference} — answer about THAT question (it is in the context below if it was found).` : '');
 
   if (plan.intent === 'solve') {
     const ctx = [...rank.best.slice(0, 2), ...rank.conceptual.slice(0, 3), ...rank.related.slice(0, 2)];
@@ -290,15 +315,28 @@ export async function askAi(input: AskAiInput): Promise<AskAiOutput> {
     return {
       type: 'smalltalk', mode, intent: plan.intent, answer, summary: null, level,
       subject: plan.subject, topic: plan.topic, searched: false, candidates: 0,
-      matches: empty, citations: [], planner: plan.source, ranker: null,
+      matches: empty, tierTitles: TIER_TITLES[plan.kind], tierLabels: TIER_LABELS[plan.kind],
+      citations: [], planner: plan.source, ranker: null, plan: planOut(plan),
     };
   }
 
-  const isFind = mode === 'find' || plan.intent === 'find_questions';
+  // The tab is only a hint to the planner. What the student actually asked for
+  // decides the flow: "explain one of them" on the Find tab is an explanation;
+  // "which years was X asked" on the Ask tab is a lookup. On the Find tab a
+  // request for N questions is a lookup capped at N (Ask presents them with answers).
+  const isFind = plan.intent === 'find_questions' || (mode === 'find' && plan.intent === 'make_questions');
   // Candidate counts are sized for Groq's per-minute token budget as much as quality.
   const topK = isFind ? 24 : plan.intent === 'make_questions' ? 14 : 12;
   const hasYears = plan.yearFrom != null || plan.yearTo != null;
-  let hits = dedupeByPaperQuestion(await searchMany(plan.searchQueries, {
+
+  // A follow-up about a question shown earlier ("explain the first one"): fetch
+  // exactly that question, search with ITS text (not "explain one of them"), and
+  // keep it first so the answer is about that one, not a sibling.
+  const exact = plan.reference ? await fetchByReference(plan.reference, level) : null;
+  const queries = exact ? [exact.text.replace(LEADING_QNUM_RE, '').slice(0, 400), ...plan.searchQueries.slice(0, 1)] : plan.searchQueries;
+  if (exact && !plan.subject) plan.subject = exact.metadata.subject;
+
+  let hits = dedupeByPaperQuestion(await searchMany(queries, {
     level, subject: plan.subject, topK: hasYears ? topK * 2 : topK,
     keywords: plan.keywords, questionType: plan.questionType,
   }));
@@ -308,17 +346,21 @@ export async function askAi(input: AskAiInput): Promise<AskAiOutput> {
     if (inWindow.length) hits = inWindow.slice(0, topK);
     else { yearNote = `Nothing matched in ${describeYears(plan)}, so these are the closest from other years.`; hits = hits.slice(0, topK); }
   }
+  if (exact) hits = [exact, ...hits.filter((h) => h.id !== exact.id)];
 
-  const rank = await rankCandidates(query, plan, hits, level, isFind ? 'smart' : 'fast');
+  const fullRank = await rankCandidates(query, plan, hits, level, isFind ? 'smart' : 'fast');
+  const rank = isFind ? capRank(fullRank, plan.count) : fullRank;
   const matches = tiersOut(rank);
   const citations = [...matches.best, ...matches.conceptual, ...matches.related];
+  const tierTitles = TIER_TITLES[plan.kind];
+  const tierLabels = TIER_LABELS[plan.kind];
 
   if (isFind) {
-    const { summary, answer } = formatFindAnswer(query, plan, rank, hits.length, level, yearNote);
+    const { summary, answer } = formatFindAnswer(query, plan, rank, hits.length, level, yearNote, rankedFlat(fullRank).length);
     return {
       type: 'exam_question', mode: 'find', intent: plan.intent, answer, summary, level,
       subject: plan.subject, topic: plan.topic, searched: true, candidates: hits.length,
-      matches, citations, planner: plan.source, ranker: rank.source,
+      matches, tierTitles, tierLabels, citations, planner: plan.source, ranker: rank.source, plan: planOut(plan),
     };
   }
 
@@ -332,6 +374,6 @@ export async function askAi(input: AskAiInput): Promise<AskAiOutput> {
   return {
     type: 'exam_question', mode: 'ask', intent: plan.intent, answer, summary: null, level,
     subject: plan.subject, topic: plan.topic, searched: true, candidates: hits.length,
-    matches, citations, planner: plan.source, ranker: rank.source,
+    matches, tierTitles, tierLabels, citations, planner: plan.source, ranker: rank.source, plan: planOut(plan),
   };
 }

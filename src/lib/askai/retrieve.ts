@@ -245,6 +245,42 @@ export async function search(query: string, opts: SearchOptions): Promise<Hit[]>
   return [...ranked, ...tail].slice(0, topK);
 }
 
+const SESSION_BY_WORD: Record<string, string> = {
+  'may/june': 'May_June', may_june: 'May_June', june: 'May_June', summer: 'May_June',
+  'oct/nov': 'Oct_Nov', oct_nov: 'Oct_Nov', november: 'Oct_Nov', winter: 'Oct_Nov',
+  'feb/march': 'Feb_March', feb_march: 'Feb_March', march: 'Feb_March',
+};
+
+/**
+ * Look up ONE question by its paper reference as shown in the UI, e.g.
+ * "Physics 2017 Oct/Nov Paper 1 Variant 1 Q15" — used when a student refers back
+ * to a question from earlier in the chat, so the follow-up is about exactly that
+ * question rather than a similar one.
+ */
+export async function fetchByReference(reference: string, level: Level): Promise<Hit | null> {
+  const ref = reference.replace(/\s+/g, ' ').trim();
+  const year = ref.match(/\b(20[0-3]\d)\b/)?.[1];
+  const qn = ref.match(/\bQ(?:uestion)?\s*(\d{1,2})\b/i)?.[1];
+  const paper = ref.match(/\b(?:Paper|P)\s*_?(\d{1,2})\b/i)?.[1];
+  const variant = ref.match(/\b(?:Variant|V)\s*_?(\d)\b/i)?.[1];
+  const sessionWord = ref.match(/\b(May\/June|May_June|June|Summer|Oct\/Nov|Oct_Nov|November|Winter|Feb\/March|Feb_March|March)\b/i)?.[1];
+  const subject = detectSubject(ref, level);
+  if (!year || !qn || !subject) return null;
+  let q = supabase.from('ask_ai_chunks').select(SELECT_COLS)
+    .eq('level', level).eq('subject', subject).eq('exam_year', Number(year)).eq('question_number', qn).limit(5);
+  const session = sessionWord ? SESSION_BY_WORD[sessionWord.toLowerCase()] : null;
+  if (session) q = q.eq('session', session);
+  if (paper) q = q.eq('paper', `Paper_${paper}`);
+  if (variant) q = q.in('variant', [`Variant_${variant}`, variant]);
+  const { data, error } = await q;
+  if (error || !data?.length) {
+    if (error) console.warn('[askai] reference lookup failed:', error.message);
+    return null;
+  }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return toHit(data[0] as any, true, 0);
+}
+
 /** Run several phrasings of the same need and merge (closest distance wins). */
 export async function searchMany(queries: string[], opts: SearchOptions): Promise<Hit[]> {
   const topK = opts.topK ?? 12;

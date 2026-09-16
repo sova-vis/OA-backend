@@ -15,6 +15,8 @@ import {
 
 export type Intent = 'find_questions' | 'explain' | 'solve' | 'make_questions' | 'chat';
 export type Mode = 'ask' | 'find';
+/** what the student is searching with: one specific question, or a topic/area */
+export type SearchKind = 'question' | 'topic';
 
 export interface QueryPlan {
   intent: Intent;
@@ -26,8 +28,11 @@ export interface QueryPlan {
   yearFrom: number | null;
   yearTo: number | null;
   questionType: 'mcq' | 'structured' | null;
-  /** how many questions the student asked for (make_questions) */
+  /** how many questions the student asked for ("only 5", "3 MCQs") */
   count: number | null;
+  /** a specific earlier-shown question the student is referring to (follow-ups) */
+  reference: string | null;
+  kind: SearchKind;
   /** direct reply when no search is needed (chat / meta) */
   reply: string | null;
   source: 'llm' | 'heuristic';
@@ -52,22 +57,56 @@ Decide how to handle the student's latest message (use the conversation so far t
   "keywords": [<0-4 exact words, acronyms or formulae a matching question would literally contain, e.g. "electrolysis", "brine", "NaCl">],
   "year_from": <int or null>, "year_to": <int or null>,
   "question_type": "mcq" | "structured" | null,
-  "count": <number of questions the student asked for, or null>,
+  "count": <number of questions the student asked for ("only 5", "3 MCQs"), or null>,
+  "search_kind": "question" | "topic",
+  "reference": <paper reference of ONE specific earlier-shown question the student is referring to, copied exactly from the conversation, or null>,
   "reply": <string or null>
 }
+search_kind is "question" when the student gave or described ONE specific exam question (pasted text, or a reference to one shown earlier), and "topic" when they named a topic, concept or syllabus area.
 Rules:
-- Find tab: intent "find_questions" with needs_search=true for anything that could be a topic, concept or exam question. Only greetings, thanks, or questions about how the tool works are "chat".
-- Ask tab: "solve" when the message contains an actual exam-style question to answer; "make_questions" when they want practice questions/MCQs; "explain" for concept or topic explanations, revision, or "why do I lose marks on X"; "chat" only for greetings, meta questions or off-topic messages.
-- needs_search is true for every subject-content intent — real past-paper grounding is the point. For "chat" set needs_search=false and write "reply": a brief friendly reply (max 3 sentences; if off-topic, say what you can help with).
+- The tab is a hint, not a constraint — decide from what the student actually wrote.
+- Find tab: "find_questions" for a topic, concept, pasted question, or any request for N questions to practise/prepare (set "count"). But an explicit "explain …" / "solve …" / "why is … wrong" is "explain" or "solve" even here.
+- Ask tab: "solve" when the message contains an actual exam-style question to answer; "make_questions" when they want practice questions/MCQs; "explain" for concept or topic explanations, revision, or "why do I lose marks on X"; "find_questions" when they ask which papers/years something appeared in.
+- "chat" only for greetings, thanks, meta questions about the tool, or off-topic messages; then needs_search=false and "reply" is a brief friendly reply (max 3 sentences; if off-topic, say what you can help with). Every other intent has needs_search=true — real past-paper grounding is the point.
+- Follow-ups: when the student refers to questions shown earlier ("one of them", "the first one", "the 2023 one", "Q5"), pick ONE concrete question from the conversation — copy its paper reference into "reference" and use its question text as the first search query so it can be retrieved. "Explain one of them" → intent "explain".
 - year_from/year_to only when a period is stated: "last 3 years" → year_from=${year - 2}; "2020 to 2022" → 2020/2022; "in 2023" → 2023/2023.
 - Never output a subject that is not in the list. If the student names a subject not offered at this level, set subject=null and note it in "topic".`;
 }
 
 function historyBlock(history: Turn[]): string {
   if (!history.length) return '';
+  // Assistant turns keep more text: their paper references are what follow-ups point at.
   const lines = history.slice(-6).map((t) =>
-    `${t.role === 'user' ? 'Student' : 'Assistant'}: ${t.content.replace(/\s+/g, ' ').slice(0, 300)}`);
+    `${t.role === 'user' ? 'Student' : 'Assistant'}: ${t.content.replace(/\s+/g, ' ').slice(0, t.role === 'user' ? 300 : 800)}`);
   return `Conversation so far:\n${lines.join('\n')}\n\n`;
+}
+
+// Paper references exactly as the UI prints them (retrieve.ts refLabel).
+const REF_RE = /\b(?:[A-Z][A-Za-z]+(?: (?:and|in|of|[A-Z][A-Za-z]+))* )(20[0-3]\d) (?:May\/June|Oct\/Nov|Feb\/March) Paper \d{1,2}(?: Variant \d)? Q(\d{1,2})\b/g;
+const FOLLOW_UP_RE = /\b(them|those|one of|any one|first|second|third|fourth|fifth|last one|that one|this one|the above|it|above)\b/i;
+const ORDINALS: Record<string, number> = { first: 0, second: 1, third: 2, fourth: 3, fifth: 4, '1st': 0, '2nd': 1, '3rd': 2, '4th': 3, '5th': 4 };
+
+/**
+ * Deterministic fallback for follow-ups ("explain one of them", "solve the
+ * third one", "the 2023 one", "Q15"): pick a paper reference from the most
+ * recent assistant answer. Small models often leave `reference` empty here.
+ */
+export function inferReferenceFromHistory(query: string, history: Turn[]): string | null {
+  if (query.length > 160 || !FOLLOW_UP_RE.test(query)) return null;
+  const lastAssistant = [...history].reverse().find((t) => t.role === 'assistant');
+  if (!lastAssistant) return null;
+  const refs = [...lastAssistant.content.matchAll(REF_RE)].map((m) => ({ ref: m[0], year: m[1], q: m[2] }));
+  if (!refs.length) return null;
+  const q = query.toLowerCase();
+  const qn = q.match(/\bq(?:uestion)?\s*(\d{1,2})\b/)?.[1];
+  if (qn) { const hit = refs.find((r) => r.q === qn); if (hit) return hit.ref; }
+  const year = q.match(/\b(20[0-3]\d)\b/)?.[1];
+  if (year) { const hit = refs.find((r) => r.year === year); if (hit) return hit.ref; }
+  for (const [word, idx] of Object.entries(ORDINALS)) {
+    if (new RegExp(`\\b${word}\\b`).test(q) && refs[idx]) return refs[idx].ref;
+  }
+  if (/\blast\b/.test(q)) return refs[refs.length - 1].ref;
+  return refs[0].ref;
 }
 
 /**
@@ -94,9 +133,11 @@ const asStrings = (v: unknown, maxItems: number, maxLen: number): string[] =>
   Array.isArray(v) ? v.filter((s): s is string => typeof s === 'string' && s.trim().length > 0)
     .map((s) => s.trim().slice(0, maxLen)).slice(0, maxItems) : [];
 
-export function heuristicPlan(query: string, mode: Mode, level: Level, scopeSubject: string | null): QueryPlan {
+export function heuristicPlan(query: string, mode: Mode, level: Level, scopeSubject: string | null, history: Turn[] = []): QueryPlan {
   const subject = scopeSubject ?? detectSubject(query, level);
-  const intent: Intent = mode === 'find' || looksLikePaperLookup(query) ? 'find_questions'
+  const reference = inferReferenceFromHistory(query, history);
+  const intent: Intent = /^\s*(explain|why|how|describe)\b/i.test(query) || (reference && /\b(explain|solve|answer|work)/i.test(query)) ? 'explain'
+    : mode === 'find' || looksLikePaperLookup(query) ? 'find_questions'
     : /\b(mcqs?|questions?|quiz|practi[cs]e)\b/i.test(query) && /\b(give|make|generate|create|want|need|some|\d+)\b/i.test(query) ? 'make_questions'
     : 'explain';
   const countMatch = query.match(/\b(\d{1,2})\s*(?:mcqs?|questions?)\b/i);
@@ -108,6 +149,9 @@ export function heuristicPlan(query: string, mode: Mode, level: Level, scopeSubj
     yearFrom: years.yearFrom, yearTo: years.yearTo,
     questionType: /\bmcqs?\b|multiple[- ]choice/i.test(query) ? 'mcq' : null,
     count: countMatch ? Math.min(8, parseInt(countMatch[1], 10)) : null,
+    reference,
+    // A long message with a question mark or numbers reads like a pasted question.
+    kind: reference || (query.length > 80 && /[?]|\d/.test(query)) ? 'question' : 'topic',
     reply: null, source: 'heuristic',
   };
 }
@@ -117,7 +161,8 @@ export async function planQuery(
   opts: { mode: Mode; level: Level; subject?: string | null; history?: Turn[] },
 ): Promise<QueryPlan> {
   const scopeSubject = resolveSubject(opts.subject, opts.level);
-  const fallback = heuristicPlan(query, opts.mode, opts.level, scopeSubject);
+  const history = opts.history || [];
+  const fallback = heuristicPlan(query, opts.mode, opts.level, scopeSubject, history);
   const year = new Date().getFullYear();
   try {
     const raw = await chatJson<Record<string, unknown>>(
@@ -140,6 +185,9 @@ export async function planQuery(
     const yearTo = hasDerived ? derived.yearTo : llmTo;
     const qt = raw.question_type === 'mcq' || raw.question_type === 'structured' ? raw.question_type : null;
     const reply = typeof raw.reply === 'string' && raw.reply.trim() ? raw.reply.trim().slice(0, 700) : null;
+    // The model's reference if it gave one; otherwise resolve "one of them" ourselves.
+    const reference = (typeof raw.reference === 'string' && raw.reference.trim() ? raw.reference.trim().slice(0, 120) : null)
+      ?? inferReferenceFromHistory(query, history);
     return {
       intent,
       needsSearch,
@@ -152,6 +200,8 @@ export async function planQuery(
       yearTo,
       questionType: qt,
       count: asInt(raw.count, 1, 8),
+      reference,
+      kind: raw.search_kind === 'question' || reference ? 'question' : 'topic',
       reply,
       source: 'llm',
     };

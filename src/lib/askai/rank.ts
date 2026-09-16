@@ -1,19 +1,22 @@
 /**
  * Match ranking for Ask-AI. The retrieval step returns candidates that are
  * near in embedding space or contain a keyword; this asks the LLM to judge each
- * one against what the student is actually looking for and sort them into:
+ * one against what the student is actually looking for and sort them into
+ * three tiers (+ dropped). The rubric depends on what they searched with:
  *
- *   best        — essentially the same question (same concept AND same demand)
- *   conceptual  — tests the same concept, different wording / values / context
- *   related     — different concept but technically relevant (same technique,
- *                 neighbouring syllabus point, needed as a step)
- *   (dropped)   — only shares a word
+ *   one specific question        │  a topic / syllabus area
+ *   ─────────────────────────────┼──────────────────────────────────────────
+ *   best       = same question   │  squarely on this topic (main demand)
+ *   conceptual = same concept,   │  tests part of this topic
+ *                different frame │
+ *   related    = same technique  │  neighbouring topic, same principles
+ *                / syllabus area │
  *
  * If the LLM is unavailable a distance-based fallback keeps results flowing.
  */
 import { chatJson, type LlmTier } from './llm';
 import { refLabel, type Hit, type Level } from './retrieve';
-import type { QueryPlan } from './planner';
+import type { QueryPlan, SearchKind } from './planner';
 
 export type Tier = 'best' | 'conceptual' | 'related';
 export interface Ranked { hit: Hit; tier: Tier; why: string }
@@ -24,15 +27,38 @@ export interface RankResult {
   source: 'llm' | 'heuristic';
 }
 
-const CAPS: Record<Tier, number> = { best: 3, conceptual: 8, related: 8 };
+const CAPS: Record<SearchKind, Record<Tier, number>> = {
+  question: { best: 3, conceptual: 8, related: 8 },
+  topic: { best: 6, conceptual: 8, related: 6 },
+};
 
-const RANK_SYSTEM = `You rank past-paper questions retrieved for a Cambridge student's search. Judge each candidate against what the student is looking for and classify it:
-- "best": essentially the same question — same concept AND the same thing being asked or calculated. Rare: 0 to 3 candidates.
-- "conceptual": tests the same concept/topic, just with different wording, values or context.
+/** Section titles / badge labels shown by the UI, per search kind. */
+export const TIER_TITLES: Record<SearchKind, Record<Tier, string>> = {
+  question: { best: 'Best match', conceptual: 'Same concept, different framing', related: 'Related — same technique or syllabus area' },
+  topic: { best: 'Squarely on this topic', conceptual: 'Tests part of this topic', related: 'Related — neighbouring topic' },
+};
+export const TIER_LABELS: Record<SearchKind, Record<Tier, string>> = {
+  question: { best: 'Best match', conceptual: 'Same concept', related: 'Related' },
+  topic: { best: 'On topic', conceptual: 'Partly', related: 'Related' },
+};
+
+const RUBRIC: Record<SearchKind, string> = {
+  question: `The student is looking for ONE specific question. Classify each candidate:
+- "best": essentially the same question — same concept AND the same thing being asked or calculated. Rare: 0 to 3.
+- "conceptual": tests the same concept, just with different wording, values or context.
 - "related": a different concept, but technically relevant — uses the same technique or skill, is a neighbouring point on the same syllabus topic, or needs this concept as a step.
-- "drop": only shares a word with the search, or is about something else; not useful to this student.
-Be strict: a question that merely mentions the keyword in passing is "drop" or at most "related". Prefer questions whose main demand is the searched concept.
-Return JSON: {"matches":[{"id":"<id>","tier":"best|conceptual|related|drop","why":"<specific reason, max 14 words>"}]} — include every candidate id exactly once.`;
+- "drop": only shares a word with the search, or is about something else.
+Be strict: a question that merely mentions the keyword in passing is "drop" or at most "related".`,
+  topic: `The student is looking for questions on a TOPIC / syllabus area. Classify each candidate:
+- "best": squarely on this topic — answering it mainly requires this topic (several candidates can be "best").
+- "conceptual": this topic is tested as one part of the question, or one sub-point of the topic is tested.
+- "related": a neighbouring syllabus topic that relies on the same principles or techniques.
+- "drop": unrelated, or only shares a word with the topic.
+Interpret the topic the way the Cambridge syllabus does (e.g. O Level "thermodynamics" = thermal physics: thermal energy, specific heat capacity, melting/boiling, conduction/convection/radiation).`,
+};
+
+const rankSystem = (kind: SearchKind) =>
+  `You rank past-paper questions retrieved for a Cambridge student's search.\n${RUBRIC[kind]}\nReturn JSON: {"matches":[{"id":"<id>","tier":"best|conceptual|related|drop","why":"<specific reason, max 14 words>"}]} — include every candidate id exactly once.`;
 
 const snippet = (t: string, n: number) => t.replace(/\s+/g, ' ').trim().slice(0, n);
 
@@ -71,7 +97,7 @@ function normalizeMatches(raw: unknown): RawMatch[] {
 
 // No-LLM fallback: deliberately conservative — only rows that literally contain
 // a searched term, or are very close in embedding space, are shown at all.
-export function heuristicRank(hits: Hit[]): RankResult {
+export function heuristicRank(hits: Hit[], kind: SearchKind = 'topic'): RankResult {
   const out: RankResult = { best: [], conceptual: [], related: [], source: 'heuristic' };
   for (const hit of hits) {
     const d = hit.distance;
@@ -79,7 +105,7 @@ export function heuristicRank(hits: Hit[]): RankResult {
     if (hit.verified && d < 0.3) tier = 'best';
     else if (hit.verified) tier = 'conceptual';
     else if (d < 0.36) tier = 'related';
-    if (tier && out[tier].length < CAPS[tier]) {
+    if (tier && out[tier].length < CAPS[kind][tier]) {
       out[tier].push({ hit, tier, why: hit.verified ? 'Contains the searched term' : 'Very close in meaning to the search' });
     }
   }
@@ -90,16 +116,18 @@ export async function rankCandidates(
   query: string, plan: QueryPlan, hits: Hit[], level: Level, tier: LlmTier = 'smart',
 ): Promise<RankResult> {
   if (!hits.length) return { best: [], conceptual: [], related: [], source: 'llm' };
-  const fallback = heuristicRank(hits);
+  const kind = plan.kind;
+  const fallback = heuristicRank(hits, kind);
   const lines = hits.map((h) =>
     `${h.id} | ${refLabel(h.metadata)} | ${h.metadata.type || '?'} | topic: ${h.metadata.topic || '-'} | ${snippet(h.text, 240)}`);
   const user =
     `Student is looking for: "${query.slice(0, 600)}"\n` +
-    `Interpreted topic: ${plan.topic || '-'} | Subject: ${plan.subject || 'any'} | Level: ${level === 'olevel' ? 'O Level' : 'A Level'} | Intent: ${plan.intent}\n\n` +
-    `Candidates (id | paper reference | type | topic | text):\n${lines.join('\n')}`;
+    `Interpreted ${kind === 'topic' ? 'topic' : 'question topic'}: ${plan.topic || '-'} | Subject: ${plan.subject || 'any'} | Level: ${level === 'olevel' ? 'O Level' : 'A Level'}\n` +
+    (plan.reference ? `They are referring specifically to: ${plan.reference} — if that question is among the candidates it is the "best" match.\n` : '') +
+    `\nCandidates (id | paper reference | type | topic | text):\n${lines.join('\n')}`;
   try {
     const raw = await chatJson<Record<string, unknown>>(
-      RANK_SYSTEM, user, { tier, maxTokens: 1400, temperature: 0, timeoutMs: 45_000 },
+      rankSystem(kind), user, { tier, maxTokens: 1400, temperature: 0, timeoutMs: 45_000 },
     );
     const byId = new Map(hits.map((h) => [h.id, h] as const));
     const out: RankResult = { best: [], conceptual: [], related: [], source: 'llm' };
@@ -117,7 +145,7 @@ export async function rankCandidates(
     // Within a tier keep the retrieval order (closest first), then cap.
     for (const t of ['best', 'conceptual', 'related'] as Tier[]) {
       out[t].sort((a, b) => a.hit.distance - b.hit.distance);
-      out[t] = out[t].slice(0, CAPS[t]);
+      out[t] = out[t].slice(0, CAPS[kind][t]);
     }
     return out;
   } catch (e) {
