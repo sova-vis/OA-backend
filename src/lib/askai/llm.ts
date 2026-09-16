@@ -177,6 +177,36 @@ async function run(system: string, user: string, opts: LlmOptions, json: boolean
   throw new Error(`All AI providers are currently unavailable. Last error: ${detail}`);
 }
 
+export interface ProviderDiag {
+  provider: string; model: string; ok: boolean; ms: number;
+  status?: number; code?: string; detail?: string; coolingForSec?: number;
+}
+
+/**
+ * Ping the first model of every configured provider (ignoring cooldowns) and
+ * report exactly what each answers — for GET /rag/diag, so a dead key or a
+ * retired model id on the deployed box is visible without shell/log access.
+ * Never includes key material; org ids in provider error text are masked.
+ */
+export async function diagnoseProviders(): Promise<ProviderDiag[]> {
+  const seen = new Set<string>();
+  const firstPerProvider = attempts('fast').filter((a) => !seen.has(a.provider) && seen.add(a.provider));
+  return Promise.all(firstPerProvider.map(async (a): Promise<ProviderDiag> => {
+    const t = Date.now();
+    const cooling = Math.max(0, (cooldownUntil.get(a.provider) || 0) - Date.now());
+    const base = { provider: a.provider, model: a.model, coolingForSec: cooling ? Math.round(cooling / 1000) : undefined };
+    try {
+      await callOnce(a, 'Reply with the single word OK.', 'ping', { tier: 'fast', maxTokens: 5, temperature: 0, timeoutMs: 20_000 }, false);
+      return { ...base, ok: true, ms: Date.now() - t };
+    } catch (e) {
+      const err = e instanceof LlmError ? e : null;
+      const detail = (err ? err.message : e instanceof Error ? e.message : String(e))
+        .replace(/org_[a-z0-9]+/gi, 'org_***').slice(0, 240);
+      return { ...base, ok: false, ms: Date.now() - t, status: err?.status, code: err?.code || 'other', detail };
+    }
+  }));
+}
+
 /** Markdown/plain-text completion. */
 export function chatText(system: string, user: string, opts: LlmOptions = {}): Promise<string> {
   return run(system, user, opts, false);

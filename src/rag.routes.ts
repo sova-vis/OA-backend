@@ -2,8 +2,10 @@ import { Router, Request, Response } from "express";
 import multer from "multer";
 import { grokEnabled, grokChatJson, grokVisionModel, grokErrorMessage } from "./lib/grok";
 import { askAi, plainMath } from "./lib/askai/generate";
-import { chatText } from "./lib/askai/llm";
+import { chatText, diagnoseProviders } from "./lib/askai/llm";
 import { ALL_SUBJECTS, AskAiIndexUnavailable } from "./lib/askai/retrieve";
+import { supabase } from "./lib/supabase";
+import type { AuthenticatedRequest } from "./lib/clerkAuth";
 
 // Ask AI runs IN-PROCESS (no separate Python service) and LLM-first: /query plans
 // the request with the LLM (search or not, how to search), embeds with bge-base,
@@ -16,6 +18,29 @@ const visionUpload = multer({ storage: multer.memoryStorage(), limits: { fileSiz
 
 router.get("/subjects", async (_req: Request, res: Response) => {
   return res.json(ALL_SUBJECTS.map((s) => ({ name: s })));
+});
+
+/**
+ * GET /rag/diag — staff-only (teacher/admin profile): pings every configured AI
+ * provider and reports what it answers, so a dead key or retired model id on
+ * the deployed box can be diagnosed without log access. No secrets in the output.
+ */
+router.get("/diag", async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const clerkId = req.auth?.clerkId;
+    const prof = clerkId
+      ? await supabase.from("profiles").select("role").eq("clerk_id", clerkId).maybeSingle()
+      : null;
+    const role = prof?.data?.role;
+    if (role !== "teacher" && role !== "admin") return res.status(403).json({ error: "forbidden" });
+    const providers = await diagnoseProviders();
+    return res.json({
+      configured: { groq: Boolean(process.env.GROQ_API_KEY?.trim()), groqModel: process.env.GROQ_MODEL?.trim() || null, xai: Boolean((process.env.XAI_API_KEY || process.env.GROK_API_KEY || "").trim()) },
+      providers,
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: String(err?.message || err).slice(0, 200) });
+  }
 });
 
 router.post("/query", async (req: Request, res: Response) => {
