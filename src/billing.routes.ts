@@ -26,8 +26,12 @@ import {
   PRICE_PKR_ANNUAL,
 } from './lib/entitlements';
 import { SAFEPAY_CONFIGURED, SAFEPAY_WEBHOOK_READY, SAFEPAY_ENV, createCheckout, verifyWebhook } from './lib/safepay';
+import { sendEmail, emailProvider } from './lib/mailer';
+import { proWelcomeEmail } from './lib/emails/proWelcome';
 
 const router = Router();
+
+const SUPPORT_EMAIL = (process.env.SUPPORT_EMAIL || 'sovavis2025@gmail.com').trim();
 
 // Base URL of the student app (for post-payment redirects back into the app).
 function appBaseUrl(): string {
@@ -198,7 +202,7 @@ async function activatePaid(clerkId: string, plan: 'monthly' | 'annual', token?:
   const end = new Date(now);
   if (plan === 'annual') end.setFullYear(end.getFullYear() + 1);
   else end.setMonth(end.getMonth() + 1);
-  await ensureBilling(clerkId);
+  const prior = await ensureBilling(clerkId);
   await supabase.from('student_billing').update({
     status: 'active', plan, provider: 'safepay',
     current_period_end: end.toISOString(), last_payment_at: now.toISOString(),
@@ -208,6 +212,39 @@ async function activatePaid(clerkId: string, plan: 'monthly' | 'annual', token?:
     await supabase.from('payments').update({
       status: 'succeeded', period_start: now.toISOString(), period_end: end.toISOString(),
     }).eq('provider_tx_id', token);
+  }
+  // Email only on a real transition INTO an active period, so a duplicate webhook
+  // (or /sync firing after the webhook) never sends a second copy. A renewal after
+  // a lapse (expired/past_due → active) does re-send, which is correct. Best-effort:
+  // a mail failure must never affect activation.
+  const wasActive = prior.status === 'active'
+    && !!prior.current_period_end
+    && Date.parse(prior.current_period_end) > Date.now();
+  if (!wasActive) void sendProWelcome(clerkId, plan, end).catch(() => { /* best-effort */ });
+}
+
+/** Send the branded "Welcome to Propel Pro" email (best-effort; logs its outcome). */
+async function sendProWelcome(clerkId: string, plan: 'monthly' | 'annual', periodEnd: Date): Promise<void> {
+  const provider = emailProvider();
+  if (provider === 'none' || provider === 'disabled') return; // no mail provider wired yet
+  try {
+    const prof = await supabase.from('profiles').select('email, full_name').eq('clerk_id', clerkId).maybeSingle();
+    const to = typeof prof.data?.email === 'string' ? prof.data.email.trim() : '';
+    if (!to) { console.warn('[pro welcome] no email on profile for %s — skipped', clerkId); return; }
+    const amountPkr = plan === 'annual' ? (PRICE_PKR_ANNUAL ?? PRICE_PKR_MONTHLY * 12) : PRICE_PKR_MONTHLY;
+    const { subject, html, text } = proWelcomeEmail({
+      name: (prof.data?.full_name as string | null) ?? null,
+      plan,
+      periodEndIso: periodEnd.toISOString(),
+      amountPkr,
+      appUrl: appBaseUrl(),
+      supportEmail: SUPPORT_EMAIL,
+    });
+    const result = await sendEmail({ to, subject, html, text });
+    if (result.ok) console.log('[pro welcome] sent to %s via %s (id=%s)', to, result.provider, result.id || '—');
+    else console.warn('[pro welcome] NOT sent to %s: %s', to, result.error || (result.skipped ? 'skipped' : 'unknown'));
+  } catch (error) {
+    console.warn('[pro welcome] error:', (error as Error)?.message || error);
   }
 }
 
@@ -311,9 +348,13 @@ router.post('/webhook', async (req: Request, res: Response) => {
   res.status(200).json({ received: true });
 });
 
-// TEMP sandbox diagnostic — returns the last webhook the server saw (fields +
-// signature result) so the wiring can be confirmed. Remove once payments verified.
-router.get('/_debug/last-webhook', (_req: Request, res: Response) => {
+// Sandbox diagnostic — returns the last webhook the server saw (fields + signature
+// result). Locked behind the cron secret: webhook payloads carry buyer details and
+// must never be publicly readable.
+router.get('/_debug/last-webhook', (req: Request, res: Response) => {
+  const secret = (process.env.BILLING_TICK_SECRET || '').trim();
+  const provided = String(req.headers['x-cron-secret'] || '');
+  if (!secret || provided !== secret) return res.status(403).json({ error: 'forbidden' });
   res.json(lastWebhook || { none: true });
 });
 
