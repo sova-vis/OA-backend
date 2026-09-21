@@ -38,6 +38,8 @@ export const GRACE_DAYS = intEnv('BILLING_GRACE_DAYS', 2);
 export const RENEWAL_REMINDER_DAYS = intEnv('BILLING_REMINDER_DAYS', 3);
 /** Soft one-trial-per-device check on top of one-trial-per-Google-account. */
 export const TRIAL_DEVICE_CHECK = boolEnv('BILLING_TRIAL_DEVICE_CHECK', true);
+/** Manual-flow Pro period length in days (admin activates after a QR payment). */
+export const MANUAL_PLAN_DAYS = intEnv('BILLING_MANUAL_DAYS', 30);
 /** Display prices (PKR). Charging isn't wired until Safepay; these drive the UI copy. */
 export const PRICE_PKR_MONTHLY = intEnv('BILLING_PRICE_MONTHLY_PKR', 999);
 export const PRICE_PKR_ANNUAL = (process.env.BILLING_PRICE_ANNUAL_PKR || '').trim()
@@ -244,6 +246,40 @@ export async function startTrialForUser(
   }
 
   return { started: true, access: computeAccess((updated.data ?? row) as BillingRow) };
+}
+
+/**
+ * Admin-activated MANUAL Pro (temporary flow while Safepay keys are pending).
+ * Sets the student active for `days` (default 30) from now, provider 'manual', and
+ * logs a manual payment row. Returns the new period end + whether they were already
+ * active (so the caller can decide whether to send a welcome email).
+ */
+export async function activateManualPro(
+  clerkId: string,
+  opts?: { days?: number; amountPkr?: number | null },
+): Promise<{ periodEnd: string; wasActive: boolean }> {
+  const days = opts?.days ?? MANUAL_PLAN_DAYS;
+  const prior = await ensureBilling(clerkId);
+  const now = new Date();
+  const end = new Date(now.getTime() + days * DAY_MS);
+  await supabase.from('student_billing').update({
+    status: 'active',
+    plan: 'manual',
+    provider: 'manual',
+    current_period_end: end.toISOString(),
+    last_payment_at: now.toISOString(),
+    auto_renew: false,
+    updated_at: now.toISOString(),
+  }).eq('clerk_id', clerkId);
+  await supabase.from('payments').insert({
+    clerk_id: clerkId, provider: 'manual', amount_pkr: opts?.amountPkr ?? null,
+    currency: 'PKR', status: 'succeeded', method: 'manual', plan: 'manual',
+    period_start: now.toISOString(), period_end: end.toISOString(),
+  });
+  const wasActive = prior.status === 'active'
+    && !!prior.current_period_end
+    && Date.parse(prior.current_period_end) > Date.now();
+  return { periodEnd: end.toISOString(), wasActive };
 }
 
 /**

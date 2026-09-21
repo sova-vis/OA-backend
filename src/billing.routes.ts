@@ -26,12 +26,15 @@ import {
   PRICE_PKR_ANNUAL,
 } from './lib/entitlements';
 import { SAFEPAY_CONFIGURED, SAFEPAY_WEBHOOK_READY, SAFEPAY_ENV, createCheckout, verifyWebhook } from './lib/safepay';
-import { sendEmail, emailProvider } from './lib/mailer';
-import { proWelcomeEmail } from './lib/emails/proWelcome';
+import { sendProWelcome } from './lib/proNotify';
 
 const router = Router();
 
-const SUPPORT_EMAIL = (process.env.SUPPORT_EMAIL || 'sovavis2025@gmail.com').trim();
+// While Safepay live keys are pending, payments run in 'manual' mode: the student
+// pays via a QR and an admin activates Pro. Flip PAYMENTS_MODE=safepay to restore
+// the hosted checkout once keys are live.
+const PAYMENTS_MODE: 'manual' | 'safepay' =
+  (process.env.PAYMENTS_MODE || 'manual').trim().toLowerCase() === 'safepay' ? 'safepay' : 'manual';
 
 // Base URL of the student app (for post-payment redirects back into the app).
 function appBaseUrl(): string {
@@ -58,6 +61,7 @@ router.get('/status', clerkAuth, async (req: AuthenticatedRequest, res: Response
       enforced: BILLING_ENFORCED,
       trialDays: TRIAL_DAYS,
       graceDays: GRACE_DAYS,
+      paymentsMode: PAYMENTS_MODE,
       price: { monthlyPkr: PRICE_PKR_MONTHLY, annualPkr: PRICE_PKR_ANNUAL },
       ...access,
     });
@@ -220,31 +224,10 @@ async function activatePaid(clerkId: string, plan: 'monthly' | 'annual', token?:
   const wasActive = prior.status === 'active'
     && !!prior.current_period_end
     && Date.parse(prior.current_period_end) > Date.now();
-  if (!wasActive) void sendProWelcome(clerkId, plan, end).catch(() => { /* best-effort */ });
-}
-
-/** Send the branded "Welcome to Propel Pro" email (best-effort; logs its outcome). */
-async function sendProWelcome(clerkId: string, plan: 'monthly' | 'annual', periodEnd: Date): Promise<void> {
-  const provider = emailProvider();
-  if (provider === 'none' || provider === 'disabled') return; // no mail provider wired yet
-  try {
-    const prof = await supabase.from('profiles').select('email, full_name').eq('clerk_id', clerkId).maybeSingle();
-    const to = typeof prof.data?.email === 'string' ? prof.data.email.trim() : '';
-    if (!to) { console.warn('[pro welcome] no email on profile for %s — skipped', clerkId); return; }
+  if (!wasActive) {
     const amountPkr = plan === 'annual' ? (PRICE_PKR_ANNUAL ?? PRICE_PKR_MONTHLY * 12) : PRICE_PKR_MONTHLY;
-    const { subject, html, text } = proWelcomeEmail({
-      name: (prof.data?.full_name as string | null) ?? null,
-      plan,
-      periodEndIso: periodEnd.toISOString(),
-      amountPkr,
-      appUrl: appBaseUrl(),
-      supportEmail: SUPPORT_EMAIL,
-    });
-    const result = await sendEmail({ to, subject, html, text });
-    if (result.ok) console.log('[pro welcome] sent to %s via %s (id=%s)', to, result.provider, result.id || '—');
-    else console.warn('[pro welcome] NOT sent to %s: %s', to, result.error || (result.skipped ? 'skipped' : 'unknown'));
-  } catch (error) {
-    console.warn('[pro welcome] error:', (error as Error)?.message || error);
+    void sendProWelcome(clerkId, { plan, periodEndIso: end.toISOString(), amountPkr, paymentMethod: 'Safepay' })
+      .catch(() => { /* best-effort */ });
   }
 }
 
@@ -373,6 +356,104 @@ router.post('/tick', async (req: Request, res: Response) => {
     res.json({ ok: true, ranAt: new Date().toISOString(), ...summary });
   } catch (error) {
     console.error('POST /billing/tick error:', error);
+    res.status(500).json({ error: 'server_error' });
+  }
+});
+
+/* ===================== Manual payment flow (student side) =====================
+ * The student sees a QR + payee details on the upgrade page, pays out-of-band, then
+ * raises a request an admin approves. A promo code swaps the QR (and optional price).
+ */
+
+async function readPayConfig() {
+  const r = await supabase.from('pay_config').select('*').eq('id', 1).maybeSingle();
+  return r.data ?? null;
+}
+async function readActivePromo(code: string) {
+  const c = code.trim().toUpperCase();
+  if (!c) return null;
+  const r = await supabase.from('promo_codes').select('*').eq('code', c).eq('active', true).maybeSingle();
+  return r.data ?? null;
+}
+
+/** QR + payee details to show on the pay page — swapped by a valid promo code. */
+router.get('/pay-info', clerkAuth, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const promoInput = String(req.query.promo ?? '').trim();
+    const cfg = await readPayConfig();
+    const promo = promoInput ? await readActivePromo(promoInput) : null;
+    const baseAmount = cfg?.amount_pkr ?? PRICE_PKR_MONTHLY;
+    const amountPkr = promo?.amount_pkr ?? baseAmount;
+    const qr = (promo?.qr_image || cfg?.qr_image) ?? null;
+    res.json({
+      mode: PAYMENTS_MODE,
+      amountPkr,
+      qr,
+      configured: !!qr,
+      payee: {
+        name: cfg?.payee_name ?? null,
+        accountNumber: cfg?.account_number ?? null,
+        bankName: cfg?.bank_name ?? null,
+        instructions: cfg?.instructions ?? null,
+      },
+      promo: promoInput
+        ? { applied: !!promo, code: promoInput.toUpperCase(), label: promo?.label ?? null, note: promo?.note ?? null }
+        : null,
+    });
+  } catch (error) {
+    console.error('GET /billing/pay-info error:', error);
+    res.status(500).json({ error: 'server_error' });
+  }
+});
+
+/** Student clicked "I've paid" → raise (or replace) a pending manual request. */
+router.post('/pro-request', clerkAuth, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const clerkId = req.auth!.clerkId;
+    const body = (req.body ?? {}) as { name?: string; phone?: string; cardholderName?: string; promoCode?: string };
+    const name = String(body.name ?? '').trim().slice(0, 120);
+    const phone = String(body.phone ?? '').trim().slice(0, 40);
+    const cardholderName = String(body.cardholderName ?? '').trim().slice(0, 120);
+    const promoCode = (String(body.promoCode ?? '').trim().toUpperCase().slice(0, 40)) || null;
+    if (!name || !phone) return res.status(400).json({ error: 'missing_fields', message: 'Name and phone are required.' });
+
+    const prof = await supabase.from('profiles').select('email').eq('clerk_id', clerkId).maybeSingle();
+    const email = (prof.data?.email as string) || '';
+    const cfg = await readPayConfig();
+    const promo = promoCode ? await readActivePromo(promoCode) : null;
+    const amountPkr = promo?.amount_pkr ?? cfg?.amount_pkr ?? PRICE_PKR_MONTHLY;
+
+    // One pending request per student: replace an existing pending one instead of stacking.
+    const existing = await supabase.from('pro_requests').select('id').eq('clerk_id', clerkId).eq('status', 'pending').maybeSingle();
+    const payload: Record<string, unknown> = {
+      clerk_id: clerkId, name, email, phone,
+      cardholder_name: cardholderName || null, promo_code: promoCode,
+      plan: 'manual', amount_pkr: amountPkr, status: 'pending',
+    };
+    let row: unknown = null;
+    if (existing.data?.id) {
+      const u = await supabase.from('pro_requests').update({ ...payload, created_at: new Date().toISOString() }).eq('id', existing.data.id).select('*').single();
+      if (u.error) throw u.error; row = u.data;
+    } else {
+      const i = await supabase.from('pro_requests').insert(payload).select('*').single();
+      if (i.error) throw i.error; row = i.data;
+    }
+    res.json({ ok: true, request: row });
+  } catch (error) {
+    console.error('POST /billing/pro-request error:', error);
+    res.status(500).json({ error: 'server_error' });
+  }
+});
+
+/** The student's latest request, for the "pending approval" state. */
+router.get('/my-request', clerkAuth, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const clerkId = req.auth!.clerkId;
+    const r = await supabase.from('pro_requests').select('*').eq('clerk_id', clerkId)
+      .order('created_at', { ascending: false }).limit(1).maybeSingle();
+    res.json({ request: r.data ?? null });
+  } catch (error) {
+    console.error('GET /billing/my-request error:', error);
     res.status(500).json({ error: 'server_error' });
   }
 });

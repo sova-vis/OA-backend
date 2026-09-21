@@ -7,12 +7,14 @@
 
 export interface ProWelcomeInput {
   name?: string | null;
-  plan: 'monthly' | 'annual';
+  plan: 'monthly' | 'annual' | 'manual';
   periodEndIso: string;
   amountPkr?: number | null;
   appUrl: string;
   supportEmail: string;
   instagramUrl?: string;
+  /** Optional "Payment method" receipt row (e.g. "Safepay"); omitted if unset. */
+  paymentMethod?: string;
 }
 
 const MONTHS = [
@@ -36,7 +38,7 @@ function esc(s: string): string {
 export function proWelcomeEmail(input: ProWelcomeInput): { subject: string; html: string; text: string } {
   const firstName = (input.name || '').trim().split(/\s+/)[0] || '';
   const hi = firstName ? `Hi ${esc(firstName)},` : 'Hi there,';
-  const planLabel = input.plan === 'annual' ? 'Annual' : 'Monthly';
+  const planLabel = input.plan === 'annual' ? 'Annual' : input.plan === 'monthly' ? 'Monthly' : '';
   const validUntil = formatDate(input.periodEndIso);
   const amount = money(input.amountPkr);
   const dashboard = `${input.appUrl.replace(/\/+$/, '')}/student/dashboard`;
@@ -54,10 +56,10 @@ export function proWelcomeEmail(input: ProWelcomeInput): { subject: string; html
   ];
 
   // ---- receipt rows ----
-  const rows: Array<[string, string]> = [['Plan', `${planLabel} — Propel Pro`]];
+  const rows: Array<[string, string]> = [['Plan', planLabel ? `${planLabel} — Propel Pro` : 'Propel Pro']];
   if (amount) rows.push(['Amount', amount]);
   if (validUntil) rows.push(['Valid until', validUntil]);
-  rows.push(['Payment method', 'Safepay']);
+  if (input.paymentMethod) rows.push(['Payment method', input.paymentMethod]);
   const receiptRows = rows
     .map(
       ([k, v], i) => `

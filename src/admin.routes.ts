@@ -2,8 +2,19 @@ import { Router, Request, Response } from 'express';
 import { createTeacherAccount } from './services/adminService';
 import { AuthenticatedRequest, clerkAuth, requireRole } from './lib/clerkAuth';
 import { supabase } from './lib/supabase';
+import { activateManualPro, computeAccess, MANUAL_PLAN_DAYS, BillingRow } from './lib/entitlements';
+import { sendProWelcome } from './lib/proNotify';
 
 const router = Router();
+
+/** Build a default 'free' billing view for a user with no billing row yet. */
+function accessForClerk(billingByClerk: Map<string, BillingRow>, clerkId: string) {
+  const row = billingByClerk.get(clerkId);
+  if (!row) {
+    return { status: 'free', isPro: false, daysLeft: null, plan: null, currentPeriodEnd: null, trialEndsAt: null, autoRenew: false, trialAvailable: true };
+  }
+  return computeAccess(row);
+}
 
 // Deprecated legacy endpoint kept for backward compatibility
 router.post('/login', (req: Request, res: Response) => {
@@ -230,6 +241,217 @@ router.patch('/teacher-profile/:clerkId', clerkAuth, requireRole('admin'), async
 // Update user profile (admin only) - Placeholder for future implementation using Supabase
 router.put('/update-profile/:id', clerkAuth, requireRole('admin'), (req: Request, res: Response) => {
   return res.status(501).json({ error: 'Not implemented yet' });
+});
+
+/* ============================ Manual Pro flow (admin) ============================
+ * Review manual payment requests, activate 30-day Pro, manage the QR + promo codes,
+ * and monitor all users' trial/Pro status. Admin-only (requireRole('admin')).
+ */
+
+/** All Pro requests, enriched with the payer's current billing status + days left. */
+router.get('/pro-requests', clerkAuth, requireRole('admin'), async (_req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { data: requests, error } = await supabase
+      .from('pro_requests').select('*').order('created_at', { ascending: false }).limit(500);
+    if (error) throw error;
+
+    const clerkIds = Array.from(new Set((requests ?? []).map((r) => r.clerk_id).filter(Boolean)));
+    const billingByClerk = new Map<string, BillingRow>();
+    const nameByClerk = new Map<string, string | null>();
+    if (clerkIds.length > 0) {
+      const [{ data: billing }, { data: profs }] = await Promise.all([
+        supabase.from('student_billing').select('*').in('clerk_id', clerkIds),
+        supabase.from('profiles').select('clerk_id, full_name').in('clerk_id', clerkIds),
+      ]);
+      for (const b of (billing ?? []) as BillingRow[]) billingByClerk.set(b.clerk_id, b);
+      for (const p of profs ?? []) nameByClerk.set(p.clerk_id, p.full_name ?? null);
+    }
+
+    return res.json({
+      requests: (requests ?? []).map((r) => {
+        const access = accessForClerk(billingByClerk, r.clerk_id);
+        return {
+          ...r,
+          full_name: nameByClerk.get(r.clerk_id) ?? r.name ?? null,
+          billing_status: access.status,
+          is_pro: access.isPro,
+          days_left: access.daysLeft,
+          current_period_end: access.currentPeriodEnd,
+        };
+      }),
+    });
+  } catch (error: any) {
+    console.error('Failed to list pro requests:', error);
+    return res.status(500).json({ error: error.message || 'Failed to list pro requests' });
+  }
+});
+
+/** Activate 30-day Pro for a request's user, mark it approved, and email them. */
+router.post('/pro-requests/:id/activate', clerkAuth, requireRole('admin'), async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const id = req.params.id;
+    const days = Number.parseInt(String(req.body?.days ?? ''), 10);
+    const period = Number.isFinite(days) && days > 0 ? days : MANUAL_PLAN_DAYS;
+
+    const { data: reqRow, error: reqError } = await supabase.from('pro_requests').select('*').eq('id', id).maybeSingle();
+    if (reqError) throw reqError;
+    if (!reqRow) return res.status(404).json({ error: 'not_found' });
+
+    const { periodEnd, wasActive } = await activateManualPro(reqRow.clerk_id, { days: period, amountPkr: reqRow.amount_pkr ?? null });
+    await supabase.from('pro_requests').update({
+      status: 'approved', reviewed_at: new Date().toISOString(), reviewed_by: req.auth?.clerkId ?? null,
+    }).eq('id', id);
+
+    if (!wasActive) {
+      void sendProWelcome(reqRow.clerk_id, { plan: 'manual', periodEndIso: periodEnd, amountPkr: reqRow.amount_pkr ?? null })
+        .catch(() => { /* best-effort */ });
+    }
+    return res.json({ ok: true, periodEnd, days: period });
+  } catch (error: any) {
+    console.error('Failed to activate pro request:', error);
+    return res.status(500).json({ error: error.message || 'Failed to activate' });
+  }
+});
+
+/** Reject a Pro request. */
+router.post('/pro-requests/:id/reject', clerkAuth, requireRole('admin'), async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const id = req.params.id;
+    const note = typeof req.body?.note === 'string' ? req.body.note.slice(0, 500) : null;
+    const { error } = await supabase.from('pro_requests').update({
+      status: 'rejected', note, reviewed_at: new Date().toISOString(), reviewed_by: req.auth?.clerkId ?? null,
+    }).eq('id', id);
+    if (error) throw error;
+    return res.json({ ok: true });
+  } catch (error: any) {
+    console.error('Failed to reject pro request:', error);
+    return res.status(500).json({ error: error.message || 'Failed to reject' });
+  }
+});
+
+/** The general QR + payee details. */
+router.get('/pay-config', clerkAuth, requireRole('admin'), async (_req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { data, error } = await supabase.from('pay_config').select('*').eq('id', 1).maybeSingle();
+    if (error) throw error;
+    return res.json({ config: data ?? null });
+  } catch (error: any) {
+    console.error('Failed to read pay config:', error);
+    return res.status(500).json({ error: error.message || 'Failed to read pay config' });
+  }
+});
+
+/** Update the general QR + payee details. */
+router.put('/pay-config', clerkAuth, requireRole('admin'), async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const b = (req.body ?? {}) as Record<string, unknown>;
+    const patch: Record<string, unknown> = { id: 1, updated_at: new Date().toISOString(), updated_by: req.auth?.clerkId ?? null };
+    if (typeof b.qrImage === 'string') patch.qr_image = b.qrImage || null;
+    if (typeof b.payeeName === 'string') patch.payee_name = b.payeeName.trim() || null;
+    if (typeof b.accountNumber === 'string') patch.account_number = b.accountNumber.trim() || null;
+    if (typeof b.bankName === 'string') patch.bank_name = b.bankName.trim() || null;
+    if (typeof b.instructions === 'string') patch.instructions = b.instructions.trim() || null;
+    if (b.amountPkr === null || b.amountPkr === '') patch.amount_pkr = null;
+    else if (b.amountPkr !== undefined) { const n = Number.parseInt(String(b.amountPkr), 10); patch.amount_pkr = Number.isFinite(n) ? n : null; }
+
+    const { data, error } = await supabase.from('pay_config').upsert(patch, { onConflict: 'id' }).select('*').single();
+    if (error) throw error;
+    return res.json({ ok: true, config: data });
+  } catch (error: any) {
+    console.error('Failed to save pay config:', error);
+    return res.status(500).json({ error: error.message || 'Failed to save pay config' });
+  }
+});
+
+/** List promo codes (with their QR + note). */
+router.get('/promo-codes', clerkAuth, requireRole('admin'), async (_req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { data, error } = await supabase.from('promo_codes').select('*').order('created_at', { ascending: false });
+    if (error) throw error;
+    return res.json({ promos: data ?? [] });
+  } catch (error: any) {
+    console.error('Failed to list promo codes:', error);
+    return res.status(500).json({ error: error.message || 'Failed to list promo codes' });
+  }
+});
+
+/** Create or update a promo code (attach a QR + optional discounted price/note). */
+router.post('/promo-codes', clerkAuth, requireRole('admin'), async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const b = (req.body ?? {}) as Record<string, unknown>;
+    const code = String(b.code ?? '').trim().toUpperCase().slice(0, 40);
+    if (!code && !b.id) return res.status(400).json({ error: 'code_required' });
+
+    const row: Record<string, unknown> = { updated_at: new Date().toISOString() };
+    if (code) row.code = code;
+    if (typeof b.label === 'string') row.label = b.label.trim() || null;
+    if (typeof b.note === 'string') row.note = b.note.trim() || null;
+    if (typeof b.qrImage === 'string') row.qr_image = b.qrImage || null;
+    if (typeof b.active === 'boolean') row.active = b.active;
+    if (b.amountPkr === null || b.amountPkr === '') row.amount_pkr = null;
+    else if (b.amountPkr !== undefined) { const n = Number.parseInt(String(b.amountPkr), 10); row.amount_pkr = Number.isFinite(n) ? n : null; }
+
+    let saved;
+    if (b.id) {
+      const u = await supabase.from('promo_codes').update(row).eq('id', String(b.id)).select('*').single();
+      if (u.error) throw u.error; saved = u.data;
+    } else {
+      const u = await supabase.from('promo_codes').upsert(row, { onConflict: 'code' }).select('*').single();
+      if (u.error) throw u.error; saved = u.data;
+    }
+    return res.json({ ok: true, promo: saved });
+  } catch (error: any) {
+    console.error('Failed to save promo code:', error);
+    return res.status(500).json({ error: error.message || 'Failed to save promo code' });
+  }
+});
+
+/** Delete a promo code. */
+router.delete('/promo-codes/:id', clerkAuth, requireRole('admin'), async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { error } = await supabase.from('promo_codes').delete().eq('id', req.params.id);
+    if (error) throw error;
+    return res.json({ ok: true });
+  } catch (error: any) {
+    console.error('Failed to delete promo code:', error);
+    return res.status(500).json({ error: error.message || 'Failed to delete promo code' });
+  }
+});
+
+/** All users with their role + trial/Pro status + days left (monitoring). */
+router.get('/users-billing', clerkAuth, requireRole('admin'), async (_req: AuthenticatedRequest, res: Response) => {
+  try {
+    const [{ data: profs, error: pErr }, { data: billing, error: bErr }] = await Promise.all([
+      supabase.from('profiles').select('clerk_id, full_name, email, role, onboarding_complete, created_at'),
+      supabase.from('student_billing').select('*'),
+    ]);
+    if (pErr) throw pErr;
+    if (bErr) throw bErr;
+    const billingByClerk = new Map<string, BillingRow>();
+    for (const b of (billing ?? []) as BillingRow[]) billingByClerk.set(b.clerk_id, b);
+
+    const users = (profs ?? []).map((p) => {
+      const access = accessForClerk(billingByClerk, p.clerk_id);
+      return {
+        clerk_id: p.clerk_id,
+        full_name: p.full_name ?? null,
+        email: p.email ?? null,
+        role: p.role ?? 'student',
+        onboarding_complete: !!p.onboarding_complete,
+        created_at: p.created_at ?? null,
+        billing_status: access.status,
+        is_pro: access.isPro,
+        plan: access.plan,
+        days_left: access.daysLeft,
+        current_period_end: access.currentPeriodEnd,
+        trial_ends_at: access.trialEndsAt,
+      };
+    });
+    return res.json({ users });
+  } catch (error: any) {
+    console.error('Failed to list users billing:', error);
+    return res.status(500).json({ error: error.message || 'Failed to list users billing' });
+  }
 });
 
 export default router;
