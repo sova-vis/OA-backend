@@ -283,6 +283,21 @@ export async function activateManualPro(
 }
 
 /**
+ * Admin revoke: end a user's Pro (or trial) access immediately. Sets status to
+ * 'expired' with the period ended now, so computeAccess yields isPro=false at once.
+ */
+export async function revokePro(clerkId: string): Promise<void> {
+  await ensureBilling(clerkId);
+  const now = new Date().toISOString();
+  await supabase.from('student_billing').update({
+    status: 'expired',
+    current_period_end: now,
+    auto_renew: false,
+    updated_at: now,
+  }).eq('clerk_id', clerkId);
+}
+
+/**
  * The renewal engine — run on a schedule (Railway Cron / external cron hitting
  * POST /billing/tick). Advances billing states purely from timestamps:
  *   trialing  → expired   when the trial ends

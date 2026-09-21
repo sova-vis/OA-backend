@@ -2,7 +2,7 @@ import { Router, Request, Response } from 'express';
 import { createTeacherAccount } from './services/adminService';
 import { AuthenticatedRequest, clerkAuth, requireRole } from './lib/clerkAuth';
 import { supabase } from './lib/supabase';
-import { activateManualPro, computeAccess, MANUAL_PLAN_DAYS, BillingRow } from './lib/entitlements';
+import { activateManualPro, revokePro, computeAccess, MANUAL_PLAN_DAYS, BillingRow } from './lib/entitlements';
 import { sendProWelcome } from './lib/proNotify';
 
 const router = Router();
@@ -415,6 +415,19 @@ router.delete('/promo-codes/:id', clerkAuth, requireRole('admin'), async (req: A
   } catch (error: any) {
     console.error('Failed to delete promo code:', error);
     return res.status(500).json({ error: error.message || 'Failed to delete promo code' });
+  }
+});
+
+/** Immediately revoke a user's Pro (or trial) access. */
+router.post('/users/:clerkId/revoke-pro', clerkAuth, requireRole('admin'), async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const clerkId = req.params.clerkId;
+    if (!clerkId) return res.status(400).json({ error: 'clerk_id_required' });
+    await revokePro(clerkId);
+    return res.json({ ok: true });
+  } catch (error: any) {
+    console.error('Failed to revoke pro:', error);
+    return res.status(500).json({ error: error.message || 'Failed to revoke' });
   }
 });
 
