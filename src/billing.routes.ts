@@ -26,7 +26,7 @@ import {
   PRICE_PKR_ANNUAL,
 } from './lib/entitlements';
 import { SAFEPAY_CONFIGURED, SAFEPAY_WEBHOOK_READY, SAFEPAY_ENV, createCheckout, verifyWebhook } from './lib/safepay';
-import { sendProWelcome } from './lib/proNotify';
+import { sendProWelcome, sendProPending } from './lib/proNotify';
 
 const router = Router();
 
@@ -438,6 +438,8 @@ router.post('/pro-request', clerkAuth, async (req: AuthenticatedRequest, res: Re
       const i = await supabase.from('pro_requests').insert(payload).select('*').single();
       if (i.error) throw i.error; row = i.data;
     }
+    // Acknowledge the payment confirmation by email (best-effort, non-blocking).
+    void sendProPending(clerkId, { amountPkr, promoCode }).catch(() => { /* best-effort */ });
     res.json({ ok: true, request: row });
   } catch (error) {
     console.error('POST /billing/pro-request error:', error);
