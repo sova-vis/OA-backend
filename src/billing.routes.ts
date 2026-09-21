@@ -57,12 +57,19 @@ router.get('/status', clerkAuth, async (req: AuthenticatedRequest, res: Response
     const clerkId = req.auth!.clerkId;
     const row = await ensureBilling(clerkId);
     const access = computeAccess(row);
+    // In manual mode the admin-set QR price (pay_config) is the source of truth, so
+    // the whole UI (upgrade modal, pay page) shows one consistent amount.
+    let monthlyPkr = PRICE_PKR_MONTHLY;
+    if (PAYMENTS_MODE === 'manual') {
+      const cfg = await readPayConfig();
+      monthlyPkr = cfg?.amount_pkr ?? PRICE_PKR_MONTHLY;
+    }
     res.json({
       enforced: BILLING_ENFORCED,
       trialDays: TRIAL_DAYS,
       graceDays: GRACE_DAYS,
       paymentsMode: PAYMENTS_MODE,
-      price: { monthlyPkr: PRICE_PKR_MONTHLY, annualPkr: PRICE_PKR_ANNUAL },
+      price: { monthlyPkr, annualPkr: PRICE_PKR_ANNUAL },
       ...access,
     });
   } catch (error) {

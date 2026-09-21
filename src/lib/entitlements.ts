@@ -41,7 +41,7 @@ export const TRIAL_DEVICE_CHECK = boolEnv('BILLING_TRIAL_DEVICE_CHECK', true);
 /** Manual-flow Pro period length in days (admin activates after a QR payment). */
 export const MANUAL_PLAN_DAYS = intEnv('BILLING_MANUAL_DAYS', 30);
 /** Display prices (PKR). Charging isn't wired until Safepay; these drive the UI copy. */
-export const PRICE_PKR_MONTHLY = intEnv('BILLING_PRICE_MONTHLY_PKR', 999);
+export const PRICE_PKR_MONTHLY = intEnv('BILLING_PRICE_MONTHLY_PKR', 6000);
 export const PRICE_PKR_ANNUAL = (process.env.BILLING_PRICE_ANNUAL_PKR || '').trim()
   ? intEnv('BILLING_PRICE_ANNUAL_PKR', 0)
   : null;
