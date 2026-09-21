@@ -4,6 +4,7 @@ import { AuthenticatedRequest, clerkAuth, requireRole } from './lib/clerkAuth';
 import { supabase } from './lib/supabase';
 import { activateManualPro, revokePro, computeAccess, MANUAL_PLAN_DAYS, BillingRow } from './lib/entitlements';
 import { sendProWelcome } from './lib/proNotify';
+import { sendEmail, emailProvider } from './lib/mailer';
 
 const router = Router();
 
@@ -415,6 +416,37 @@ router.delete('/promo-codes/:id', clerkAuth, requireRole('admin'), async (req: A
   } catch (error: any) {
     console.error('Failed to delete promo code:', error);
     return res.status(500).json({ error: error.message || 'Failed to delete promo code' });
+  }
+});
+
+/** Diagnostics for transactional email: is a provider detected, and does a test
+ *  send actually succeed? Surfaces the exact Resend/SMTP response (best-effort
+ *  sends otherwise fail silently). Admin-only. */
+router.post('/email-test', clerkAuth, requireRole('admin'), async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const to = String(req.body?.to ?? '').trim();
+    const provider = emailProvider();
+    const diag = {
+      provider,                                                     // 'resend' | 'smtp' | 'none' | 'disabled'
+      resendKeyPresent: Boolean((process.env.RESEND_API_KEY || '').trim()),
+      resendKeyPrefix: (process.env.RESEND_API_KEY || '').trim().slice(0, 4) || null,
+      from: (process.env.EMAIL_FROM || 'Propel <noreply@propelcambridge.com>').trim(),
+      emailsEnabled: (process.env.EMAILS_ENABLED || '').trim().toLowerCase() !== 'false',
+      smtpHostPresent: Boolean((process.env.SMTP_HOST || process.env.GMAIL_USER || '').trim()),
+    };
+    let sendResult: unknown = null;
+    if (to) {
+      sendResult = await sendEmail({
+        to,
+        subject: 'Propel email test ✅',
+        html: '<div style="font-family:Arial,sans-serif;font-size:15px;color:#1C1714"><p>This is a <strong>test email</strong> from Propel.</p><p>If you can read this, transactional email is working.</p></div>',
+        text: 'This is a test email from Propel. If you can read this, transactional email is working.',
+      });
+    }
+    return res.json({ ok: true, diag, sendResult });
+  } catch (error: any) {
+    console.error('email-test error:', error);
+    return res.status(500).json({ error: error.message || 'email-test failed' });
   }
 });
 
