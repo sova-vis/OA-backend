@@ -165,10 +165,12 @@ function examinerFields(parsed: Record<string, unknown>): Pick<GradedQuestion, '
 }
 
 const PART_SCORES_INSTRUCTION =
-  'You MUST return "part_scores": an array of { "label": string, "earned": number, "max": number }. ' +
+  'You MUST return "part_scores": an array of { "label": string, "earned": number, "max": number, "model_answer": string, "mistake": string }. ' +
   'When the input "parts" array is non-empty, return ONE entry for EVERY part that has a non-null "marks" value — copy that part\'s EXACT "label" string verbatim (e.g. "(a)", "(a)(ii)") and use its "marks" as "max". ' +
   'Do NOT invent, merge, split, renumber or relabel parts, and do NOT add parts that were not in the input. ' +
   '"earned" is the whole marks you awarded that sub-part; the sum of "earned" across all entries MUST equal earned_marks. ' +
+  '"model_answer" is the ACTUAL correct answer for THAT sub-part — the specific values, terms, equations or statements that earn full marks (what a Cambridge mark scheme would credit), NOT a description of what the student should do. If no marking scheme is provided, write it from your own expert subject knowledge. ' +
+  '"mistake" is a short, specific note of what the student got wrong or left out for THAT sub-part; use "" when they earned full marks. ' +
   'Return [] ONLY when the input lists no parts at all (a single-answer question). Never return [] when the input has parts carrying marks.';
 
 const normPartLabel = (value: string) => value.trim().toLowerCase().replace(/\s+/g, '');
@@ -189,7 +191,14 @@ function parsePartScores(value: unknown, parts?: GradePart[]): GradedQuestion['p
     const max = Math.max(0, Math.round(Number(r.max) || schemeMax || 0));
     const cap = max > 0 ? max : 999;
     const earned = Math.max(0, Math.min(cap, Math.round(Number(r.earned) || 0)));
-    out.push({ label, earned, max: max || earned });
+    const clip = (v: unknown, n: number) => { const t = String(v ?? '').trim(); return t ? t.slice(0, n) : undefined; };
+    const modelAnswer = clip(r.model_answer, 600);
+    const mistake = clip(r.mistake, 400);
+    out.push({
+      label, earned, max: max || earned,
+      ...(modelAnswer ? { modelAnswer } : {}),
+      ...(mistake ? { mistake } : {}),
+    });
   }
   return out.length ? out : undefined;
 }

@@ -87,8 +87,10 @@ export interface GradedQuestion {
   commandWord?: string;      // the question's command word, e.g. "Describe", "Evaluate"
   commandWordNote?: string;  // coaching when the answer's style doesn't match the command word
   examinerNote?: string;     // "Candidates commonly lose marks here because…"
-  /** per sub-part awarded marks (earned vs available), labelled to the scheme parts */
-  partScores?: { label: string; earned: number; max: number }[];
+  /** per sub-part awarded marks (earned vs available), labelled to the scheme
+   *  parts. modelAnswer = the correct answer for that part (shown green);
+   *  mistake = what the student got wrong/omitted there (shown red). */
+  partScores?: { label: string; earned: number; max: number; modelAnswer?: string; mistake?: string }[];
   /** transcribed sub-parts, same keys the typed "Solve here" flow uses */
   extractedParts?: Record<string, string>;
   /** transcribed MCQ option letter */
