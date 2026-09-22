@@ -165,7 +165,11 @@ function examinerFields(parsed: Record<string, unknown>): Pick<GradedQuestion, '
 }
 
 const PART_SCORES_INSTRUCTION =
-  'Also return "part_scores": an array of { "label": string, "earned": number, "max": number }, one entry per marked sub-part, using the SAME part labels as the marking scheme (e.g. "(a)", "(a)(ii)"). "earned" is the marks you awarded that sub-part; "max" is that sub-part\'s available marks; the sum of earned across parts must equal earned_marks. Return [] when the question has no separate sub-parts.';
+  'You MUST return "part_scores": an array of { "label": string, "earned": number, "max": number }. ' +
+  'When the input "parts" array is non-empty, return ONE entry for EVERY part that has a non-null "marks" value — copy that part\'s EXACT "label" string verbatim (e.g. "(a)", "(a)(ii)") and use its "marks" as "max". ' +
+  'Do NOT invent, merge, split, renumber or relabel parts, and do NOT add parts that were not in the input. ' +
+  '"earned" is the whole marks you awarded that sub-part; the sum of "earned" across all entries MUST equal earned_marks. ' +
+  'Return [] ONLY when the input lists no parts at all (a single-answer question). Never return [] when the input has parts carrying marks.';
 
 const normPartLabel = (value: string) => value.trim().toLowerCase().replace(/\s+/g, '');
 
