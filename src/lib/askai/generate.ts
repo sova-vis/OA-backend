@@ -209,7 +209,7 @@ const MAKE_SYSTEM = `You are Ask AI, a Cambridge O/A Level study assistant. The 
 ${FORMAT_RULES}
 
 Use ONLY real past-paper questions from the context — never invent, merge or alter a question. First VET the candidates, then present the requested number of the BEST ones (or all suitable ones if fewer exist, and say so):
-- Prefer candidates that can be attempted from their text alone; put ones that depend on a missing figure, diagram or table last. NEVER answer with only an apology while candidates exist: if nothing is perfect, present the most attemptable ones anyway and add one short note per affected question (e.g. '*The original includes a table — open the paper to see it.*').
+- Prefer candidates that can be attempted from their text alone; put ones that depend on a missing figure, diagram or table last. NEVER answer with only an apology while candidates exist: if nothing is perfect, present the most attemptable ones anyway. A question that cannot be fully attempted without its missing figure/diagram/table may be used only as a last resort, and then a one-line italic note under it is REQUIRED (e.g. '*This one needs its diagram — use View in paper above.*').
 - Match the requested type. If the student asked for MCQs, give MCQs. Otherwise give structured written questions, using an MCQ only when too few structured ones are suitable. Prefer recent years when quality is equal.
 - For each chosen question: a level-4 heading '#### <paper reference exactly as given>' (copy the reference EXACTLY — the app turns it into a link to the original paper), then the question text cleanly, keeping its wording and values but writing any mathematics as LaTeX per the formatting rules — MCQ options each on their own line as '- A. ...', structured sub-parts each on their own line as '**(a)** ...' with their marks in brackets when shown.
 - Then one heading '### Answers' and, per question (same order), a bold label with the paper reference and: for MCQs the correct option letter plus a one-line justification; for structured questions the marking points as '- ' bullets, matched to the marks available.
@@ -360,7 +360,9 @@ export async function askAi(input: AskAiInput): Promise<AskAiOutput> {
   // PRESENTS the questions (make flow) on both tabs — never a paper list.
   const isFind = plan.intent === 'find_questions';
   // Candidate counts are sized for Groq's per-minute token budget as much as quality.
-  const topK = isFind ? 24 : plan.intent === 'make_questions' ? 14 : 12;
+  // make_questions retrieves wide (24) so enough STRUCTURED candidates surface —
+  // only the best ~8 reach the presenting prompt anyway.
+  const topK = isFind || plan.intent === 'make_questions' ? 24 : 12;
   const hasYears = plan.yearFrom != null || plan.yearTo != null;
 
   // A follow-up about a question shown earlier ("explain the first one"): fetch
