@@ -94,9 +94,26 @@ const GREEK: Record<string, string> = {
 };
 
 /**
- * The chat UI renders plain text/Markdown only, yet models still slip LaTeX
- * into worked solutions. Convert the common constructs to readable plain text
- * rather than showing raw backslash commands to a student.
+ * The Ask AI chat now renders LaTeX between dollar signs (KaTeX). Normalize
+ * what models actually emit so the frontend only ever sees $...$ / $$...$$:
+ * \( \) and \[ \] become dollar delimiters, display math is kept on one line
+ * (the renderer is line-based), and bare numbers wrapped in dollars — the
+ * "$0$, $-2$ in normal sentences" students reported — are unwrapped to text.
+ */
+export function normalizeMath(text: string): string {
+  let t = text
+    .replace(/\\\(\s*([\s\S]+?)\s*\\\)/g, (_, m: string) => `$${m.trim()}$`)
+    .replace(/\\\[\s*([\s\S]+?)\s*\\\]/g, (_, m: string) => `$$${m.replace(/\s*\n\s*/g, ' ').trim()}$$`);
+  t = t.replace(/\$\$([\s\S]+?)\$\$/g, (_, m: string) => `$$${m.replace(/\s*\n\s*/g, ' ').trim()}$$`);
+  // "$3$", "$-2$", "$25\%$" → plain text: numbers are prose, not math markup.
+  t = t.replace(/\$\s*([+-]?\d+(?:[.,]\d+)?)\s*(\\?%)?\s*\$/g, (_, n: string, pc?: string) => n + (pc ? '%' : ''));
+  return t;
+}
+
+/**
+ * Plain-text fallback for surfaces WITHOUT a math renderer (the inline MCQ
+ * "why is this wrong" box in Practice). Converts the common LaTeX constructs
+ * to readable plain text rather than showing raw backslash commands.
  */
 export function plainMath(text: string): string {
   let t = text
@@ -159,8 +176,10 @@ function sanitizeHistory(raw: unknown): Turn[] {
 
 // ---- prompts -------------------------------------------------------------------
 
-const FORMAT_RULES = String.raw`FORMATTING RULES (the chat UI renders only plain text and Markdown bold/lists/headings; anything else looks broken):
-- Never use LaTeX or math markup of any kind: no \(...\), \[...\], \frac, ^{}, _{} or backslash commands. Write formulas in plain text, e.g. '6CO2 + 6H2O -> C6H12O6 + 6O2', 'v = u + at', 'x^2' as 'x squared' or 'x^2'.
+const FORMAT_RULES = String.raw`FORMATTING RULES (the chat UI renders Markdown, plus LaTeX math placed between dollar signs):
+- Write mathematics as LaTeX between dollar signs: $...$ inline (e.g. $v = u + at$, $x^2$, $3.5 \times 10^4$, $\frac{30}{12}$), or $$...$$ for a key equation or a line of working that deserves its own line. Keep each $$...$$ on ONE line. Never use \(...\), \[...\] or LaTeX outside dollar signs.
+- Dollar signs are ONLY for genuine mathematical expressions (fractions, powers, roots, subscripts, symbols, units like $2.5\,\text{m/s}^2$). NEVER wrap a plain number, percentage or ordinary word in dollar signs — write 'the answer is 3', '-2' and '25%' as plain text.
+- Chemical equations and formulae in plain text with -> for arrows (e.g. '6CO2 + 6H2O -> C6H12O6 + 6O2'), not LaTeX.
 - Never truncate quoted question text with '...' — quote the relevant part in full or paraphrase cleanly.
 - Short paragraphs; Markdown '- ' bullets for lists of distinct facts or marking points. Every marking point, including alternatives, is its own bullet — never start a bullet with 'OR'.
 - Cite papers exactly as they appear in the context (e.g. 'Chemistry 2023 May/June Paper 2 Variant 1 Q8'). Never invent, alter or guess a paper reference; if the context has no relevant question, say so plainly.`;
@@ -200,19 +219,20 @@ const CHAT_SYSTEM = `You are Ask AI, a friendly study assistant for Cambridge O/
 
 const snip = (t: string, n: number) => t.replace(LEADING_QNUM_RE, '').replace(/\s+/g, ' ').trim().slice(0, n);
 
-function contextBlock(items: Ranked[], maxChars: number, tierNote = true): string {
-  return items.map((r, i) => {
-    const m = r.hit.metadata;
-    const note = tierNote && r.why ? ` — ${r.tier === 'best' ? 'same question' : r.tier}: ${r.why}` : '';
-    return `[${i + 1}] ${refLabel(m)} (${m.type || 'question'}${m.topic ? `, topic: ${m.topic}` : ''})${note}\n${snip(r.hit.text, maxChars)}`;
+// Context comes straight from retrieval order (closest first) so the answer
+// call never has to wait for the ranker — the two now run in parallel.
+function contextBlock(items: Hit[], maxChars: number): string {
+  return items.map((h, i) => {
+    const m = h.metadata;
+    return `[${i + 1}] ${refLabel(m)} (${m.type || 'question'}${m.topic ? `, topic: ${m.topic}` : ''})\n${snip(h.text, maxChars)}`;
   }).join('\n\n');
 }
 
-function pickWorkedExamples(rank: RankResult, limit = 2): Ranked[] {
+function pickWorkedExamples(hits: Hit[], limit = 2): Hit[] {
   const recent = new Date().getFullYear() - 5;
-  const pool = [...rank.best, ...rank.conceptual, ...rank.related].filter((r) => r.hit.metadata.type !== 'mcq');
-  const out = pool.filter((r) => (r.hit.metadata.year || 0) >= recent).slice(0, limit);
-  if (out.length < limit) for (const r of pool) { if (out.length >= limit) break; if (!out.includes(r)) out.push(r); }
+  const pool = hits.filter((h) => h.metadata.type !== 'mcq');
+  const out = pool.filter((h) => (h.metadata.year || 0) >= recent).slice(0, limit);
+  if (out.length < limit) for (const h of pool) { if (out.length >= limit) break; if (!out.includes(h)) out.push(h); }
   return out;
 }
 
@@ -270,34 +290,32 @@ function formatFindAnswer(query: string, plan: QueryPlan, rank: RankResult, cand
 
 // ---- Ask ------------------------------------------------------------------------
 
-function askUserPrompt(query: string, plan: QueryPlan, rank: RankResult, allHits: Hit[], level: Level): { system: string; user: string } {
-  const ranked = rankedFlat(rank);
+function askUserPrompt(query: string, plan: QueryPlan, hits: Hit[], level: Level): { system: string; user: string } {
   const header = `Student (${scopeLine(plan, level)}) asks: ${query}${plan.topic ? `\nInterpreted topic: ${plan.topic}` : ''}` +
     (plan.reference ? `\nThe student is referring to this question from earlier in the conversation: ${plan.reference} — answer about THAT question (it is in the context below if it was found).` : '');
 
   if (plan.intent === 'solve') {
-    const ctx = [...rank.best.slice(0, 2), ...rank.conceptual.slice(0, 3), ...rank.related.slice(0, 2)];
+    const ctx = hits.slice(0, 7);
     return {
       system: SOLVE_SYSTEM,
-      user: `${header}\n\nPast-paper context (closest first; "same question" = this is the pasted question):\n${ctx.length ? contextBlock(ctx, 1500) : '(no matching past-paper question found — solve from syllabus knowledge and do not claim a paper source)'}`,
+      user: `${header}\n\nPast-paper context (closest first — judge yourself whether one is the same question):\n${ctx.length ? contextBlock(ctx, 1500) : '(no matching past-paper question found — solve from syllabus knowledge and do not claim a paper source)'}`,
     };
   }
 
   if (plan.intent === 'make_questions') {
     const count = plan.count ?? 5;
-    const pool = (ranked.length ? ranked : allHits.map((h) => ({ hit: h, tier: 'related' as Tier, why: '' })))
-      .filter((r) => !plan.questionType || r.hit.metadata.type === plan.questionType || ranked.length < count);
-    const ctx = pool.slice(0, Math.max(count + 2, 6));
+    const typed = hits.filter((h) => !plan.questionType || h.metadata.type === plan.questionType);
+    const ctx = (typed.length >= Math.min(count, 3) ? typed : hits).slice(0, Math.max(count + 2, 6));
     return {
       system: MAKE_SYSTEM,
-      user: `${header}\nRequested: ${count} ${plan.questionType === 'mcq' ? 'MCQs' : plan.questionType === 'structured' ? 'structured questions' : 'questions'}.\n\nReal past-paper questions available (most relevant first):\n${ctx.length ? contextBlock(ctx, 1400, false) : '(none found)'}`,
+      user: `${header}\nRequested: ${count} ${plan.questionType === 'mcq' ? 'MCQs' : plan.questionType === 'structured' ? 'structured questions' : 'questions'}.\n\nReal past-paper questions available (most relevant first):\n${ctx.length ? contextBlock(ctx, 1400) : '(none found)'}`,
     };
   }
 
-  const ctx = ranked.slice(0, 5);
-  const worked = pickWorkedExamples(rank, 2);
+  const ctx = hits.slice(0, 5);
+  const worked = pickWorkedExamples(hits, 2);
   const examples = worked.length
-    ? `\n\nQuestions to answer (worked examples, in this order):\n${worked.map((r) => `Question [${refLabel(r.hit.metadata)}]:\n${snip(r.hit.text, 1500)}`).join('\n\n')}`
+    ? `\n\nQuestions to answer (worked examples, in this order):\n${worked.map((h) => `Question [${refLabel(h.metadata)}]:\n${snip(h.text, 1500)}`).join('\n\n')}`
     : '';
   return {
     system: EXPLAIN_SYSTEM,
@@ -317,7 +335,7 @@ export async function askAi(input: AskAiInput): Promise<AskAiOutput> {
   const empty = { best: [], conceptual: [], related: [] };
 
   if (!plan.needsSearch) {
-    const answer = plainMath(plan.reply
+    const answer = normalizeMath(plan.reply
       || await chatText(CHAT_SYSTEM, query, { tier: 'fast', maxTokens: 300, temperature: 0.5, history, timeoutMs: 30_000 }));
     return {
       type: 'smalltalk', mode, intent: plan.intent, answer, summary: null, level,
@@ -355,14 +373,14 @@ export async function askAi(input: AskAiInput): Promise<AskAiOutput> {
   }
   if (exact) hits = [exact, ...hits.filter((h) => h.id !== exact.id)];
 
-  const fullRank = await rankCandidates(query, plan, hits, level, isFind ? 'smart' : 'fast');
-  const rank = isFind ? capRank(fullRank, plan.count) : fullRank;
-  const matches = tiersOut(rank);
-  const citations = [...matches.best, ...matches.conceptual, ...matches.related];
   const tierTitles = TIER_TITLES[plan.kind];
   const tierLabels = TIER_LABELS[plan.kind];
 
   if (isFind) {
+    const fullRank = await rankCandidates(query, plan, hits, level, 'smart');
+    const rank = capRank(fullRank, plan.count);
+    const matches = tiersOut(rank);
+    const citations = [...matches.best, ...matches.conceptual, ...matches.related];
     const { summary, answer } = formatFindAnswer(query, plan, rank, hits.length, level, yearNote, rankedFlat(fullRank).length);
     return {
       type: 'exam_question', mode: 'find', intent: plan.intent, answer, summary, level,
@@ -371,12 +389,17 @@ export async function askAi(input: AskAiInput): Promise<AskAiOutput> {
     };
   }
 
-  // The UI lists best/conceptual matches ("Where this appears in past papers")
-  // from `matches` under the answer, so nothing is appended to the Markdown here.
-  const { system, user } = askUserPrompt(query, plan, rank, hits, level);
-  const answer = plainMath(stripPartLabels(stripRedundantOrPrefix(await chatText(system, user, {
-    tier: 'smart', maxTokens: 2600, temperature: 0.2, history, timeoutMs: 90_000,
-  }))));
+  // Ask: the ranker only feeds the "Where this appears in past papers" box —
+  // the answer's context is the retrieval order — so the two LLM calls run in
+  // PARALLEL, cutting the ranker's full latency out of every Ask answer.
+  const { system, user } = askUserPrompt(query, plan, hits, level);
+  const [rank, rawAnswer] = await Promise.all([
+    rankCandidates(query, plan, hits, level, 'fast'),
+    chatText(system, user, { tier: 'smart', maxTokens: 2600, temperature: 0.2, history, timeoutMs: 90_000 }),
+  ]);
+  const matches = tiersOut(rank);
+  const citations = [...matches.best, ...matches.conceptual, ...matches.related];
+  const answer = normalizeMath(stripPartLabels(stripRedundantOrPrefix(rawAnswer)));
 
   return {
     type: 'exam_question', mode: 'ask', intent: plan.intent, answer, summary: null, level,

@@ -1,7 +1,7 @@
 import { Router, Request, Response } from "express";
 import multer from "multer";
 import { grokEnabled, grokChatJson, grokVisionModel, grokErrorMessage } from "./lib/grok";
-import { askAi, plainMath } from "./lib/askai/generate";
+import { askAi, normalizeMath, plainMath } from "./lib/askai/generate";
 import { chatText, diagnoseProviders } from "./lib/askai/llm";
 import { ALL_SUBJECTS, AskAiIndexUnavailable } from "./lib/askai/retrieve";
 import { supabase } from "./lib/supabase";
@@ -125,6 +125,9 @@ router.post("/ask-image", visionUpload.single("image"), async (req: Request, res
       "You are a friendly, precise Cambridge O/A Level tutor.",
       "The student has attached an image — a diagram, graph, circuit, chemical structure, or a photographed exam question.",
       "Read it carefully and answer clearly and correctly at O/A-Level depth. If it's a question, solve it and show the key steps.",
+      "Formatting: Markdown; mathematics as LaTeX between dollar signs — $...$ inline or $$...$$ on its own single line for a key step.",
+      "Dollar signs are ONLY for real mathematical expressions (fractions, powers, roots, subscripts). NEVER wrap a plain number or ordinary word in dollar signs — write 'the answer is 3', not 'the answer is $3$'.",
+      "Chemical equations in plain text with -> arrows, not LaTeX.",
       "Return JSON ONLY: { \"answer\": string }.",
     ].join(" ");
     const user = `${subject ? "Subject: " + subject + ". " : ""}${question}`;
@@ -133,7 +136,7 @@ router.post("/ask-image", visionUpload.single("image"), async (req: Request, res
       images: [{ base64: file.buffer.toString("base64"), mimeType: file.mimetype }],
       model: grokVisionModel(), temperature: 0.2, maxTokens: 1300, timeoutMs: 90_000,
     });
-    return res.json({ type: "image_answer", answer: String(parsed.answer || "") });
+    return res.json({ type: "image_answer", answer: normalizeMath(String(parsed.answer || "")) });
   } catch (error) {
     const err = error as { status?: number; message?: string };
     console.error("[RAG] ask-image error", JSON.stringify({ status: err?.status ?? null, message: err?.message ?? String(error) }));
