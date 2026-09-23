@@ -208,8 +208,10 @@ const MAKE_SYSTEM = `You are Ask AI, a Cambridge O/A Level study assistant. The 
 
 ${FORMAT_RULES}
 
-Use ONLY real past-paper questions from the context — never invent, merge or alter a question. Present the requested number (or all suitable ones if fewer exist, and say so):
-- For each: a level-4 heading '#### <paper reference exactly as given>', then the question text cleanly — MCQ options each on their own line as '- A. ...', structured sub-parts each on their own line with their marks if shown.
+Use ONLY real past-paper questions from the context — never invent, merge or alter a question. First VET the candidates, then present the requested number of the BEST ones (or all suitable ones if fewer exist, and say so):
+- Skip any candidate that is NOT usable as shown: it depends on a figure, diagram, graph or table that is not present in its text, is cut off mid-sentence, or cannot be attempted from the text alone.
+- Match the requested type. If the student asked for MCQs, give MCQs. Otherwise give structured written questions, using an MCQ only when too few structured ones are suitable. Prefer recent years when quality is equal.
+- For each chosen question: a level-4 heading '#### <paper reference exactly as given>' (copy the reference EXACTLY — the app turns it into a link to the original paper), then the question text cleanly, keeping its wording and values but writing any mathematics as LaTeX per the formatting rules — MCQ options each on their own line as '- A. ...', structured sub-parts each on their own line as '**(a)** ...' with their marks in brackets when shown.
 - Then one heading '### Answers' and, per question (same order), a bold label with the paper reference and: for MCQs the correct option letter plus a one-line justification; for structured questions the marking points as '- ' bullets, matched to the marks available.
 - Do not add explanations before the questions; a one-line intro at most.`;
 
@@ -304,11 +306,16 @@ function askUserPrompt(query: string, plan: QueryPlan, hits: Hit[], level: Level
 
   if (plan.intent === 'make_questions') {
     const count = plan.count ?? 5;
-    const typed = hits.filter((h) => !plan.questionType || h.metadata.type === plan.questionType);
-    const ctx = (typed.length >= Math.min(count, 3) ? typed : hits).slice(0, Math.max(count + 2, 6));
+    // Requested type first, the rest as backup — the model vets and picks.
+    const preferred = plan.questionType
+      ? [...hits.filter((h) => h.metadata.type === plan.questionType), ...hits.filter((h) => h.metadata.type !== plan.questionType)]
+      : hits;
+    const ctx = preferred.slice(0, Math.min(Math.max(count + 3, 8), 10));
+    const asked = plan.questionType === 'mcq' ? 'MCQs'
+      : 'structured written questions (NOT MCQs — fall back to an MCQ only if too few structured ones are suitable)';
     return {
       system: MAKE_SYSTEM,
-      user: `${header}\nRequested: ${count} ${plan.questionType === 'mcq' ? 'MCQs' : plan.questionType === 'structured' ? 'structured questions' : 'questions'}.\n\nReal past-paper questions available (most relevant first):\n${ctx.length ? contextBlock(ctx, 1400) : '(none found)'}`,
+      user: `${header}\nRequested: ${count} ${asked}.\n\nCandidate past-paper questions (most relevant first — vet them and present the best ${count}):\n${ctx.length ? contextBlock(ctx, 1200) : '(none found)'}`,
     };
   }
 
@@ -347,9 +354,9 @@ export async function askAi(input: AskAiInput): Promise<AskAiOutput> {
 
   // The tab is only a hint to the planner. What the student actually asked for
   // decides the flow: "explain one of them" on the Find tab is an explanation;
-  // "which years was X asked" on the Ask tab is a lookup. On the Find tab a
-  // request for N questions is a lookup capped at N (Ask presents them with answers).
-  const isFind = plan.intent === 'find_questions' || (mode === 'find' && plan.intent === 'make_questions');
+  // "which years was X asked" on the Ask tab is a lookup; "give me 3 questions"
+  // PRESENTS the questions (make flow) on both tabs — never a paper list.
+  const isFind = plan.intent === 'find_questions';
   // Candidate counts are sized for Groq's per-minute token budget as much as quality.
   const topK = isFind ? 24 : plan.intent === 'make_questions' ? 14 : 12;
   const hasYears = plan.yearFrom != null || plan.yearTo != null;
@@ -398,7 +405,11 @@ export async function askAi(input: AskAiInput): Promise<AskAiOutput> {
   const { system, user } = askUserPrompt(query, plan, hits, level);
   const [rank, rawAnswer] = await Promise.all([
     rankCandidates(query, plan, hits, level, 'fast'),
-    chatText(system, user, { tier: 'smart', maxTokens: 2600, temperature: 0.2, history, timeoutMs: 90_000 }),
+    chatText(system, user, {
+      // Presenting N questions + their answer section needs more room than an explanation.
+      tier: 'smart', maxTokens: plan.intent === 'make_questions' ? 3000 : 2600,
+      temperature: 0.2, history, timeoutMs: 90_000,
+    }),
   ]);
   const matches = tiersOut(rank);
   const citations = [...matches.best, ...matches.conceptual, ...matches.related];

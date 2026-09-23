@@ -65,10 +65,12 @@ Decide how to handle the student's latest message (use the conversation so far t
 search_kind is "question" when the student gave or described ONE specific exam question (pasted text, or a reference to one shown earlier), and "topic" when they named a topic, concept or syllabus area.
 Rules:
 - The tab is a hint, not a constraint — decide from what the student actually wrote.
-- Find tab: "find_questions" for a topic, concept, pasted question, or any request for N questions to practise/prepare (set "count"). But an explicit "explain …" / "solve …" / "why is … wrong" is "explain" or "solve" even here.
-- Ask tab: "solve" when the message contains an actual exam-style question to answer; "make_questions" when they want practice questions/MCQs; "explain" for concept or topic explanations, revision, or "why do I lose marks on X"; "find_questions" when they ask which papers/years something appeared in.
+- A request for N questions/MCQs to practise or prepare ("give me 3 exam-style questions on X") is "make_questions" on BOTH tabs (set "count") — the student wants the questions presented, not a list of papers. "find_questions" is for finding WHERE something appeared: a topic, concept or pasted question to look up, "which papers/years asked X".
+- Find tab: an explicit "explain …" / "solve …" / "why is … wrong" is "explain" or "solve" even here.
+- Ask tab: "solve" when the message contains an actual exam-style question to answer; "explain" for concept or topic explanations, revision, or "why do I lose marks on X".
+- "question_type": "mcq" ONLY when the student asks for MCQs / multiple choice. When they ask for practice, exam-style, structured or written questions — or don't specify — set "structured": students mean written questions unless they say MCQ.
 - "chat" only for greetings, thanks, meta questions about the tool, or off-topic messages; then needs_search=false and "reply" is a brief friendly reply (max 3 sentences; if off-topic, say what you can help with). Every other intent has needs_search=true — real past-paper grounding is the point.
-- Follow-ups: when the student refers to questions shown earlier ("one of them", "the first one", "the 2023 one", "Q5"), pick ONE concrete question from the conversation — copy its paper reference into "reference" and use its question text as the first search query so it can be retrieved. "Explain one of them" → intent "explain".
+- Follow-ups: when the student refers to questions shown earlier ("one of them", "the first one", "the 2023 one", "explain Q1", "explain q 1 of this"), the intent is about THAT question ("explain"/"solve") — NEVER "find_questions" or "make_questions". Pick the ONE concrete question from the conversation (match its Q number if given), copy its paper reference into "reference" and use its question text as the first search query so it can be retrieved.
 - year_from/year_to only when a period is stated: "last 3 years" → year_from=${year - 2}; "2020 to 2022" → 2020/2022; "in 2023" → 2023/2023.
 - Never output a subject that is not in the list. If the student names a subject not offered at this level, set subject=null and note it in "topic".`;
 }
@@ -83,7 +85,7 @@ function historyBlock(history: Turn[]): string {
 
 // Paper references exactly as the UI prints them (retrieve.ts refLabel).
 const REF_RE = /\b(?:[A-Z][A-Za-z]+(?: (?:and|in|of|[A-Z][A-Za-z]+))* )(20[0-3]\d) (?:May\/June|Oct\/Nov|Feb\/March) Paper \d{1,2}(?: Variant \d)? Q(\d{1,2})\b/g;
-const FOLLOW_UP_RE = /\b(them|those|one of|any one|first|second|third|fourth|fifth|last one|that one|this one|the above|it|above)\b/i;
+const FOLLOW_UP_RE = /\b(them|those|one of|any one|first|second|third|fourth|fifth|last one|that one|this one|the above|it|above|this|these|q(?:uestion)?\s*\d{1,2})\b/i;
 const ORDINALS: Record<string, number> = { first: 0, second: 1, third: 2, fourth: 3, fifth: 4, '1st': 0, '2nd': 1, '3rd': 2, '4th': 3, '5th': 4 };
 
 /**
@@ -147,7 +149,7 @@ export function heuristicPlan(query: string, mode: Mode, level: Level, scopeSubj
     searchQueries: [stripYearPhrase(query)],
     keywords: heuristicKeywords(query, subject),
     yearFrom: years.yearFrom, yearTo: years.yearTo,
-    questionType: /\bmcqs?\b|multiple[- ]choice/i.test(query) ? 'mcq' : null,
+    questionType: /\bmcqs?\b|multiple[- ]choice/i.test(query) ? 'mcq' : intent === 'make_questions' ? 'structured' : null,
     count: countMatch ? Math.min(8, parseInt(countMatch[1], 10)) : null,
     reference,
     // A long message with a question mark or numbers reads like a pasted question.
@@ -198,7 +200,8 @@ export async function planQuery(
       keywords: asStrings(raw.keywords, 4, 40),
       yearFrom: yearFrom != null && yearTo != null && yearFrom > yearTo ? yearTo : yearFrom,
       yearTo,
-      questionType: qt,
+      // Practice requests default to written questions — MCQs only when asked for.
+      questionType: qt ?? (intent === 'make_questions' ? 'structured' : null),
       count: asInt(raw.count, 1, 8),
       reference,
       kind: raw.search_kind === 'question' || reference ? 'question' : 'topic',
