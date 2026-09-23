@@ -377,7 +377,10 @@ export async function askAi(input: AskAiInput): Promise<AskAiOutput> {
   const tierLabels = TIER_LABELS[plan.kind];
 
   if (isFind) {
-    const fullRank = await rankCandidates(query, plan, hits, level, 'smart');
+    // 'fast' (gpt-oss-20b, low effort): the rubric is explicit enough for it,
+    // it halves Find latency, and it sits in a different Groq TPM pool than
+    // the 120b answer model, so a busy hour degrades one, not both.
+    const fullRank = await rankCandidates(query, plan, hits, level, 'fast');
     const rank = capRank(fullRank, plan.count);
     const matches = tiersOut(rank);
     const citations = [...matches.best, ...matches.conceptual, ...matches.related];
