@@ -16,6 +16,9 @@ router.use(clerkAuth);
 
 // Throttle the paid-AI OCR endpoint so a caller can't loop it to run up cost.
 const aiLimit = rateLimit({ windowMs: 60_000, max: 40, name: 'ai' });
+// Throttle the teacher "mark now" trigger — one call can fan out to many paid-AI
+// markings, so cap how often it can be pressed.
+const markLimit = rateLimit({ windowMs: 60_000, max: 20, name: 'mark' });
 
 interface AssignmentRow {
   id: string;
@@ -28,12 +31,13 @@ interface AssignmentRow {
   attempt_limit: number | null;
   target_all: boolean;
   mark_scheme_visibility: string;
+  source_meta?: Record<string, unknown> | null;
 }
 
 async function loadAssignment(id: string): Promise<AssignmentRow | null> {
   const { data } = await supabase
     .from('assignments')
-    .select('id, class_id, title, status, deadline_at, timed, duration_minutes, attempt_limit, target_all, mark_scheme_visibility')
+    .select('id, class_id, title, status, deadline_at, timed, duration_minutes, attempt_limit, target_all, mark_scheme_visibility, source_meta')
     .eq('id', id)
     .maybeSingle();
   return (data as AssignmentRow | null) ?? null;
@@ -476,8 +480,14 @@ router.post('/:id/submit', async (req: AuthenticatedRequest, res: Response) => {
       })
       .eq('id', req.params.id);
 
-    // MCQ auto-marks instantly; theory is scaffolded for review (§8.1, §8.3).
-    await markSubmission(req.params.id);
+    // Marking mode (§5.4): assignments set to mark "on request" wait for the
+    // teacher to trigger marking (POST /submissions/assignment/:id/mark).
+    // Everything else — automatic, or legacy assignments with no marking_mode —
+    // marks immediately on submit (MCQ instant; theory scaffolded for review).
+    const markingMode = (assignment?.source_meta as Record<string, unknown> | null | undefined)?.marking_mode;
+    if (markingMode !== 'on_request') {
+      await markSubmission(req.params.id);
+    }
 
     return res.json({ ok: true, status: isLate ? 'late' : 'submitted' });
   } catch (err) {
@@ -727,6 +737,45 @@ router.get('/assignment/:assignmentId', async (req: AuthenticatedRequest, res: R
 async function logActivity(actor: string, eventType: string, targetType: string, targetId: string, detail: Record<string, unknown>) {
   await supabase.from('activity_log').insert({ actor_clerk_id: actor, event_type: eventType, target_type: targetType, target_id: targetId, detail });
 }
+
+// POST /submissions/assignment/:assignmentId/mark — run AI marking now for every
+// submitted-but-unmarked script (§5.4 on-request marking). Idempotent: it never
+// re-marks a script that already has marks, so an approved/overridden review is
+// never clobbered. Used by the "Mark now" button on the assignment detail page.
+router.post('/assignment/:assignmentId/mark', markLimit, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const assignment = await loadAssignment(req.params.assignmentId);
+    if (!assignment) return res.status(404).json({ error: 'Assignment not found' });
+    const access = await resolveClassAccess(assignment.class_id, req.auth!.clerkId);
+    if (!access || !access.canGrade) return res.status(403).json({ error: 'No grading access' });
+
+    const { data: subs } = await supabase
+      .from('submissions')
+      .select('id, status')
+      .eq('assignment_id', assignment.id)
+      .in('status', ['submitted', 'late']);
+    const submittedIds = ((subs ?? []) as { id: string }[]).map((s) => s.id);
+    if (submittedIds.length === 0) return res.json({ ok: true, marked: 0, already: 0 });
+
+    // Skip scripts that already have marks — re-marking would reset review state.
+    const { data: existingMarks } = await supabase
+      .from('submission_marks')
+      .select('submission_id')
+      .in('submission_id', submittedIds);
+    const already = new Set(((existingMarks ?? []) as { submission_id: string }[]).map((m) => m.submission_id));
+    const toMark = submittedIds.filter((id) => !already.has(id));
+
+    for (const id of toMark) {
+      try { await markSubmission(id); } catch (e) { console.error('markSubmission failed for', id, e); }
+    }
+    // TODO(§3.3): record marking quota (question-parts) once class->school linkage lands.
+    await logActivity(req.auth!.clerkId, 'mark_run', 'assignment', assignment.id, { marked: toMark.length });
+    return res.json({ ok: true, marked: toMark.length, already: submittedIds.length - toMark.length });
+  } catch (err) {
+    console.error('Mark run error:', err);
+    return res.status(500).json({ error: 'Failed to mark submissions' });
+  }
+});
 
 // POST /submissions/assignment/:assignmentId/extend — extend deadline (§7.3).
 router.post('/assignment/:assignmentId/extend', async (req: AuthenticatedRequest, res: Response) => {
