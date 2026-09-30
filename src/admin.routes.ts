@@ -5,6 +5,7 @@ import { supabase } from './lib/supabase';
 import { activateManualPro, revokePro, computeAccess, MANUAL_PLAN_DAYS, BillingRow } from './lib/entitlements';
 import { sendProWelcome } from './lib/proNotify';
 import { sendEmail, emailProvider } from './lib/mailer';
+import { logFunnel } from './lib/schoolOffer';
 
 const router = Router();
 
@@ -307,6 +308,7 @@ router.post('/pro-requests/:id/activate', clerkAuth, requireRole('admin'), async
       void sendProWelcome(reqRow.clerk_id, { plan: 'manual', periodEndIso: periodEnd, amountPkr: reqRow.amount_pkr ?? null })
         .catch(() => { /* best-effort */ });
     }
+    void logFunnel(reqRow.clerk_id, 'converted', 'manual_approval'); // §6.2 conversion
     return res.json({ ok: true, periodEnd, days: period });
   } catch (error: any) {
     console.error('Failed to activate pro request:', error);

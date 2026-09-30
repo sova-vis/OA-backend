@@ -27,6 +27,7 @@ import {
 } from './lib/entitlements';
 import { SAFEPAY_CONFIGURED, SAFEPAY_WEBHOOK_READY, SAFEPAY_ENV, createCheckout, verifyWebhook } from './lib/safepay';
 import { sendProWelcome, sendProPending } from './lib/proNotify';
+import { resolveStudentSchoolOffer, applyDiscount, logFunnel } from './lib/schoolOffer';
 
 const router = Router();
 
@@ -64,12 +65,17 @@ router.get('/status', clerkAuth, async (req: AuthenticatedRequest, res: Response
       const cfg = await readPayConfig();
       monthlyPkr = cfg?.amount_pkr ?? PRICE_PKR_MONTHLY;
     }
+    const offer = await resolveStudentSchoolOffer(clerkId);
+    const schoolDiscount = offer
+      ? { pct: offer.discount_pct, schoolName: offer.school_name, basePkr: monthlyPkr, discountedPkr: applyDiscount(monthlyPkr, offer.discount_pct) }
+      : null;
     res.json({
       enforced: BILLING_ENFORCED,
       trialDays: TRIAL_DAYS,
       graceDays: GRACE_DAYS,
       paymentsMode: PAYMENTS_MODE,
       price: { monthlyPkr, annualPkr: PRICE_PKR_ANNUAL },
+      schoolDiscount,
       ...access,
     });
   } catch (error) {
@@ -386,11 +392,14 @@ async function readActivePromo(code: string) {
 /** QR + payee details to show on the pay page — swapped by a valid promo code. */
 router.get('/pay-info', clerkAuth, async (req: AuthenticatedRequest, res: Response) => {
   try {
+    const clerkId = req.auth!.clerkId;
     const promoInput = String(req.query.promo ?? '').trim();
     const cfg = await readPayConfig();
     const promo = promoInput ? await readActivePromo(promoInput) : null;
     const baseAmount = cfg?.amount_pkr ?? PRICE_PKR_MONTHLY;
-    const amountPkr = promo?.amount_pkr ?? baseAmount;
+    // A school discount applies only when no promo code is used (a promo is explicit).
+    const offer = promo ? null : await resolveStudentSchoolOffer(clerkId);
+    const amountPkr = promo?.amount_pkr ?? (offer ? applyDiscount(baseAmount, offer.discount_pct) : baseAmount);
     const qr = (promo?.qr_image || cfg?.qr_image) ?? null;
     res.json({
       mode: PAYMENTS_MODE,
@@ -405,6 +414,9 @@ router.get('/pay-info', clerkAuth, async (req: AuthenticatedRequest, res: Respon
       },
       promo: promoInput
         ? { applied: !!promo, code: promoInput.toUpperCase(), label: promo?.label ?? null, note: promo?.note ?? null }
+        : null,
+      schoolDiscount: offer
+        ? { pct: offer.discount_pct, schoolName: offer.school_name, basePkr: baseAmount, discountedPkr: amountPkr }
         : null,
     });
   } catch (error) {
@@ -428,7 +440,10 @@ router.post('/pro-request', clerkAuth, async (req: AuthenticatedRequest, res: Re
     const email = (prof.data?.email as string) || '';
     const cfg = await readPayConfig();
     const promo = promoCode ? await readActivePromo(promoCode) : null;
-    const amountPkr = promo?.amount_pkr ?? cfg?.amount_pkr ?? PRICE_PKR_MONTHLY;
+    const base = cfg?.amount_pkr ?? PRICE_PKR_MONTHLY;
+    // Server-side authoritative price: a promo overrides, else the school discount.
+    const offer = promo ? null : await resolveStudentSchoolOffer(clerkId);
+    const amountPkr = promo?.amount_pkr ?? (offer ? applyDiscount(base, offer.discount_pct) : base);
 
     // One pending request per student: replace an existing pending one instead of stacking.
     const existing = await supabase.from('pro_requests').select('id').eq('clerk_id', clerkId).eq('status', 'pending').maybeSingle();
@@ -465,6 +480,14 @@ router.get('/my-request', clerkAuth, async (req: AuthenticatedRequest, res: Resp
     console.error('GET /billing/my-request error:', error);
     res.status(500).json({ error: 'server_error' });
   }
+});
+
+/** Log a paywall prompt impression for the school funnel (§6.2), best-effort. */
+router.post('/funnel', clerkAuth, async (req: AuthenticatedRequest, res: Response) => {
+  const clerkId = req.auth!.clerkId;
+  const context = (String(req.body?.context ?? '').trim().slice(0, 80)) || undefined;
+  void logFunnel(clerkId, 'prompt_shown', context);
+  res.json({ ok: true });
 });
 
 export default router;
