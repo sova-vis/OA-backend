@@ -326,6 +326,9 @@ router.post('/start', async (req: AuthenticatedRequest, res: Response) => {
         deadline_at: assignment.deadline_at,
         timed: assignment.timed,
         duration_minutes: assignment.duration_minutes,
+        // §5.3 handwritten-first: the teacher's chosen answer method drives the
+        // student's default input (handwritten -> photo/OCR). Legacy → 'either'.
+        answer_method: (assignment.source_meta as Record<string, unknown> | null | undefined)?.answer_method ?? 'either',
         effective_deadline: effectiveDeadline(assignment, (submission!.extension_until as string) ?? null)?.toISOString() ?? null,
       },
       questions,
