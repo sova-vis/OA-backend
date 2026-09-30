@@ -30,6 +30,8 @@ import feedbackRoutes from './feedback.routes';
 import teacherInsightsRoutes from './teacherInsights.routes';
 import settingsRoutes from './settings.routes';
 import institutionRoutes from './institution.routes';
+import ownerRoutes from './owner.routes';
+import schoolAdminRoutes from './schoolAdmin.routes';
 import datesheetRoutes from './datesheet.routes';
 import billingRoutes from './billing.routes';
 import { clerkAuth, warmupClerkVerifier } from './lib/clerkAuth';
@@ -290,6 +292,11 @@ app.use('/teacher-insights', teacherInsightsRoutes);
 // Teacher Portal — settings (§17) + notifications (§16), institution (§14–18)
 app.use('/settings', settingsRoutes);
 app.use('/institution', institutionRoutes);
+
+// Teacher Portal v1 (Sept 2026 spec) — platform-owner console (§3) + school-admin (§4).
+// Auth + role guards live inside each router (requireOwner / requireSchoolScope).
+app.use('/owner', ownerRoutes);
+app.use('/school-admin', schoolAdminRoutes);
 
 // Propel — exam datesheet (student-facing)
 app.use('/datesheet', datesheetRoutes);

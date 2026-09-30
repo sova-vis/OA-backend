@@ -554,4 +554,22 @@ router.get('/health', (req: Request, res: Response) => {
   });
 });
 
+/**
+ * POST /auth/password-changed
+ * Called right after a first-login user sets a new password (via Supabase Auth on
+ * the client). Clears the must_change_password flag so the forced-reset gate stops
+ * firing. Idempotent; only ever flips the caller's own flag.
+ */
+router.post('/password-changed', clerkAuth, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const clerkId = req.auth?.clerkId;
+    if (!clerkId) return res.status(401).json({ error: 'Unauthorized' });
+    await supabase.from('profiles').update({ must_change_password: false }).eq('clerk_id', clerkId);
+    return res.json({ ok: true });
+  } catch (error) {
+    console.error('password-changed error:', error);
+    return res.status(500).json({ error: 'Failed to update flag' });
+  }
+});
+
 export default router;
