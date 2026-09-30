@@ -78,6 +78,17 @@ export async function askAiUsage(schoolId: string): Promise<{ used: number; allo
   return { used, allowance: limits?.askai_allowance ?? 0 };
 }
 
+/** §6.3 record one Ask-AI generation against the school's Ask-AI allowance pool. */
+export async function recordAskAi(opts: { schoolId: string; studentClerkId?: string; units?: number; model?: string }): Promise<void> {
+  await supabase.from('marking_ledger').insert({
+    school_id: opts.schoolId,
+    student_clerk_id: opts.studentClerkId ?? null,
+    kind: 'askai',
+    units: opts.units ?? 1,
+    model: opts.model ?? null,
+  });
+}
+
 export async function countActiveTeachers(schoolId: string): Promise<number> {
   const { count } = await supabase
     .from('profiles')

@@ -175,6 +175,11 @@ export async function requirePro(req: AuthenticatedRequest, res: Response, next:
       return next();
     }
 
+    // §6.3 classroom students are granted Ask-AI via their school's allowance pool
+    // (the schoolAskAiGate sets this before requirePro on /rag). When the pool is
+    // spent the flag is absent and the normal Pro gate below applies.
+    if ((req as AuthenticatedRequest & { aiViaSchool?: boolean }).aiViaSchool) return next();
+
     const row = await ensureBilling(clerkId);
     const access = computeAccess(row);
     if (access.isPro) return next();

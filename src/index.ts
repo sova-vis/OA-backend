@@ -38,6 +38,7 @@ import billingRoutes from './billing.routes';
 import { clerkAuth, warmupClerkVerifier } from './lib/clerkAuth';
 import { warmupEmbedder } from './lib/askai/embed';
 import { requirePro, BILLING_ENFORCED } from './lib/entitlements';
+import { schoolAskAiGate } from './lib/askAiGate';
 import { SAFEPAY_CONFIGURED, SAFEPAY_WEBHOOK_READY, SAFEPAY_ENV } from './lib/safepay';
 import { rateLimit } from './lib/rateLimit';
 import { logConfigReport, serviceReadinessMap } from './lib/configReport';
@@ -247,7 +248,7 @@ app.use('/papers', papersRoutes);
 app.use('/content', clerkAuth, contentRoutes);
 
 // RAG / Ask-AI — auth + Pro gate + AI rate limit (F-04)
-app.use('/rag', clerkAuth, requirePro, aiLimit, ragRoutes);
+app.use('/rag', clerkAuth, schoolAskAiGate, requirePro, aiLimit, ragRoutes); // §6.3 school Ask-AI pool → then Pro
 
 // User paper tracking API
 app.use('/tracking', paperTrackingRoutes);

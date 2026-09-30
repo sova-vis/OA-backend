@@ -65,6 +65,12 @@ export async function resolveStudentSchoolOffer(clerkId: string): Promise<School
   }
 }
 
+/** The primary school a student is linked to (for §6.3 metering), or null. */
+export async function primaryStudentSchoolId(clerkId: string): Promise<string | null> {
+  const ids = await studentSchoolIds(clerkId);
+  return ids[0] ?? null;
+}
+
 /** Apply a school discount %, clamped and rounded to a whole rupee. */
 export function applyDiscount(basePkr: number, pct: number): number {
   const p = Math.max(0, Math.min(100, Number(pct) || 0));
