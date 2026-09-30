@@ -11,7 +11,7 @@ import { ActorRequest, requireOwner } from './lib/roles';
 import { supabase } from './lib/supabase';
 import { logAudit } from './lib/audit';
 import { getLimits, markingQuotaStatus, askAiUsage, countActiveTeachers, countStudents } from './lib/quota';
-import { createStaffAccount } from './services/staffAccounts';
+import { createStaffAccount, schoolShortCode } from './services/staffAccounts';
 
 const router = Router();
 router.use(clerkAuth, requireOwner);
@@ -56,17 +56,29 @@ async function schoolFunnel(schoolId: string) {
   return { prompts_shown: promptsShown, students_prompted: studentsPrompted, conversions, rate };
 }
 
+/** A school short code that's unique across schools (feature_flags.short_code). */
+async function uniqueShortCode(name: string): Promise<string> {
+  const base = schoolShortCode(name);
+  const { data } = await supabase.from('schools').select('feature_flags');
+  const taken = new Set(
+    ((data ?? []) as { feature_flags?: Record<string, unknown> }[])
+      .map((r) => r.feature_flags?.short_code).filter((x): x is string => typeof x === 'string'),
+  );
+  if (!taken.has(base)) return base;
+  for (let i = 2; i < 100; i++) if (!taken.has(`${base}${i}`)) return `${base}${i}`;
+  return `${base}${Date.now().toString().slice(-4)}`;
+}
+
 // ---------------------------------------------------------------------------
-// §3.1 Create a school + its limits + the first school-admin (forced reset).
+// §3.1 Create a school + its limits. The first school admin is added afterwards
+// from the school page (by name → generated login), so no email is needed here.
 // ---------------------------------------------------------------------------
 router.post('/schools', async (req: ActorRequest, res: Response) => {
   try {
     const b = req.body || {};
     if (!b.name || typeof b.name !== 'string') return res.status(400).json({ error: 'School name is required' });
-    if (!b.admin || !b.admin.email || !b.admin.name) {
-      return res.status(400).json({ error: 'First school admin (admin.email, admin.name) is required' });
-    }
 
+    const shortCode = await uniqueShortCode(b.name);
     const { data: sData, error: sErr } = await supabase.from('schools').insert({
       name: b.name.trim(),
       logo_url: b.logo_url ?? null,
@@ -74,7 +86,7 @@ router.post('/schools', async (req: ActorRequest, res: Response) => {
       licence_expiry: b.licence_expiry ?? null,
       discount_pct: typeof b.discount_pct === 'number' ? b.discount_pct : 0,
       allow_admin_script_view: !!b.allow_admin_script_view,
-      feature_flags: b.feature_flags ?? {},
+      feature_flags: { ...(b.feature_flags ?? {}), short_code: shortCode },
       created_by: req.actor?.clerkId ?? null,
     }).select('*').single();
     if (sErr) throw sErr;
@@ -86,33 +98,13 @@ router.post('/schools', async (req: ActorRequest, res: Response) => {
     }
     const { data: limitsData } = await supabase.from('school_limits').insert(limitRow).select('*').single();
 
-    let adminResult;
-    try {
-      adminResult = await createStaffAccount({
-        email: b.admin.email, name: b.admin.name, role: 'school_admin',
-        schoolId: school.id, password: b.admin.password, createdBy: req.actor?.clerkId,
-      });
-    } catch (e: unknown) {
-      const err = e as { statusCode?: number; message?: string };
-      return res.status(err.statusCode || 500).json({
-        error: `School created but the admin account failed: ${err.message}. Add one via POST /owner/schools/${school.id}/admins.`,
-        school,
-      });
-    }
-
     await logAudit({
       actorClerkId: req.actor?.clerkId, actorRole: req.actor?.role,
       action: 'school.create', targetType: 'school', targetId: school.id,
-      after: { name: school.name }, schoolId: school.id,
+      after: { name: school.name, short_code: shortCode }, schoolId: school.id,
     });
 
-    return res.status(201).json({
-      school, limits: limitsData,
-      admin: {
-        email: adminResult.email, tempPassword: adminResult.tempPassword,
-        existed: adminResult.existed, mustChangePassword: !adminResult.existed,
-      },
-    });
+    return res.status(201).json({ school, limits: limitsData, short_code: shortCode });
   } catch (err: unknown) {
     console.error('POST /owner/schools', err);
     return res.status(500).json({ error: (err as Error).message || 'Failed to create school' });
@@ -206,11 +198,11 @@ router.post('/schools/:id/admins', async (req: ActorRequest, res: Response) => {
   try {
     const { data: school } = await supabase.from('schools').select('id').eq('id', req.params.id).maybeSingle();
     if (!school) return res.status(404).json({ error: 'School not found' });
-    const { email, name, password } = req.body || {};
-    if (!email || !name) return res.status(400).json({ error: 'email and name are required' });
+    const { name } = req.body || {};
+    if (!name) return res.status(400).json({ error: 'name is required' });
 
     const result = await createStaffAccount({
-      email, name, role: 'school_admin', schoolId: req.params.id, password, createdBy: req.actor?.clerkId,
+      name, role: 'school_admin', schoolId: req.params.id, createdBy: req.actor?.clerkId,
     });
     await logAudit({
       actorClerkId: req.actor?.clerkId, actorRole: req.actor?.role,

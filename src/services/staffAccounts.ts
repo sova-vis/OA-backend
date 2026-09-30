@@ -23,7 +23,7 @@ const admin = createClient(
 export type StaffRole = 'school_admin' | 'teacher';
 
 export interface CreateStaffInput {
-  email: string;
+  email?: string;         // omitted → a login is generated as name@<short>propel.com
   name: string;
   role: StaffRole;
   schoolId: string;
@@ -68,11 +68,46 @@ async function findUserIdByEmail(email: string): Promise<string | null> {
   return null;
 }
 
-export async function createStaffAccount(input: CreateStaffInput): Promise<CreateStaffResult> {
-  const email = input.email.trim().toLowerCase();
-  if (!email || !input.name?.trim()) {
-    throw Object.assign(new Error('email and name are required'), { statusCode: 400 });
+/** Short login-domain code for a school from its name ("ABC School" → "abc"). */
+export function schoolShortCode(name: string): string {
+  const words = (name || '')
+    .toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(Boolean)
+    .filter((w) => !['the', 'a', 'an', 'of'].includes(w));
+  return (words[0] || 'school').slice(0, 10);
+}
+
+/** Local part of a generated login from a person's name ("John Doe" → "john"). */
+function localPart(name: string): string {
+  const first = (name || '').trim().split(/\s+/)[0] || 'user';
+  return first.toLowerCase().replace(/[^a-z0-9]/g, '') || 'user';
+}
+
+/** The school's stored short code (feature_flags.short_code), else derived from its name. */
+async function resolveShortCode(schoolId?: string): Promise<string> {
+  if (!schoolId) return 'school';
+  const { data } = await supabase.from('schools').select('name, feature_flags').eq('id', schoolId).maybeSingle();
+  const row = data as { name?: string; feature_flags?: Record<string, unknown> } | null;
+  const stored = row?.feature_flags?.short_code;
+  return typeof stored === 'string' && stored ? stored : schoolShortCode(row?.name ?? 'school');
+}
+
+/** A free generated login email: name@<short>propel.com, numbered on collision. */
+async function uniqueStaffEmail(name: string, shortCode: string): Promise<string> {
+  const base = localPart(name);
+  for (let i = 0; i < 60; i++) {
+    const candidate = `${base}${i === 0 ? '' : i + 1}@${shortCode}propel.com`;
+    if (!(await findUserIdByEmail(candidate))) return candidate;
   }
+  return `${base}${Date.now()}@${shortCode}propel.com`;
+}
+
+export async function createStaffAccount(input: CreateStaffInput): Promise<CreateStaffResult> {
+  if (!input.name?.trim()) {
+    throw Object.assign(new Error('name is required'), { statusCode: 400 });
+  }
+  // A login is generated from the name + school short code unless one is supplied.
+  const email = input.email?.trim().toLowerCase()
+    || (await uniqueStaffEmail(input.name, await resolveShortCode(input.schoolId)));
   const tempPassword = input.password || generatePassword();
 
   let clerkId: string;

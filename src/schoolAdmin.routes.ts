@@ -24,26 +24,24 @@ function schoolId(req: ActorRequest): string {
 
 interface TeacherRow { email?: string; name?: string; subjects?: string[]; levels?: string[]; }
 
-/** Minimal CSV parser for "email,name,subjects,levels" (subjects/levels use `;`). */
+/** Minimal CSV parser for "name,subjects,levels" (subjects/levels use `;`). Logins
+ *  are generated from the name, so no email column is needed. */
 function parseTeacherCsv(csv: string): TeacherRow[] {
   const lines = csv.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
   if (!lines.length) return [];
   const header = lines[0].toLowerCase().split(',').map((h) => h.trim());
-  const hasHeader = header.includes('email');
+  const hasHeader = header.includes('name');
   const start = hasHeader ? 1 : 0;
-  const idx = (n: string) => (hasHeader ? header.indexOf(n) : -1);
-  const iEmail = hasHeader ? idx('email') : 0;
-  const iName = hasHeader ? idx('name') : 1;
-  const iSub = hasHeader ? idx('subjects') : 2;
-  const iLvl = hasHeader ? idx('levels') : 3;
+  const iName = hasHeader ? header.indexOf('name') : 0;
+  const iSub = hasHeader ? header.indexOf('subjects') : 1;
+  const iLvl = hasHeader ? header.indexOf('levels') : 2;
   const rows: TeacherRow[] = [];
   for (let i = start; i < lines.length; i++) {
     const c = lines[i].split(',').map((x) => x.trim());
-    const email = c[iEmail];
-    if (!email) continue;
+    const name = c[iName];
+    if (!name) continue;
     rows.push({
-      email,
-      name: c[iName] || email.split('@')[0],
+      name,
       subjects: iSub >= 0 && c[iSub] ? c[iSub].split(';').map((s) => s.trim()).filter(Boolean) : undefined,
       levels: iLvl >= 0 && c[iLvl] ? c[iLvl].split(';').map((s) => s.trim()).filter(Boolean) : undefined,
     });
@@ -94,16 +92,16 @@ router.get('/teachers', async (req: ActorRequest, res: Response) => {
 router.post('/teachers', async (req: ActorRequest, res: Response) => {
   try {
     const sid = schoolId(req);
-    const { email, name, subjects, levels, password } = req.body || {};
-    if (!email || !name) return res.status(400).json({ error: 'email and name are required' });
+    const { name, subjects, levels } = req.body || {};
+    if (!name) return res.status(400).json({ error: 'name is required' });
 
     await assertCanAddTeachers(sid, 1);
 
     const result = await createStaffAccount({
-      email, name, role: 'teacher', schoolId: sid,
+      name, role: 'teacher', schoolId: sid,
       subjects: Array.isArray(subjects) ? subjects : undefined,
       levels: Array.isArray(levels) ? levels : undefined,
-      password, createdBy: req.actor?.clerkId,
+      createdBy: req.actor?.clerkId,
     });
     await logAudit({
       actorClerkId: req.actor?.clerkId, actorRole: req.actor?.role,
@@ -126,8 +124,8 @@ router.post('/teachers/bulk', async (req: ActorRequest, res: Response) => {
     let rows: TeacherRow[] = [];
     if (typeof req.body?.csv === 'string') rows = parseTeacherCsv(req.body.csv);
     else if (Array.isArray(req.body?.teachers)) rows = req.body.teachers;
-    rows = rows.filter((r) => r.email && r.name);
-    if (!rows.length) return res.status(400).json({ error: 'No valid teacher rows (need email + name)' });
+    rows = rows.filter((r) => r.name);
+    if (!rows.length) return res.status(400).json({ error: 'No valid teacher rows (need a name)' });
 
     await assertCanAddTeachers(sid, rows.length);
 
@@ -135,12 +133,12 @@ router.post('/teachers/bulk', async (req: ActorRequest, res: Response) => {
     for (const r of rows) {
       try {
         const out = await createStaffAccount({
-          email: r.email!, name: r.name!, role: 'teacher', schoolId: sid,
+          name: r.name!, role: 'teacher', schoolId: sid,
           subjects: r.subjects, levels: r.levels, createdBy: req.actor?.clerkId,
         });
         results.push({ email: out.email, ok: true, tempPassword: out.tempPassword, existed: out.existed });
       } catch (e: unknown) {
-        results.push({ email: r.email!, ok: false, error: (e as Error).message });
+        results.push({ email: r.name!, ok: false, error: (e as Error).message });
       }
     }
     await logAudit({
