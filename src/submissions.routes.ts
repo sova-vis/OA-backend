@@ -3,6 +3,7 @@ import { AuthenticatedRequest, clerkAuth } from './lib/clerkAuth';
 import { supabase } from './lib/supabase';
 import { resolveClassAccess } from './lib/portalAccess';
 import { markSubmission } from './lib/marking';
+import { recordMarking } from './lib/quota';
 import { grokChatJson, grokEnabled } from './lib/grok';
 import { rateLimit } from './lib/rateLimit';
 
@@ -62,6 +63,35 @@ function effectiveDeadline(assignment: AssignmentRow, extensionUntil: string | n
   const ext = extensionUntil ? new Date(extensionUntil) : null;
   if (base && ext) return ext > base ? ext : base;
   return ext ?? base;
+}
+
+// The school that owns a class's marking quota = the class owner (teacher)'s
+// school. Standalone teachers (no school) have no quota — return null.
+async function classSchoolId(classId: string): Promise<string | null> {
+  if (!classId) return null;
+  const { data: cls } = await supabase.from('classes').select('owner_clerk_id').eq('id', classId).maybeSingle();
+  const owner = (cls as { owner_clerk_id?: string } | null)?.owner_clerk_id;
+  if (!owner) return null;
+  const { data: prof } = await supabase.from('profiles').select('school_id').eq('clerk_id', owner).maybeSingle();
+  return (prof as { school_id?: string | null } | null)?.school_id ?? null;
+}
+
+// §3.3 meter a completed marking against the school's quota (question-parts ≈
+// criteria evaluated). Best-effort and NEVER blocks — recordMarking emits the
+// 80%/100% quota events; marking itself always proceeds (spec: no hard-stop).
+async function meterMarking(submissionId: string, classId: string, studentClerkId?: string): Promise<void> {
+  try {
+    const schoolId = await classSchoolId(classId);
+    if (!schoolId) return;
+    const { data: marks } = await supabase.from('submission_marks').select('ai_criteria').eq('submission_id', submissionId);
+    const units = ((marks ?? []) as { ai_criteria: unknown }[]).reduce(
+      (s, m) => s + Math.max(1, Array.isArray(m.ai_criteria) ? m.ai_criteria.length : 1), 0,
+    );
+    if (units <= 0) return;
+    await recordMarking({ schoolId, submissionId, studentClerkId, units, kind: 'marking' });
+  } catch (e) {
+    console.error('[meterMarking]', e);
+  }
 }
 
 // Question content sent to a student — never includes the mark scheme or the
@@ -490,6 +520,7 @@ router.post('/:id/submit', async (req: AuthenticatedRequest, res: Response) => {
     const markingMode = (assignment?.source_meta as Record<string, unknown> | null | undefined)?.marking_mode;
     if (markingMode !== 'on_request') {
       await markSubmission(req.params.id);
+      await meterMarking(req.params.id, assignment?.class_id ?? '', clerkId); // §3.3
     }
 
     return res.json({ ok: true, status: isLate ? 'late' : 'submitted' });
@@ -754,10 +785,11 @@ router.post('/assignment/:assignmentId/mark', markLimit, async (req: Authenticat
 
     const { data: subs } = await supabase
       .from('submissions')
-      .select('id, status')
+      .select('id, status, student_clerk_id')
       .eq('assignment_id', assignment.id)
       .in('status', ['submitted', 'late']);
-    const submittedIds = ((subs ?? []) as { id: string }[]).map((s) => s.id);
+    const subRows = (subs ?? []) as { id: string; student_clerk_id: string }[];
+    const submittedIds = subRows.map((s) => s.id);
     if (submittedIds.length === 0) return res.json({ ok: true, marked: 0, already: 0 });
 
     // Skip scripts that already have marks — re-marking would reset review state.
@@ -768,8 +800,10 @@ router.post('/assignment/:assignmentId/mark', markLimit, async (req: Authenticat
     const already = new Set(((existingMarks ?? []) as { submission_id: string }[]).map((m) => m.submission_id));
     const toMark = submittedIds.filter((id) => !already.has(id));
 
+    const studentById = new Map(subRows.map((s) => [s.id, s.student_clerk_id]));
     for (const id of toMark) {
-      try { await markSubmission(id); } catch (e) { console.error('markSubmission failed for', id, e); }
+      try { await markSubmission(id); await meterMarking(id, assignment.class_id, studentById.get(id)); } // §3.3
+      catch (e) { console.error('markSubmission failed for', id, e); }
     }
     // TODO(§3.3): record marking quota (question-parts) once class->school linkage lands.
     await logActivity(req.auth!.clerkId, 'mark_run', 'assignment', assignment.id, { marked: toMark.length });
