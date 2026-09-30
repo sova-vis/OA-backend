@@ -162,3 +162,12 @@ export async function createStaffAccount(input: CreateStaffInput): Promise<Creat
 
   return { clerkId, email, tempPassword: existed ? null : tempPassword, existed };
 }
+
+/** Reset a staff member's password to a fresh one-time password + force a reset. */
+export async function resetStaffPassword(clerkId: string): Promise<string> {
+  const tempPassword = generatePassword();
+  const { error } = await admin.auth.admin.updateUserById(clerkId, { password: tempPassword });
+  if (error) throw Object.assign(new Error(error.message || 'Failed to reset password'), { statusCode: 500 });
+  await supabase.from('profiles').update({ must_change_password: true, updated_at: new Date().toISOString() }).eq('clerk_id', clerkId);
+  return tempPassword;
+}

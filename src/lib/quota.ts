@@ -100,12 +100,16 @@ export async function countActiveTeachers(schoolId: string): Promise<number> {
 }
 
 export async function countStudents(schoolId: string): Promise<number> {
-  const { count } = await supabase
-    .from('profiles')
-    .select('id', { count: 'exact', head: true })
-    .eq('school_id', schoolId)
-    .eq('role', 'student');
-  return count ?? 0;
+  // Students aren't stamped with school_id — count distinct active enrolments in
+  // classes owned by the school's teachers (the real, seat-relevant number).
+  const { data: teachers } = await supabase.from('profiles').select('clerk_id').eq('school_id', schoolId).eq('role', 'teacher');
+  const teacherIds = ((teachers ?? []) as { clerk_id: string }[]).map((t) => t.clerk_id);
+  if (!teacherIds.length) return 0;
+  const { data: classes } = await supabase.from('classes').select('id').in('owner_clerk_id', teacherIds);
+  const classIds = ((classes ?? []) as { id: string }[]).map((c) => c.id);
+  if (!classIds.length) return 0;
+  const { data: enr } = await supabase.from('class_enrollments').select('student_clerk_id').in('class_id', classIds).eq('status', 'active');
+  return new Set(((enr ?? []) as { student_clerk_id: string }[]).map((e) => e.student_clerk_id)).size;
 }
 
 export interface CapacityError { status: number; message: string; }

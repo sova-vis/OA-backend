@@ -13,7 +13,8 @@ import { ActorRequest, requireSchoolScope } from './lib/roles';
 import { supabase } from './lib/supabase';
 import { logAudit } from './lib/audit';
 import { getLimits, countActiveTeachers, countStudents, markingQuotaStatus, assertCanAddTeachers, CapacityError } from './lib/quota';
-import { createStaffAccount } from './services/staffAccounts';
+import { createStaffAccount, resetStaffPassword } from './services/staffAccounts';
+import { teacherStats } from './lib/schoolStats';
 
 const router = Router();
 router.use(clerkAuth, requireSchoolScope('school_admin'));
@@ -81,7 +82,11 @@ router.get('/teachers', async (req: ActorRequest, res: Response) => {
       .eq('school_id', schoolId(req))
       .eq('role', 'teacher')
       .order('full_name', { ascending: true });
-    return res.json({ teachers: (data as unknown[]) ?? [] });
+    const teachers = (data as { clerk_id: string }[]) ?? [];
+    const stats = await teacherStats(teachers.map((t) => t.clerk_id));
+    return res.json({
+      teachers: teachers.map((t) => ({ ...t, stats: stats.get(t.clerk_id) ?? { classes: 0, students: 0, assignments: 0 } })),
+    });
   } catch (err: unknown) {
     console.error('GET /school-admin/teachers', err);
     return res.status(500).json({ error: 'Failed to list teachers' });
@@ -188,6 +193,28 @@ router.patch('/teachers/:clerkId', async (req: ActorRequest, res: Response) => {
   } catch (err: unknown) {
     console.error('PATCH /school-admin/teachers/:clerkId', err);
     return res.status(500).json({ error: 'Failed to update teacher' });
+  }
+});
+
+// §4.1 Reset a teacher's password → a fresh one-time password + forced reset.
+router.post('/teachers/:clerkId/reset-password', async (req: ActorRequest, res: Response) => {
+  try {
+    const sid = schoolId(req);
+    const { data: t } = await supabase.from('profiles').select('clerk_id, school_id, role').eq('clerk_id', req.params.clerkId).maybeSingle();
+    const teacher = t as { school_id?: string; role?: string } | null;
+    if (!teacher || teacher.school_id !== sid || teacher.role !== 'teacher') {
+      return res.status(404).json({ error: 'Teacher not found in your school' });
+    }
+    const tempPassword = await resetStaffPassword(req.params.clerkId);
+    await logAudit({
+      actorClerkId: req.actor?.clerkId, actorRole: req.actor?.role,
+      action: 'teacher.reset_password', targetType: 'profile', targetId: req.params.clerkId, schoolId: sid,
+    });
+    return res.json({ tempPassword });
+  } catch (err: unknown) {
+    const e = err as { statusCode?: number; message?: string };
+    console.error('POST /school-admin/teachers/:clerkId/reset-password', err);
+    return res.status(e.statusCode || 500).json({ error: e.message || 'Failed to reset password' });
   }
 });
 

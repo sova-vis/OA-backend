@@ -12,6 +12,7 @@ import { supabase } from './lib/supabase';
 import { logAudit } from './lib/audit';
 import { getLimits, markingQuotaStatus, askAiUsage, countActiveTeachers, countStudents } from './lib/quota';
 import { createStaffAccount, schoolShortCode } from './services/staffAccounts';
+import { schoolTotals } from './lib/schoolStats';
 
 const router = Router();
 router.use(clerkAuth, requireOwner);
@@ -130,8 +131,8 @@ router.get('/schools/:id', async (req: ActorRequest, res: Response) => {
   try {
     const { data } = await supabase.from('schools').select('*').eq('id', req.params.id).maybeSingle();
     if (!data) return res.status(404).json({ error: 'School not found' });
-    const [usage, funnel] = await Promise.all([schoolUsage(req.params.id), schoolFunnel(req.params.id)]);
-    return res.json({ ...(data as object), ...usage, funnel });
+    const [usage, funnel, totals] = await Promise.all([schoolUsage(req.params.id), schoolFunnel(req.params.id), schoolTotals(req.params.id)]);
+    return res.json({ ...(data as object), ...usage, funnel, totals });
   } catch (err: unknown) {
     console.error('GET /owner/schools/:id', err);
     return res.status(500).json({ error: 'Failed to load school' });
