@@ -24,6 +24,7 @@ import classesRoutes from './classes.routes';
 import assignmentsRoutes from './assignments.routes';
 import customQuestionsRoutes from './customQuestions.routes';
 import submissionsRoutes from './submissions.routes';
+import resourcesRoutes from './resources.routes';
 import reviewRoutes from './review.routes';
 import releaseRoutes from './release.routes';
 import feedbackRoutes from './feedback.routes';
@@ -269,6 +270,7 @@ app.use('/mentoring', mentoringRoutes);
 
 // Teacher Portal — class & enrolment management (auth enforced in-module)
 app.use('/classes', classesRoutes);
+app.use('/resources', resourcesRoutes); // §5.9 teacher notes & resources
 
 // Teacher Portal — assignment creation & tracking (auth enforced in-module)
 app.use('/assignments', assignmentsRoutes);
