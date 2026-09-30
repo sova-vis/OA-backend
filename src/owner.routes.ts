@@ -44,6 +44,18 @@ async function schoolUsage(schoolId: string) {
   };
 }
 
+// §6.2 upsell funnel for one school: how many classroom students were shown a
+// Pro prompt vs how many converted (from funnel_events).
+async function schoolFunnel(schoolId: string) {
+  const { data } = await supabase.from('funnel_events').select('kind, student_clerk_id').eq('school_id', schoolId);
+  const rows = (data ?? []) as { kind: string; student_clerk_id: string }[];
+  const promptsShown = rows.filter((r) => r.kind === 'prompt_shown').length;
+  const conversions = rows.filter((r) => r.kind === 'converted').length;
+  const studentsPrompted = new Set(rows.filter((r) => r.kind === 'prompt_shown').map((r) => r.student_clerk_id)).size;
+  const rate = studentsPrompted > 0 ? Math.round((conversions / studentsPrompted) * 100) : 0;
+  return { prompts_shown: promptsShown, students_prompted: studentsPrompted, conversions, rate };
+}
+
 // ---------------------------------------------------------------------------
 // §3.1 Create a school + its limits + the first school-admin (forced reset).
 // ---------------------------------------------------------------------------
@@ -126,7 +138,8 @@ router.get('/schools/:id', async (req: ActorRequest, res: Response) => {
   try {
     const { data } = await supabase.from('schools').select('*').eq('id', req.params.id).maybeSingle();
     if (!data) return res.status(404).json({ error: 'School not found' });
-    return res.json({ ...(data as object), ...(await schoolUsage(req.params.id)) });
+    const [usage, funnel] = await Promise.all([schoolUsage(req.params.id), schoolFunnel(req.params.id)]);
+    return res.json({ ...(data as object), ...usage, funnel });
   } catch (err: unknown) {
     console.error('GET /owner/schools/:id', err);
     return res.status(500).json({ error: 'Failed to load school' });
