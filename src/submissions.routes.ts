@@ -132,13 +132,15 @@ async function studentQuestionPayload(assignmentId: string) {
     }
   }
   // Structured sub-parts (a, b, c…) so the full question reaches the student —
-  // answers are NOT included (they're solving it).
-  const partsByUid = new Map<string, { label: string; body: string; marks: number | null }[]>();
+  // each part's own figures are included (answers/model-answer figures are NOT:
+  // normalizeQuestionImages strips role:"answer" while they're solving).
+  type StudentPart = { label: string; body: string; marks: number | null; images: { src: string; alt: string; caption: string | null }[] };
+  const partsByUid = new Map<string, StudentPart[]>();
   if (bankUids.length > 0) {
-    const { data } = await supabase.from('question_parts').select('question_uid, label, body, marks, order_index').in('question_uid', bankUids).order('order_index', { ascending: true });
-    for (const p of (data ?? []) as { question_uid: string; label: string; body: string; marks: number | null }[]) {
+    const { data } = await supabase.from('question_parts').select('question_uid, label, body, marks, order_index, images').in('question_uid', bankUids).order('order_index', { ascending: true });
+    for (const p of (data ?? []) as { question_uid: string; label: string; body: string; marks: number | null; images: unknown }[]) {
       const list = partsByUid.get(p.question_uid) ?? [];
-      list.push({ label: p.label, body: p.body, marks: p.marks });
+      list.push({ label: p.label, body: p.body, marks: p.marks, images: normalizeQuestionImages(p.images) });
       partsByUid.set(p.question_uid, list);
     }
   }
