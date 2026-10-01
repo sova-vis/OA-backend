@@ -15,6 +15,33 @@ router.use(clerkAuth);
 type SourceMode = 'full_paper' | 'selected' | 'topic';
 type MarkSchemeVisibility = 'never' | 'after_submission' | 'after_deadline' | 'after_release';
 
+// MCQ options jsonb → {label,text}[] (mirrors the student payload normalizer).
+function normOptions(options: unknown): { label: string; text: string }[] {
+  if (!options) return [];
+  if (Array.isArray(options)) {
+    return options.map((o, i) => {
+      if (o && typeof o === 'object') {
+        const obj = o as Record<string, unknown>;
+        return { label: String(obj.label ?? String.fromCharCode(65 + i)).toUpperCase(), text: String(obj.text ?? obj.value ?? '') };
+      }
+      return { label: String.fromCharCode(65 + i), text: String(o) };
+    });
+  }
+  return Object.entries(options as Record<string, unknown>).map(([label, text]) => ({ label: label.toUpperCase(), text: String(text) }));
+}
+
+// Figures with role preserved — the TEACHER reviewing sees everything, including
+// mark-scheme ("answer") figures (unlike the student payload, which strips them).
+function normImagesFull(images: unknown): { src: string; alt: string; caption: string | null; role?: string }[] {
+  if (!Array.isArray(images)) return [];
+  return images
+    .map((im) => {
+      const o = (im || {}) as { data_url?: string; public_url?: string; url?: string; alt?: string; caption?: string; role?: string };
+      return { src: o.data_url || o.public_url || o.url || '', alt: o.alt || 'figure', caption: o.caption || null, role: o.role };
+    })
+    .filter((im) => im.src);
+}
+
 interface IncomingQuestion {
   source?: 'bank' | 'custom';
   question_uid?: string;
@@ -432,6 +459,91 @@ router.delete('/:id', async (req: AuthenticatedRequest, res: Response) => {
   } catch (err) {
     console.error('Delete assignment error:', err);
     return res.status(500).json({ error: 'Failed to delete assignment' });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// GET /assignments/:id/full-questions — the COMPLETE questions (text, options,
+// every part, images, correct answer + mark scheme) for the teacher to review
+// after assigning. Snapshots on the assignment are only a 400-char preview, so
+// this re-assembles from the bank by question_uid. canGrade-gated.
+// ---------------------------------------------------------------------------
+router.get('/:id/full-questions', async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { assignment, access } = await loadAssignmentWithAccess(req.params.id, req.auth!.clerkId);
+    if (!assignment || !access) return res.status(404).json({ error: 'Assignment not found' });
+    if (!access.canGrade) return res.status(403).json({ error: 'No access' });
+
+    const { data: aqData } = await supabase
+      .from('assignment_questions')
+      .select('id, order_index, marks, source, question_uid, custom_question_id, question_ref, snapshot, excluded')
+      .eq('assignment_id', assignment.id).eq('excluded', false).order('order_index');
+    const rows = (aqData ?? []) as {
+      id: string; order_index: number; marks: number | null; source: string;
+      question_uid: string | null; custom_question_id: string | null; question_ref: string | null;
+      snapshot: Record<string, string> | null;
+    }[];
+
+    const bankUids = rows.filter((r) => r.source === 'bank' && r.question_uid).map((r) => r.question_uid as string);
+    const customIds = rows.filter((r) => r.source === 'custom' && r.custom_question_id).map((r) => r.custom_question_id as string);
+
+    type DbBankQ = { type: string; question_text: string; options: unknown; marks: number | null; images: unknown; correct_option: string | null; marking_scheme: string | null };
+    const bankMap = new Map<string, DbBankQ>();
+    if (bankUids.length) {
+      const { data } = await supabase.from('questions').select('id, type, question_text, options, marks, images, correct_option, marking_scheme').in('id', bankUids);
+      for (const q of (data ?? []) as (DbBankQ & { id: string })[]) bankMap.set(q.id, q);
+    }
+    const partsByUid = new Map<string, { label: string; body: string; marks: number | null; answer: string | null; images: unknown }[]>();
+    if (bankUids.length) {
+      const { data } = await supabase.from('question_parts').select('question_uid, label, body, marks, answer, order_index, images').in('question_uid', bankUids).order('order_index', { ascending: true });
+      for (const p of (data ?? []) as { question_uid: string; label: string; body: string; marks: number | null; answer: string | null; images: unknown }[]) {
+        const l = partsByUid.get(p.question_uid) ?? [];
+        l.push({ label: p.label, body: p.body, marks: p.marks, answer: p.answer, images: p.images });
+        partsByUid.set(p.question_uid, l);
+      }
+    }
+    const customMap = new Map<string, { question_type: string; question_text: string; marks: number }>();
+    if (customIds.length) {
+      const { data } = await supabase.from('custom_questions').select('id, question_type, question_text, marks').in('id', customIds);
+      for (const q of (data ?? []) as { id: string; question_type: string; question_text: string; marks: number }[]) customMap.set(q.id, q);
+    }
+
+    const questions = rows.map((r) => {
+      const snap = r.snapshot ?? {};
+      const base = {
+        assignment_question_id: r.id,
+        uid: r.question_uid || r.custom_question_id || r.id,
+        id: r.question_ref || '',
+        subject: snap.subject || '', year: snap.year || '', session: snap.session || '',
+        paper: snap.paper || '', variant: snap.variant || '',
+        questionNumber: snap.question_number || String(r.order_index + 1),
+        topic: snap.topic || '', theme: '',
+      };
+      if (r.source === 'custom' && r.custom_question_id) {
+        const c = customMap.get(r.custom_question_id);
+        return {
+          ...base, type: c?.question_type === 'mcq' ? 'mcq' : 'structured',
+          questionText: c?.question_text || snap.text || '', marks: c?.marks ?? r.marks ?? 0,
+          options: [], correctOption: null, markingScheme: '', images: [], parts: [],
+        };
+      }
+      const b = r.question_uid ? bankMap.get(r.question_uid) : undefined;
+      const parts = (r.question_uid ? partsByUid.get(r.question_uid) ?? [] : []).map((p) => ({
+        label: p.label, body: p.body, marks: p.marks, answer: p.answer ?? null, images: normImagesFull(p.images),
+      }));
+      return {
+        ...base, type: b?.type === 'mcq' ? 'mcq' : 'structured',
+        questionText: b?.question_text || snap.text || '', marks: b?.marks ?? r.marks ?? 0,
+        options: b?.type === 'mcq' ? normOptions(b?.options) : [],
+        correctOption: b?.correct_option || null, markingScheme: b?.marking_scheme || '',
+        images: normImagesFull(b?.images), parts,
+      };
+    });
+
+    return res.json({ questions });
+  } catch (err) {
+    console.error('GET /assignments/:id/full-questions', err);
+    return res.status(500).json({ error: 'Failed to load questions' });
   }
 });
 
