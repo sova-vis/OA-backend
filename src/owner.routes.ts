@@ -11,7 +11,7 @@ import { ActorRequest, requireOwner } from './lib/roles';
 import { supabase } from './lib/supabase';
 import { logAudit } from './lib/audit';
 import { getLimits, markingQuotaStatus, askAiUsage, countActiveTeachers, countStudents } from './lib/quota';
-import { createStaffAccount, schoolShortCode } from './services/staffAccounts';
+import { createStaffAccount, schoolShortCode, resetStaffPassword, updateStaffEmail } from './services/staffAccounts';
 import { schoolTotals } from './lib/schoolStats';
 import { deleteSchoolCascade } from './services/cascadeDelete';
 
@@ -217,6 +217,71 @@ router.post('/schools/:id/admins', async (req: ActorRequest, res: Response) => {
     const e = err as { statusCode?: number; message?: string };
     console.error('POST /owner/schools/:id/admins', err);
     return res.status(e.statusCode || 500).json({ error: e.message || 'Failed to add admin' });
+  }
+});
+
+// List the school-admins of a school, so the owner can see who has access.
+router.get('/schools/:id/admins', async (req: ActorRequest, res: Response) => {
+  try {
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('clerk_id, full_name, email, deactivated_at, must_change_password, created_at')
+      .eq('school_id', req.params.id).eq('role', 'school_admin')
+      .order('created_at', { ascending: true });
+    if (error) throw error;
+    return res.json({ admins: data ?? [] });
+  } catch (err: unknown) {
+    const e = err as { message?: string };
+    console.error('GET /owner/schools/:id/admins', err);
+    return res.status(500).json({ error: e.message || 'Failed to load admins' });
+  }
+});
+
+// Verify a school_admin belongs to this school (shared guard for the two routes below).
+async function adminInSchool(schoolId: string, clerkId: string): Promise<{ email: string | null } | null> {
+  const { data } = await supabase
+    .from('profiles').select('clerk_id, school_id, role, email')
+    .eq('clerk_id', clerkId).maybeSingle();
+  const a = data as { school_id?: string; role?: string; email?: string } | null;
+  if (!a || a.school_id !== schoolId || a.role !== 'school_admin') return null;
+  return { email: a.email ?? null };
+}
+
+// Reset a school-admin's password → a fresh one-time password + forced reset.
+router.post('/schools/:id/admins/:clerkId/reset-password', async (req: ActorRequest, res: Response) => {
+  try {
+    if (!(await adminInSchool(req.params.id, req.params.clerkId))) {
+      return res.status(404).json({ error: 'Admin not found in this school' });
+    }
+    const tempPassword = await resetStaffPassword(req.params.clerkId);
+    await logAudit({
+      actorClerkId: req.actor?.clerkId, actorRole: req.actor?.role,
+      action: 'school_admin.reset_password', targetType: 'profile', targetId: req.params.clerkId, schoolId: req.params.id,
+    });
+    return res.json({ tempPassword });
+  } catch (err: unknown) {
+    const e = err as { statusCode?: number; message?: string };
+    console.error('POST /owner/schools/:id/admins/:clerkId/reset-password', err);
+    return res.status(e.statusCode || 500).json({ error: e.message || 'Failed to reset password' });
+  }
+});
+
+// Change a school-admin's login email.
+router.post('/schools/:id/admins/:clerkId/email', async (req: ActorRequest, res: Response) => {
+  try {
+    if (!(await adminInSchool(req.params.id, req.params.clerkId))) {
+      return res.status(404).json({ error: 'Admin not found in this school' });
+    }
+    const email = await updateStaffEmail(req.params.clerkId, String(req.body?.email ?? ''));
+    await logAudit({
+      actorClerkId: req.actor?.clerkId, actorRole: req.actor?.role,
+      action: 'school_admin.update_email', targetType: 'profile', targetId: req.params.clerkId, schoolId: req.params.id,
+    });
+    return res.json({ email });
+  } catch (err: unknown) {
+    const e = err as { statusCode?: number; message?: string };
+    console.error('POST /owner/schools/:id/admins/:clerkId/email', err);
+    return res.status(e.statusCode || 500).json({ error: e.message || 'Failed to update email' });
   }
 });
 

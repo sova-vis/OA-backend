@@ -171,3 +171,19 @@ export async function resetStaffPassword(clerkId: string): Promise<string> {
   await supabase.from('profiles').update({ must_change_password: true, updated_at: new Date().toISOString() }).eq('clerk_id', clerkId);
   return tempPassword;
 }
+
+/** Change a staff member's login email (Supabase Auth + profile). Returns the normalized email. */
+export async function updateStaffEmail(clerkId: string, email: string): Promise<string> {
+  const normalized = (email || '').trim().toLowerCase();
+  if (!normalized || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(normalized)) {
+    throw Object.assign(new Error('Enter a valid email address.'), { statusCode: 400 });
+  }
+  const existing = await findUserIdByEmail(normalized);
+  if (existing && existing !== clerkId) {
+    throw Object.assign(new Error('That email is already in use.'), { statusCode: 409 });
+  }
+  const { error } = await admin.auth.admin.updateUserById(clerkId, { email: normalized, email_confirm: true });
+  if (error) throw Object.assign(new Error(error.message || 'Failed to update email'), { statusCode: 500 });
+  await supabase.from('profiles').update({ email: normalized, updated_at: new Date().toISOString() }).eq('clerk_id', clerkId);
+  return normalized;
+}
