@@ -2,6 +2,7 @@ import { Router, Response } from 'express';
 import { AuthenticatedRequest, clerkAuth } from './lib/clerkAuth';
 import { supabase } from './lib/supabase';
 import { resolveClassAccess } from './lib/portalAccess';
+import { deleteAssignmentCascade } from './services/cascadeDelete';
 
 /**
  * Teacher Portal — assignment creation & tracking (spec feature group 6).
@@ -424,9 +425,9 @@ router.delete('/:id', async (req: AuthenticatedRequest, res: Response) => {
     const { assignment, access } = await loadAssignmentWithAccess(req.params.id, req.auth!.clerkId);
     if (!assignment || !access) return res.status(404).json({ error: 'Assignment not found' });
     if (!access.canGrade) return res.status(403).json({ error: 'No grading access' });
-    // Deleting an assignment removes its questions and all submissions (cascade).
-    const { error } = await supabase.from('assignments').delete().eq('id', assignment.id);
-    if (error) throw error;
+    // Explicitly clear students' submissions/answers/marks + questions + recipients
+    // before the row (the live schema has drifted, so don't rely on DB cascade).
+    await deleteAssignmentCascade(String(assignment.id));
     return res.json({ ok: true });
   } catch (err) {
     console.error('Delete assignment error:', err);

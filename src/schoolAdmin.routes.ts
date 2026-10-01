@@ -15,6 +15,7 @@ import { logAudit } from './lib/audit';
 import { getLimits, countActiveTeachers, countStudents, markingQuotaStatus, assertCanAddTeachers, CapacityError } from './lib/quota';
 import { createStaffAccount, resetStaffPassword } from './services/staffAccounts';
 import { teacherStats } from './lib/schoolStats';
+import { deleteTeacherCascade } from './services/cascadeDelete';
 
 const router = Router();
 router.use(clerkAuth, requireSchoolScope('school_admin'));
@@ -215,6 +216,36 @@ router.post('/teachers/:clerkId/reset-password', async (req: ActorRequest, res: 
     const e = err as { statusCode?: number; message?: string };
     console.error('POST /school-admin/teachers/:clerkId/reset-password', err);
     return res.status(e.statusCode || 500).json({ error: e.message || 'Failed to reset password' });
+  }
+});
+
+// §4.1 Permanently delete a teacher (hard delete). Removes their account + classes +
+// assignments + submissions (students' answers for those are cleared); enrolled
+// students keep their accounts. Requires the teacher's exact email retyped in `confirm`.
+router.delete('/teachers/:clerkId', async (req: ActorRequest, res: Response) => {
+  try {
+    const sid = schoolId(req);
+    const { data: t } = await supabase
+      .from('profiles').select('clerk_id, school_id, role, email')
+      .eq('clerk_id', req.params.clerkId).maybeSingle();
+    const teacher = t as { school_id?: string; role?: string; email?: string } | null;
+    if (!teacher || teacher.school_id !== sid || teacher.role !== 'teacher') {
+      return res.status(404).json({ error: 'Teacher not found in your school' });
+    }
+    const typed = String(req.body?.confirm ?? '').trim().toLowerCase();
+    if (!teacher.email || typed !== teacher.email.toLowerCase()) {
+      return res.status(400).json({ error: 'The email you typed does not match this teacher.' });
+    }
+    await logAudit({
+      actorClerkId: req.actor?.clerkId, actorRole: req.actor?.role,
+      action: 'teacher.delete', targetType: 'profile', targetId: req.params.clerkId, schoolId: sid,
+    });
+    await deleteTeacherCascade(req.params.clerkId);
+    return res.json({ ok: true });
+  } catch (err: unknown) {
+    const e = err as { statusCode?: number; message?: string };
+    console.error('DELETE /school-admin/teachers/:clerkId', err);
+    return res.status(e.statusCode || 500).json({ error: e.message || 'Failed to delete teacher' });
   }
 });
 

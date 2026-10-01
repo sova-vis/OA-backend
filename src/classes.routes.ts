@@ -14,6 +14,7 @@ import {
 } from './lib/provisioning';
 import { displayName } from './lib/names';
 import { completeJoinedStudentOnboarding, ensureStudentProfile } from './lib/clerkUser';
+import { clearStudentSubmissionsForClass } from './services/cascadeDelete';
 
 /**
  * Teacher Portal — class & enrolment management (spec §3, §4.4, §3.5).
@@ -956,12 +957,15 @@ router.get('/:id/students/:studentClerkId', async (req: AuthenticatedRequest, re
   }
 });
 
-// POST /classes/:id/students/:studentClerkId/remove — unlink, preserve attempts.
+// POST /classes/:id/students/:studentClerkId/remove — unlink AND clear the
+// student's answered questions (submissions + answers + marks) for this class, so a
+// removed student leaves no graded work behind (and a rejoin starts clean).
 router.post('/:id/students/:studentClerkId/remove', async (req: AuthenticatedRequest, res: Response) => {
   try {
     const access = await resolveClassAccess(req.params.id, req.auth!.clerkId);
     if (!access) return res.status(404).json({ error: 'Class not found' });
 
+    await clearStudentSubmissionsForClass(access.klass.id, req.params.studentClerkId);
     const { error } = await supabase
       .from('class_enrollments')
       .update({ status: 'removed', removed_at: new Date().toISOString() })

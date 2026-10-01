@@ -13,6 +13,7 @@ import { logAudit } from './lib/audit';
 import { getLimits, markingQuotaStatus, askAiUsage, countActiveTeachers, countStudents } from './lib/quota';
 import { createStaffAccount, schoolShortCode } from './services/staffAccounts';
 import { schoolTotals } from './lib/schoolStats';
+import { deleteSchoolCascade } from './services/cascadeDelete';
 
 const router = Router();
 router.use(clerkAuth, requireOwner);
@@ -216,6 +217,33 @@ router.post('/schools/:id/admins', async (req: ActorRequest, res: Response) => {
     const e = err as { statusCode?: number; message?: string };
     console.error('POST /owner/schools/:id/admins', err);
     return res.status(e.statusCode || 500).json({ error: e.message || 'Failed to add admin' });
+  }
+});
+
+// DELETE /owner/schools/:id — permanently delete a school and cascade. Hard delete:
+// removes the school + its school-admins + teachers (and their classes, assignments,
+// submissions); enrolled students keep their accounts but are unenrolled and their
+// school-tied answers are cleared. Requires the exact school name retyped in `confirm`.
+router.delete('/schools/:id', async (req: ActorRequest, res: Response) => {
+  try {
+    const { data: school } = await supabase.from('schools').select('id, name').eq('id', req.params.id).maybeSingle();
+    if (!school) return res.status(404).json({ error: 'School not found' });
+    const name = ((school as { name?: string }).name || '').trim();
+    const typed = String(req.body?.confirm ?? '').trim();
+    if (!typed || typed.toLowerCase() !== name.toLowerCase()) {
+      return res.status(400).json({ error: 'The name you typed does not match the school name.' });
+    }
+    // Log before the row is gone (audit_log.school_id becomes NULL after the delete).
+    await logAudit({
+      actorClerkId: req.actor?.clerkId, actorRole: req.actor?.role,
+      action: 'school.delete', targetType: 'school', targetId: req.params.id, schoolId: req.params.id,
+    });
+    const summary = await deleteSchoolCascade(req.params.id);
+    return res.json({ ok: true, ...summary });
+  } catch (err: unknown) {
+    const e = err as { statusCode?: number; message?: string };
+    console.error('DELETE /owner/schools/:id', err);
+    return res.status(e.statusCode || 500).json({ error: e.message || 'Failed to delete school' });
   }
 });
 
