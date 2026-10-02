@@ -86,11 +86,15 @@ interface PageResult {
  * answers must be associated with the printed number/sub-part they sit under
  * (otherwise every answer would be dropped as "no question number written").
  */
-function extractionSystem(onQuestionPaper: boolean): string {
+function extractionSystem(onQuestionPaper: boolean, onScreen: boolean): string {
   return [
-    'You transcribe handwritten exam answers from a scanned page. You are an OCR engine, NOT an examiner.',
-    'Never grade, correct, complete, improve or comment on the content. Transcribe only what is physically written in handwriting.',
-    'CRITICAL: transcribe HANDWRITTEN student work only. Ignore printed question-paper text, printed mark schemes, headers, footers, "Working Space", "Answers", "three from", tick boxes, and any typed/printed table that is part of the question — never transcribe printed text as the answer.',
+    onScreen
+      ? "You transcribe a student's exam answers from a page. They answered ON SCREEN, so an answer may be HANDWRITTEN (digital ink) or TYPED into a text box — read both. You are an OCR engine, NOT an examiner."
+      : 'You transcribe handwritten exam answers from a scanned page. You are an OCR engine, NOT an examiner.',
+    'Never grade, correct, complete, improve or comment on the content. Transcribe exactly what the student wrote.',
+    onScreen
+      ? "CRITICAL: transcribe the student's OWN answers — BOTH their handwriting AND any answers they TYPED on screen (clean typed text the student added in the answer space). Still ignore the PRINTED question-paper text, printed options, printed tables, mark schemes, headers and footers — only the student's added answers, written or typed."
+      : 'CRITICAL: transcribe HANDWRITTEN student work only. Ignore printed question-paper text, printed mark schemes, headers, footers, "Working Space", "Answers", "three from", tick boxes, and any typed/printed table that is part of the question — never transcribe printed text as the answer.',
     onQuestionPaper
       ? 'CRITICAL: the student wrote their answers BY HAND directly on this printed question paper, in the spaces under or beside each printed question. They did NOT re-write the question numbers, so use the PRINTED question number and sub-part each handwritten answer sits under to identify it. Never invent an answer where there is no handwriting.'
       : 'CRITICAL: never invent an answer for a question that does not appear on this page. If a question number is not written on this page, omit it entirely.',
@@ -136,18 +140,22 @@ function labelVocabulary(questions: GradeQuestion[]): string {
 }
 
 async function transcribePage(
-  page: PageImage, questions: GradeQuestion[], isMcqPaper: boolean, onQuestionPaper: boolean,
+  page: PageImage, questions: GradeQuestion[], isMcqPaper: boolean, onQuestionPaper: boolean, onScreen: boolean,
 ): Promise<PageResult> {
   const images: GrokImage[] = [{ base64: page.base64, mimeType: page.mimeType }];
   const user = [
     onQuestionPaper
-      ? `This is page ${page.page} of the printed question paper with the student's answers written BY HAND on it.`
-      : `This is page ${page.page} of a student's handwritten answer sheet.`,
+      ? `This is page ${page.page} of the printed question paper with the student's answers added ON SCREEN (handwritten or typed).`
+      : onScreen
+        ? `This is page ${page.page} of the student's on-screen answer (handwritten and/or typed).`
+        : `This is page ${page.page} of a student's handwritten answer sheet.`,
     isMcqPaper
       ? 'It is a multiple-choice answer sheet: report the option letter the student marked for each question number.'
       : onQuestionPaper
-        ? 'Transcribe every handwritten answer on this page, and label it with the printed question number and sub-part it is written under.'
-        : 'Transcribe every answer written on this page.',
+        ? 'Transcribe every answer the student added (handwritten or typed), and label it with the printed question number and sub-part it is written under.'
+        : onScreen
+          ? 'Transcribe every answer on this page — both handwriting and any typed text the student added.'
+          : 'Transcribe every answer written on this page.',
     'The paper being attempted has these question numbers and sub-part labels. Use them to normalise the labels you report,',
     'but ONLY report questions actually written on this page:',
     labelVocabulary(questions),
@@ -155,7 +163,7 @@ async function transcribePage(
 
   try {
     const parsed = await grokChatJson({
-      system: extractionSystem(onQuestionPaper),
+      system: extractionSystem(onQuestionPaper, onScreen),
       user,
       images,
       model: grokVisionModel(),
@@ -447,7 +455,7 @@ export async function extractHandwrittenAnswers(
   const isMcqPaper = options?.isMcqPaper ?? questions.every((q) => q.type === 'mcq');
   const onQuestionPaper = options?.onQuestionPaper === true;
   const onScreen = onQuestionPaper || options?.onScreen === true;
-  const results = await mapPool(pages, PAGE_CONCURRENCY, (page) => transcribePage(page, questions, isMcqPaper, onQuestionPaper));
+  const results = await mapPool(pages, PAGE_CONCURRENCY, (page) => transcribePage(page, questions, isMcqPaper, onQuestionPaper, onScreen));
 
   for (const result of results) {
     if (result.error) warnings.push(`Page ${result.page} could not be read (${result.error}).`);
