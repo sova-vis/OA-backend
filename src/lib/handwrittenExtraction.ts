@@ -266,7 +266,7 @@ function fragmentLabel(question: GradeQuestion, fragment: RawFragment): string {
  * Fold a question's fragments into one answer, keyed to the marking scheme's own
  * part labels so `studentParts` is shape-identical to what the typed flow sends.
  */
-function buildAnswer(question: GradeQuestion, fragments: RawFragment[], sawAnyQuestionNumber: boolean): ExtractedAnswer {
+function buildAnswer(question: GradeQuestion, fragments: RawFragment[], sawAnyQuestionNumber: boolean, onScreen = false): ExtractedAnswer {
   if (fragments.length === 0) {
     return {
       // Nothing written for this question. If the upload clearly belongs to this
@@ -323,6 +323,11 @@ function buildAnswer(question: GradeQuestion, fragments: RawFragment[], sawAnyQu
   } else {
     flag = 'ok';
   }
+  // Writing on screen is captured at full digital fidelity — there is no clearer
+  // scan to chase. So rather than withhold the marks and send the student off to
+  // "re-upload a photo" they never took, grade the best reading with an
+  // "unclear" caveat (low_confidence) whenever anything legible-ish was read.
+  if (onScreen && flag === 'unreadable') flag = 'low_confidence';
 
   return {
     flag,
@@ -415,10 +420,16 @@ export async function extractHandwrittenAnswers(
     singleQuestion?: boolean;
     /**
      * The student wrote their answers directly on the printed question paper
-     * (the "draw on the paper" flow), so answers are keyed off the PRINTED
-     * question numbers rather than handwritten ones.
+     * (the full-paper write-on-screen flow), so answers are keyed off the PRINTED
+     * question numbers rather than handwritten ones. Implies `onScreen`.
      */
     onQuestionPaper?: boolean;
+    /**
+     * The answer is on-screen digital ink (write-on-screen), not a photo/scan —
+     * so an unclear read is graded best-effort rather than withheld (there is no
+     * clearer photo to chase). Set for both full-paper and topic write-on-screen.
+     */
+    onScreen?: boolean;
   },
 ): Promise<ExtractionOutcome> {
   const warnings: string[] = [];
@@ -435,6 +446,7 @@ export async function extractHandwrittenAnswers(
 
   const isMcqPaper = options?.isMcqPaper ?? questions.every((q) => q.type === 'mcq');
   const onQuestionPaper = options?.onQuestionPaper === true;
+  const onScreen = onQuestionPaper || options?.onScreen === true;
   const results = await mapPool(pages, PAGE_CONCURRENCY, (page) => transcribePage(page, questions, isMcqPaper, onQuestionPaper));
 
   for (const result of results) {
@@ -473,7 +485,7 @@ export async function extractHandwrittenAnswers(
     const matched = fragmentsForQuestion(question, allFragments);
     // A one-question upload answers that question whether or not it was numbered.
     const mine = single && matched.length === 0 ? allFragments : matched;
-    byQuestionId.set(question.id, buildAnswer(question, mine, single || uploadBelongsToPaper));
+    byQuestionId.set(question.id, buildAnswer(question, mine, single || uploadBelongsToPaper, onScreen));
   }
 
   return { byQuestionId, pageCount: pages.length, warnings, paperMismatch: mismatch, visionModel: grokVisionModel() };

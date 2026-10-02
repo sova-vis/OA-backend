@@ -94,7 +94,7 @@ router.post('/grade', clerkAuth, async (req: AuthenticatedRequest, res: Response
       graded = await gradeTyped(subject, questions);
     }
 
-    const report = buildReport(graded, solveMode, model, extraction);
+    const report = buildReport(graded, solveMode, model, extraction, solveMode === 'handwritten' && body.onQuestionPaper === true);
 
     // Persist the report onto the progress doc and mark the paper completed.
     // Handwritten attempts also store the transcription in the same answer slots
@@ -204,11 +204,15 @@ router.post('/grade-one-image', clerkAuth, upload.single('file'), async (req: Au
         base64: file.buffer.toString('base64'), mimeType: mime, page: 1, source: file.originalname,
       }];
     }
+    // write-on-screen answers are digital ink (no clearer photo to chase), so an
+    // unclear read is graded best-effort with a caveat rather than withheld
+    const onScreen = String(req.body?.onScreen) === 'true';
     const read = await extractHandwrittenAnswers([question], pages, {
       isMcqPaper: question.type === 'mcq',
       singleQuestion: true,
+      onScreen,
     });
-    const result = await gradeExtracted(subject, question, read.byQuestionId.get(question.id));
+    const result = await gradeExtracted(subject, question, read.byQuestionId.get(question.id), onScreen);
     return res.json({ result });
   } catch (error) {
     console.error('Single-question image grading error:', error);

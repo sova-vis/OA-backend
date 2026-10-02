@@ -287,6 +287,19 @@ test('illegible writing is flagged unreadable and its text is not kept for marki
   includes(q1.note, 'faint pencil');
 });
 
+test('on-screen writing: an unclear read is graded best-effort, not withheld', async () => {
+  // Same illegible fragment, but written on screen (digital ink) — there is no
+  // clearer photo to chase, so we grade the best reading instead of withholding.
+  reset({
+    p1: { fragments: [{ q: '1', part: '(a)', text: 'phot??yn??sis', legible: false, confidence: 0.2 }] },
+  });
+  const read = await extractHandwrittenAnswers(paperA(), [fakePage('p1', 1)], { onScreen: true });
+  const q1 = read.byQuestionId.get('q1')!;
+
+  equal(q1.flag, 'low_confidence', 'on-screen ink is downgraded to low_confidence, never withheld');
+  includes(q1.studentParts['(a)'], 'phot', 'the best reading is kept so it can still be marked');
+});
+
 test('confidence below the floor is unreadable even when marked legible', async () => {
   reset({ p1: { fragments: [{ q: '1', part: '(a)', text: 'maybe photosynthesis', legible: true, confidence: 0.25 }] } });
   const read = await extractHandwrittenAnswers(paperA(), [fakePage('p1', 1)]);

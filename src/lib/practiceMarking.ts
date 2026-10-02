@@ -427,13 +427,16 @@ const NO_ANSWER: ExtractedAnswer = {
 };
 
 /** A question whose answer could not be read is reported, never scored. */
-function withheldResult(question: GradeQuestion, extracted: ExtractedAnswer): GradedQuestion {
+function withheldResult(question: GradeQuestion, extracted: ExtractedAnswer, onScreen = false): GradedQuestion {
+  const fix = onScreen
+    ? 'Write it more clearly on screen, or use the Text tool to type it, then mark again.'
+    : 'Re-upload a clearer photo of this page to have it marked.';
   return {
     id: question.id, questionNumber: question.questionNumber, earned: 0, max: maxMarksOf(question),
     verdict: 'unanswered',
     feedback: extracted.note
-      ? `We could not read your handwriting for this question (${extracted.note}), so it has not been marked. Re-upload a clearer photo of this page to have it marked.`
-      : 'We could not read your handwriting for this question, so it has not been marked. Re-upload a clearer photo of this page to have it marked.',
+      ? `We could not read your handwriting for this question (${extracted.note}), so it has not been marked. ${fix}`
+      : `We could not read your handwriting for this question, so it has not been marked. ${fix}`,
     expectedPoints: [], missingPoints: [],
     gradingSource: 'grok-vision',
     schemeUsed: schemeIsUsable(schemeText(question)),
@@ -441,11 +444,13 @@ function withheldResult(question: GradeQuestion, extracted: ExtractedAnswer): Gr
   };
 }
 
-function notFoundResult(question: GradeQuestion): GradedQuestion {
+function notFoundResult(question: GradeQuestion, onScreen = false): GradedQuestion {
   return {
     id: question.id, questionNumber: question.questionNumber, earned: 0, max: maxMarksOf(question),
     verdict: 'unanswered',
-    feedback: 'This question was not found on the pages you uploaded. If you answered it, upload the missing page.',
+    feedback: onScreen
+      ? 'No answer was found for this question. If you meant to answer it, write it on screen and mark again.'
+      : 'This question was not found on the pages you uploaded. If you answered it, upload the missing page.',
     expectedPoints: [], missingPoints: [],
     gradingSource: 'grok-vision',
     schemeUsed: schemeIsUsable(schemeText(question)),
@@ -524,11 +529,14 @@ export async function gradeExtracted(
   subject: string,
   question: GradeQuestion,
   extracted: ExtractedAnswer | undefined,
+  onScreen = false,
 ): Promise<GradedQuestion> {
-  if (!extracted) return withExtractionMeta(notFoundResult(question), NO_ANSWER);
-  if (extracted.flag === 'not_found') return withExtractionMeta(notFoundResult(question), extracted);
-  // Illegible: flag it rather than guessing at what it might have said.
-  if (extracted.flag === 'unreadable') return withExtractionMeta(withheldResult(question, extracted), extracted);
+  if (!extracted) return withExtractionMeta(notFoundResult(question, onScreen), NO_ANSWER);
+  if (extracted.flag === 'not_found') return withExtractionMeta(notFoundResult(question, onScreen), extracted);
+  // Illegible: flag it rather than guessing at what it might have said. (For
+  // on-screen writing this flag is already downgraded to low_confidence upstream,
+  // so an unreadable answer is still graded best-effort instead of withheld.)
+  if (extracted.flag === 'unreadable') return withExtractionMeta(withheldResult(question, extracted, onScreen), extracted);
 
   // Everything else — including a genuinely blank answer — goes through the same
   // scorer the typed flow calls. gradeMcq/gradeWritten already return verdict
@@ -547,10 +555,10 @@ export async function gradeHandwritten(
   const prepared = reclaimLeakedSchemes(questions);
   const read = await extractHandwrittenAnswers(prepared, pages, { isMcqPaper, subject, onQuestionPaper });
   const gradedFirst = await mapPool(prepared, WRITTEN_CONCURRENCY, (question) =>
-    gradeExtracted(subject, question, read.byQuestionId.get(question.id)),
+    gradeExtracted(subject, question, read.byQuestionId.get(question.id), onQuestionPaper),
   );
   const graded = await retryFailedGrading(subject, prepared, gradedFirst, (question) =>
-    gradeExtracted(subject, question, read.byQuestionId.get(question.id)),
+    gradeExtracted(subject, question, read.byQuestionId.get(question.id), onQuestionPaper),
   );
 
   const flagCount = (flag: ExtractedAnswer['flag']) => graded.filter((g) => g.extractionFlag === flag).length;
@@ -580,7 +588,13 @@ export function buildReport(
   solveMode: SolveMode,
   model: string,
   extraction?: ExtractionSummary,
+  onScreen = false,
 ): PracticeReport {
+  // "Re-upload a clearer photo" makes no sense when the student wrote on screen —
+  // there's no scan to retake. Nudge them to write more clearly or type instead.
+  const reupload = onScreen
+    ? 'write them more clearly on screen, or use the Text tool to type them'
+    : 're-upload those pages more clearly';
   // Questions whose answer could not be read are excluded from the score
   // entirely. Counting them as 0/max would report an unreadable page as if the
   // student had got it wrong.
@@ -601,7 +615,7 @@ export function buildReport(
   const failed = withheld.filter((g) => g.gradingFailed || (g.extractionFlag !== 'unreadable' && g.extractionFlag !== 'not_found'));
   if (unread.length > 0) {
     improvements.unshift(
-      `${unread.length} question${unread.length === 1 ? '' : 's'} could not be read and ${unread.length === 1 ? 'was' : 'were'} left unmarked (${unread.map((g) => `Q${g.questionNumber}`).join(', ')}) — re-upload those pages more clearly.`,
+      `${unread.length} question${unread.length === 1 ? '' : 's'} could not be read and ${unread.length === 1 ? 'was' : 'were'} left unmarked (${unread.map((g) => `Q${g.questionNumber}`).join(', ')}) — ${reupload}.`,
     );
   }
   if (failed.length > 0) {
@@ -611,7 +625,7 @@ export function buildReport(
   }
 
   const base =
-    total === 0 ? 'We could not mark any of this attempt — see the notes below and re-upload clearer pages.'
+    total === 0 ? `We could not mark any of this attempt — see the notes below and ${onScreen ? 'write more clearly on screen, or type your answers with the Text tool' : 're-upload clearer pages'}.`
       : percent >= 80 ? 'Excellent — a strong, exam-ready attempt across most of the paper.'
       : percent >= 60 ? 'Solid work. A few questions need tightening to push into the top band.'
       : percent >= 40 ? 'A fair attempt. Focus on the flagged questions to build accuracy.'
