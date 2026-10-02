@@ -36,6 +36,7 @@ router.post('/grade', clerkAuth, async (req: AuthenticatedRequest, res: Response
 
     const body = (req.body ?? {}) as {
       paperKey?: string; subject?: string; solveMode?: SolveMode; questions?: GradeQuestion[];
+      onQuestionPaper?: boolean;
     };
     const paperKey = body.paperKey;
     if (!isValidPaperKey(paperKey)) return res.status(400).json({ error: 'Invalid paper key' });
@@ -85,7 +86,7 @@ router.post('/grade', clerkAuth, async (req: AuthenticatedRequest, res: Response
       const fromUpload = questions.map((question) => ({
         ...question, studentOption: null, studentParts: {}, studentAnswer: null,
       }));
-      const result = await gradeHandwritten(subject, fromUpload, loaded.pages, fromUpload.every((q) => q.type === 'mcq'));
+      const result = await gradeHandwritten(subject, fromUpload, loaded.pages, fromUpload.every((q) => q.type === 'mcq'), body.onQuestionPaper === true);
       graded = result.graded;
       // Files we could not use are warnings on the report, not silent zeros.
       extraction = { ...result.extraction, warnings: [...loaded.skipped, ...result.extraction.warnings] };

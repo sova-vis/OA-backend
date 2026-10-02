@@ -542,9 +542,10 @@ export async function gradeHandwritten(
   questions: GradeQuestion[],
   pages: PageImage[],
   isMcqPaper: boolean,
+  onQuestionPaper = false,
 ): Promise<{ graded: GradedQuestion[]; extraction: ExtractionSummary }> {
   const prepared = reclaimLeakedSchemes(questions);
-  const read = await extractHandwrittenAnswers(prepared, pages, { isMcqPaper, subject });
+  const read = await extractHandwrittenAnswers(prepared, pages, { isMcqPaper, subject, onQuestionPaper });
   const gradedFirst = await mapPool(prepared, WRITTEN_CONCURRENCY, (question) =>
     gradeExtracted(subject, question, read.byQuestionId.get(question.id)),
   );

@@ -78,21 +78,35 @@ interface PageResult {
   error?: string;
 }
 
-const EXTRACTION_SYSTEM = [
-  'You transcribe handwritten exam answers from a scanned page. You are an OCR engine, NOT an examiner.',
-  'Never grade, correct, complete, improve or comment on the content. Transcribe only what is physically written in handwriting.',
-  'CRITICAL: transcribe HANDWRITTEN student work only. Ignore printed question-paper text, printed mark schemes, headers, footers, "Working Space", "Answers", "three from", tick boxes, and any typed/printed table that is part of the question.',
-  'CRITICAL: never invent an answer for a question that does not appear on this page. If a question number is not written on this page, omit it entirely.',
-  'If a question number is written but nothing is written after it, return it with text "" and legible true (the student left it blank).',
-  'If something is written but you genuinely cannot make out the words, return your best partial reading, set legible to false, and set a low confidence. Do NOT guess at plausible exam content to fill the gap.',
-  'confidence is your honest 0-1 certainty that your transcription matches the ink on the page. Use a value below 0.3 when the writing is mostly unreadable.',
-  'Match each answer to the question number the student wrote next to it. Use part_label for sub-parts, e.g. "(a)", "(b)(ii)". Use "" when the answer has no sub-part label.',
-  'For a multiple-choice answer sheet, put the chosen letter in selected_option and leave text "".',
-  'Transcribe mathematical working, tables the student filled in, and chemical formulae as written, in plain text.',
-  'Return JSON ONLY: { "page_quality": "good"|"fair"|"poor", "header_text": string, "fragments": [ { "question_number": string, "part_label": string, "text": string, "selected_option": string, "legible": boolean, "confidence": number, "note": string } ] }',
-  'header_text is any printed paper title, subject name or paper code visible on the page (used to detect a wrong upload); "" if none.',
-  'page_quality describes the scan itself (focus, lighting, skew), not the handwriting.',
-].join(' ');
+/**
+ * System prompt for the transcription pass. `onQuestionPaper` switches it from
+ * the usual "student wrote answers (and the question number) on a blank sheet"
+ * assumption to "student wrote their answers BY HAND directly on the printed
+ * question paper" — there the question numbers are PRINTED, not handwritten, so
+ * answers must be associated with the printed number/sub-part they sit under
+ * (otherwise every answer would be dropped as "no question number written").
+ */
+function extractionSystem(onQuestionPaper: boolean): string {
+  return [
+    'You transcribe handwritten exam answers from a scanned page. You are an OCR engine, NOT an examiner.',
+    'Never grade, correct, complete, improve or comment on the content. Transcribe only what is physically written in handwriting.',
+    'CRITICAL: transcribe HANDWRITTEN student work only. Ignore printed question-paper text, printed mark schemes, headers, footers, "Working Space", "Answers", "three from", tick boxes, and any typed/printed table that is part of the question — never transcribe printed text as the answer.',
+    onQuestionPaper
+      ? 'CRITICAL: the student wrote their answers BY HAND directly on this printed question paper, in the spaces under or beside each printed question. They did NOT re-write the question numbers, so use the PRINTED question number and sub-part each handwritten answer sits under to identify it. Never invent an answer where there is no handwriting.'
+      : 'CRITICAL: never invent an answer for a question that does not appear on this page. If a question number is not written on this page, omit it entirely.',
+    'If a question number is written but nothing is written after it, return it with text "" and legible true (the student left it blank).',
+    'If something is written but you genuinely cannot make out the words, return your best partial reading, set legible to false, and set a low confidence. Do NOT guess at plausible exam content to fill the gap.',
+    'confidence is your honest 0-1 certainty that your transcription matches the ink on the page. Use a value below 0.3 when the writing is mostly unreadable.',
+    onQuestionPaper
+      ? 'Match each handwritten answer to the PRINTED question number and sub-part it is written under (the student wrote on the question paper itself). Use part_label for the sub-part, e.g. "(a)", "(b)(ii)". Use "" when there is no sub-part.'
+      : 'Match each answer to the question number the student wrote next to it. Use part_label for sub-parts, e.g. "(a)", "(b)(ii)". Use "" when the answer has no sub-part label.',
+    'For a multiple-choice answer sheet, put the chosen letter in selected_option and leave text "".',
+    'Transcribe mathematical working, tables the student filled in, and chemical formulae as written, in plain text.',
+    'Return JSON ONLY: { "page_quality": "good"|"fair"|"poor", "header_text": string, "fragments": [ { "question_number": string, "part_label": string, "text": string, "selected_option": string, "legible": boolean, "confidence": number, "note": string } ] }',
+    'header_text is any printed paper title, subject name or paper code visible on the page (used to detect a wrong upload); "" if none.',
+    'page_quality describes the scan itself (focus, lighting, skew), not the handwriting.',
+  ].join(' ');
+}
 
 function asFragment(raw: Record<string, unknown>, page: number): RawFragment | null {
   const questionNumber = String(raw.question_number ?? '').trim();
@@ -121,13 +135,19 @@ function labelVocabulary(questions: GradeQuestion[]): string {
   );
 }
 
-async function transcribePage(page: PageImage, questions: GradeQuestion[], isMcqPaper: boolean): Promise<PageResult> {
+async function transcribePage(
+  page: PageImage, questions: GradeQuestion[], isMcqPaper: boolean, onQuestionPaper: boolean,
+): Promise<PageResult> {
   const images: GrokImage[] = [{ base64: page.base64, mimeType: page.mimeType }];
   const user = [
-    `This is page ${page.page} of a student's handwritten answer sheet.`,
+    onQuestionPaper
+      ? `This is page ${page.page} of the printed question paper with the student's answers written BY HAND on it.`
+      : `This is page ${page.page} of a student's handwritten answer sheet.`,
     isMcqPaper
       ? 'It is a multiple-choice answer sheet: report the option letter the student marked for each question number.'
-      : 'Transcribe every answer written on this page.',
+      : onQuestionPaper
+        ? 'Transcribe every handwritten answer on this page, and label it with the printed question number and sub-part it is written under.'
+        : 'Transcribe every answer written on this page.',
     'The paper being attempted has these question numbers and sub-part labels. Use them to normalise the labels you report,',
     'but ONLY report questions actually written on this page:',
     labelVocabulary(questions),
@@ -135,7 +155,7 @@ async function transcribePage(page: PageImage, questions: GradeQuestion[], isMcq
 
   try {
     const parsed = await grokChatJson({
-      system: EXTRACTION_SYSTEM,
+      system: extractionSystem(onQuestionPaper),
       user,
       images,
       model: grokVisionModel(),
@@ -393,6 +413,12 @@ export async function extractHandwrittenAnswers(
      * answer to its question.
      */
     singleQuestion?: boolean;
+    /**
+     * The student wrote their answers directly on the printed question paper
+     * (the "draw on the paper" flow), so answers are keyed off the PRINTED
+     * question numbers rather than handwritten ones.
+     */
+    onQuestionPaper?: boolean;
   },
 ): Promise<ExtractionOutcome> {
   const warnings: string[] = [];
@@ -408,7 +434,8 @@ export async function extractHandwrittenAnswers(
   }
 
   const isMcqPaper = options?.isMcqPaper ?? questions.every((q) => q.type === 'mcq');
-  const results = await mapPool(pages, PAGE_CONCURRENCY, (page) => transcribePage(page, questions, isMcqPaper));
+  const onQuestionPaper = options?.onQuestionPaper === true;
+  const results = await mapPool(pages, PAGE_CONCURRENCY, (page) => transcribePage(page, questions, isMcqPaper, onQuestionPaper));
 
   for (const result of results) {
     if (result.error) warnings.push(`Page ${result.page} could not be read (${result.error}).`);
