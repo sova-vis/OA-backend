@@ -13,7 +13,7 @@ import { logAudit } from './lib/audit';
 import { getLimits, markingQuotaStatus, askAiUsage, countActiveTeachers, countStudents } from './lib/quota';
 import { createStaffAccount, schoolShortCode, resetStaffPassword, updateStaffEmail } from './services/staffAccounts';
 import { schoolTotals } from './lib/schoolStats';
-import { deleteSchoolCascade } from './services/cascadeDelete';
+import { deleteSchoolCascade, deleteAccountByRole } from './services/cascadeDelete';
 
 const router = Router();
 router.use(clerkAuth, requireOwner);
@@ -309,6 +309,41 @@ router.delete('/schools/:id', async (req: ActorRequest, res: Response) => {
     const e = err as { statusCode?: number; message?: string };
     console.error('DELETE /owner/schools/:id', err);
     return res.status(e.statusCode || 500).json({ error: e.message || 'Failed to delete school' });
+  }
+});
+
+// DELETE /owner/users/:clerkId — hard-delete ANY account (teacher / school_admin /
+// student) with the right cascade (classes, assignments, submissions, enrolments,
+// profile, Auth user). Requires the exact account email retyped in `confirm`.
+// Owner/admin accounts, and the caller's own account, can't be deleted here.
+router.delete('/users/:clerkId', async (req: ActorRequest, res: Response) => {
+  try {
+    const clerkId = req.params.clerkId;
+    const { data } = await supabase
+      .from('profiles').select('clerk_id, email, role, full_name').eq('clerk_id', clerkId).maybeSingle();
+    const p = data as { email?: string; role?: string; full_name?: string } | null;
+    if (!p) return res.status(404).json({ error: 'User not found' });
+    if (clerkId === req.actor?.clerkId) return res.status(400).json({ error: 'You cannot delete your own account here.' });
+    if (p.role === 'owner' || p.role === 'admin') return res.status(403).json({ error: 'Owner and admin accounts cannot be deleted here.' });
+
+    const email = (p.email || '').trim();
+    const typed = String(req.body?.confirm ?? '').trim();
+    if (!email || typed.toLowerCase() !== email.toLowerCase()) {
+      return res.status(400).json({ error: 'The email you typed does not match this account.' });
+    }
+
+    // Log before the rows are gone.
+    await logAudit({
+      actorClerkId: req.actor?.clerkId, actorRole: req.actor?.role,
+      action: 'user.delete', targetType: 'profile', targetId: clerkId,
+      before: { email, role: p.role, full_name: p.full_name },
+    });
+    await deleteAccountByRole(clerkId, p.role || 'student');
+    return res.json({ ok: true, role: p.role, email });
+  } catch (err: unknown) {
+    const e = err as { statusCode?: number; message?: string };
+    console.error('DELETE /owner/users/:clerkId', err);
+    return res.status(e.statusCode || 500).json({ error: e.message || 'Failed to delete account' });
   }
 });
 

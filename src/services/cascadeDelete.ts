@@ -78,6 +78,30 @@ export async function deleteStaffAccount(clerkId: string): Promise<void> {
   try { await admin.auth.admin.deleteUser(clerkId); } catch { /* best-effort */ }
 }
 
+/** Hard-delete a STUDENT: their submissions (+answers+marks), enrolments, clerk-keyed
+ * rows, profile, Auth user. Mirrors the student path of /auth/delete-account. */
+export async function deleteStudentAccount(clerkId: string): Promise<void> {
+  const { data: subs } = await supabase.from('submissions').select('id').eq('student_clerk_id', clerkId);
+  const sIds = ((subs ?? []) as { id: string }[]).map((s) => s.id);
+  if (sIds.length) {
+    await supabase.from('submission_marks').delete().in('submission_id', sIds);
+    await supabase.from('submission_answers').delete().in('submission_id', sIds);
+    await supabase.from('submissions').delete().in('id', sIds);
+  }
+  await supabase.from('class_enrollments').delete().eq('student_clerk_id', clerkId);
+  await supabase.from('scope_grants').delete().eq('user_clerk_id', clerkId);
+  await supabase.from('notifications').delete().eq('recipient_clerk_id', clerkId);
+  await supabase.from('profiles').delete().eq('clerk_id', clerkId);
+  try { await admin.auth.admin.deleteUser(clerkId); } catch { /* best-effort */ }
+}
+
+/** Route an account to the right cascade by role (owner/admin are not deletable here). */
+export async function deleteAccountByRole(clerkId: string, role: string): Promise<void> {
+  if (role === 'teacher') return deleteTeacherCascade(clerkId);
+  if (role === 'school_admin') return deleteStaffAccount(clerkId);
+  return deleteStudentAccount(clerkId);
+}
+
 /** Clear ONE student's submissions (+answers+marks) for a single class's assignments. */
 export async function clearStudentSubmissionsForClass(classId: string, studentClerkId: string): Promise<void> {
   const { data: aqs } = await supabase.from('assignments').select('id').eq('class_id', classId);
