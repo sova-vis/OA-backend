@@ -124,11 +124,13 @@ async function studentQuestionPayload(assignmentId: string) {
       bankMap.set(q.id, { type: q.type, question_text: q.question_text, options: q.options, marks: q.marks, images: q.images });
     }
   }
-  const customMap = new Map<string, { question_type: string; question_text: string; marks: number }>();
+  const customMap = new Map<string, { question_type: string; question_text: string; marks: number; images: unknown; parts: unknown }>();
   if (customIds.length > 0) {
-    const { data } = await supabase.from('custom_questions').select('id, question_type, question_text, marks').in('id', customIds);
-    for (const q of (data ?? []) as { id: string; question_type: string; question_text: string; marks: number }[]) {
-      customMap.set(q.id, { question_type: q.question_type, question_text: q.question_text, marks: q.marks });
+    // select('*') so the (optional) parts/images columns come through once migration
+    // 032 is applied — and are simply absent (→ []) before it is.
+    const { data } = await supabase.from('custom_questions').select('*').in('id', customIds);
+    for (const q of (data ?? []) as { id: string; question_type: string; question_text: string; marks: number; images?: unknown; parts?: unknown }[]) {
+      customMap.set(q.id, { question_type: q.question_type, question_text: q.question_text, marks: q.marks, images: q.images, parts: q.parts });
     }
   }
   // Structured sub-parts (a, b, c…) so the full question reaches the student —
@@ -148,6 +150,14 @@ async function studentQuestionPayload(assignmentId: string) {
   return rows.map((r) => {
     if (r.source === 'custom' && r.custom_question_id) {
       const c = customMap.get(r.custom_question_id);
+      const customParts = Array.isArray(c?.parts)
+        ? (c!.parts as { label?: string; body?: string; marks?: number | null; images?: unknown }[]).map((p) => ({
+            label: p.label ?? '',
+            body: p.body ?? '',
+            marks: p.marks ?? null,
+            images: normalizeQuestionImages(p.images),
+          }))
+        : [];
       return {
         assignment_question_id: r.id,
         order_index: r.order_index,
@@ -155,6 +165,10 @@ async function studentQuestionPayload(assignmentId: string) {
         question_text: c?.question_text ?? '',
         options: [],
         marks: c?.marks ?? r.marks ?? 0,
+        // Rich custom questions carry their own figures + labelled parts, shaped
+        // exactly like bank questions so the shared renderer shows them.
+        images: normalizeQuestionImages(c?.images),
+        parts: customParts,
       };
     }
     const b = r.question_uid ? bankMap.get(r.question_uid) : undefined;

@@ -146,6 +146,27 @@ router.get('/queue', async (req: AuthenticatedRequest, res: Response) => {
       }
     }
 
+    // Custom questions carry their own text + figures + labelled parts.
+    const customIds = ((aqs ?? []) as Record<string, unknown>[])
+      .filter((q) => q.source === 'custom' && q.custom_question_id)
+      .map((q) => q.custom_question_id as string);
+    if (customIds.length > 0) {
+      const { data: cqs } = await supabase.from('custom_questions').select('*').in('id', customIds);
+      const byId = new Map<string, Record<string, unknown>>();
+      for (const c of (cqs ?? []) as Record<string, unknown>[]) byId.set(c.id as string, c);
+      for (const q of (aqs ?? []) as Record<string, unknown>[]) {
+        if (q.source !== 'custom' || !q.custom_question_id) continue;
+        const c = byId.get(q.custom_question_id as string);
+        if (!c) continue;
+        if (c.question_text) qTextByAq.set(q.id as string, c.question_text as string);
+        qImagesByAq.set(q.id as string, questionFigures(c.images));
+        const cparts = Array.isArray(c.parts)
+          ? (c.parts as { label?: string; body?: string; marks?: number | null }[]).map((p) => ({ label: p.label ?? '', body: p.body ?? '', marks: p.marks ?? null }))
+          : [];
+        qPartsByAq.set(q.id as string, cparts);
+      }
+    }
+
     // Names.
     const studentIds = Array.from(new Set(subRows.map((s) => s.student_clerk_id)));
     const nameMap = new Map<string, string>();

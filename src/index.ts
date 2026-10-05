@@ -221,6 +221,10 @@ app.use(cors({
   },
   credentials: true,
 }));
+// Custom questions can carry figure images as data URLs, so this route needs more
+// headroom than the global 2mb body limit. The first JSON parser to read the body
+// wins, so register this before the global one below.
+app.use('/custom-questions', express.json({ limit: '16mb' }));
 app.use(express.json({
   limit: '2mb',
   // Stash the raw body so the Safepay webhook can verify its signature against the
