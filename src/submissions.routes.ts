@@ -743,6 +743,21 @@ router.get('/assignment/:assignmentId', async (req: AuthenticatedRequest, res: R
     const subMap = new Map<string, Record<string, unknown>>();
     for (const s of (subs ?? []) as Record<string, unknown>[]) subMap.set(s.student_clerk_id as string, s);
 
+    // Which submissions are fully reviewed (every mark approved/overridden/auto) —
+    // powers the "Reviewed" status badge on each student row of the board.
+    const REVIEWED_STATUSES = ['approved', 'overridden', 'auto_approved'];
+    const subIds = Array.from(subMap.values()).map((s) => s.id as string).filter(Boolean);
+    const { data: markRows } = subIds.length
+      ? await supabase.from('submission_marks').select('submission_id, status').in('submission_id', subIds)
+      : { data: [] as { submission_id: string; status: string }[] };
+    const markAgg = new Map<string, { total: number; reviewed: number }>();
+    for (const m of (markRows ?? []) as { submission_id: string; status: string }[]) {
+      const agg = markAgg.get(m.submission_id) ?? { total: 0, reviewed: 0 };
+      agg.total += 1;
+      if (REVIEWED_STATUSES.includes(m.status)) agg.reviewed += 1;
+      markAgg.set(m.submission_id, agg);
+    }
+
     const now = new Date();
     const deadlinePassed = assignment.deadline_at ? now > new Date(assignment.deadline_at) : false;
 
@@ -754,6 +769,7 @@ router.get('/assignment/:assignmentId', async (req: AuthenticatedRequest, res: R
       else if (s.status === 'submitted' || s.status === 'late') status = s.status as string;
       else if (s.status === 'returned') status = 'returned';
       else status = 'in_progress';
+      const agg = s ? markAgg.get(s.id as string) : undefined;
       return {
         student_clerk_id: id,
         full_name: info?.full_name ?? null,
@@ -765,6 +781,7 @@ router.get('/assignment/:assignmentId', async (req: AuthenticatedRequest, res: R
         total_score: s?.total_score ?? null,
         total_marks: s?.total_marks ?? null,
         released: Boolean(s?.released_at),
+        reviewed: Boolean(agg && agg.total > 0 && agg.reviewed === agg.total),
       };
     });
 
