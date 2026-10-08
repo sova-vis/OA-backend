@@ -613,6 +613,9 @@ router.get('/result/:assignmentId', async (req: AuthenticatedRequest, res: Respo
         // A voice note is deliberate per-question feedback the teacher recorded
         // for this student — always deliver it once results are released.
         voice_note: m.voice_note ?? null,
+        // Red-pen annotations (ticks / crosses / notes) on the student's answer —
+        // delivered as the teacher left them once results are released.
+        annotations: Array.isArray(m.annotations) ? m.annotations : [],
         // §11.3 breakdown: only if enabled.
         criteria: release.breakdown
           ? finalCriteria.map((c, i) => ({

@@ -47,6 +47,30 @@ function questionFigures(images: unknown): { src: string; alt: string; caption: 
     .filter((im) => im.src);
 }
 
+interface StoredAnnotation { id: string; kind: 'note' | 'tick' | 'cross'; x: number; y: number; text?: string }
+/** Validate + clamp teacher annotations before storing (caps count + text length). */
+function normalizeAnnotations(input: unknown): StoredAnnotation[] {
+  if (!Array.isArray(input)) return [];
+  const out: StoredAnnotation[] = [];
+  for (const raw of input.slice(0, 300)) {
+    if (!raw || typeof raw !== 'object') continue;
+    const r = raw as Record<string, unknown>;
+    const kind = r.kind === 'tick' || r.kind === 'cross' || r.kind === 'note' ? r.kind : null;
+    if (!kind) continue;
+    const x = Number(r.x), y = Number(r.y);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+    const a: StoredAnnotation = {
+      id: typeof r.id === 'string' && r.id ? r.id.slice(0, 48) : `a${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`,
+      kind,
+      x: Math.max(0, Math.min(100, x)),
+      y: Math.max(0, Math.min(100, y)),
+    };
+    if (kind === 'note' && typeof r.text === 'string') a.text = r.text.slice(0, 2000);
+    out.push(a);
+  }
+  return out;
+}
+
 async function logActivity(actor: string, eventType: string, targetType: string, targetId: string, detail: Record<string, unknown>) {
   await supabase.from('activity_log').insert({ actor_clerk_id: actor, event_type: eventType, target_type: targetType, target_id: targetId, detail });
 }
@@ -241,6 +265,7 @@ router.get('/queue', async (req: AuthenticatedRequest, res: Response) => {
         flagged: m.flagged ?? false,
         examiner_note: examinerByAq.get(m.assignment_question_id as string) ?? null,
         voice_note: m.voice_note ?? null,
+        annotations: Array.isArray(m.annotations) ? m.annotations : [],
       };
     });
 
@@ -397,6 +422,22 @@ router.post('/marks/:id/voice', async (req: AuthenticatedRequest, res: Response)
   } catch (err) {
     console.error('Voice note error:', err);
     return res.status(500).json({ error: 'Failed to save voice note' });
+  }
+});
+
+// POST /review/marks/:id/annotations — save teacher "red pen" marks on the answer
+// (ticks / crosses / note pins). Replaces the mark's annotation set.
+router.post('/marks/:id/annotations', async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const ctx = await loadMarkContext(req.params.id, req.auth!.clerkId);
+    if (!ctx || !ctx.access) return res.status(404).json({ error: 'Mark not found' });
+    if (!ctx.access.canGrade) return res.status(403).json({ error: 'No grading access' });
+    const annotations = normalizeAnnotations((req.body as { annotations?: unknown })?.annotations);
+    await supabase.from('submission_marks').update({ annotations, updated_at: new Date().toISOString() }).eq('id', req.params.id);
+    return res.json({ ok: true, annotations });
+  } catch (err) {
+    console.error('Save annotations error:', err);
+    return res.status(500).json({ error: 'Failed to save annotations' });
   }
 });
 
