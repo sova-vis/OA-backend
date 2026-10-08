@@ -13,6 +13,7 @@
 import { createClient } from '@supabase/supabase-js';
 import crypto from 'crypto';
 import { supabase } from '../lib/supabase';
+import { encryptSecret } from '../lib/secretBox';
 
 const admin = createClient(
   process.env.SUPABASE_URL || '',
@@ -143,10 +144,14 @@ export async function createStaffAccount(input: CreateStaffInput): Promise<Creat
     role: input.role,
     school_id: input.schoolId,
     onboarding_complete: true,
-    // Only force a reset for a freshly issued temp password, not for an existing
-    // user we're promoting (they keep their own password).
-    must_change_password: !existed,
+    // Staff logins are admin-managed and shown in the owner / school-admin panels,
+    // so we DON'T force a first-sign-in reset — that would make the shown password
+    // go stale the moment they changed it. (A promoted existing user keeps theirs.)
+    must_change_password: false,
   };
+  // Store the issued password (encrypted at rest) so the panels can display the
+  // current credential — only for a NEW account whose password we actually set.
+  if (!existed) profileFields.visible_password = encryptSecret(tempPassword);
   if (input.subjects) profileFields.syllabus_codes = input.subjects;
   if (input.levels) profileFields.levels = input.levels;
   if (input.createdBy) profileFields.provisioned_by = input.createdBy;
@@ -168,7 +173,11 @@ export async function resetStaffPassword(clerkId: string): Promise<string> {
   const tempPassword = generatePassword();
   const { error } = await admin.auth.admin.updateUserById(clerkId, { password: tempPassword });
   if (error) throw Object.assign(new Error(error.message || 'Failed to reset password'), { statusCode: 500 });
-  await supabase.from('profiles').update({ must_change_password: true, updated_at: new Date().toISOString() }).eq('clerk_id', clerkId);
+  // Store the new password (encrypted) and don't force a change — it becomes the
+  // admin-managed login the panels display.
+  await supabase.from('profiles')
+    .update({ must_change_password: false, visible_password: encryptSecret(tempPassword), updated_at: new Date().toISOString() })
+    .eq('clerk_id', clerkId);
   return tempPassword;
 }
 

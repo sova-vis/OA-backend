@@ -12,6 +12,7 @@ import { supabase } from './lib/supabase';
 import { logAudit } from './lib/audit';
 import { getLimits, markingQuotaStatus, askAiUsage, countActiveTeachers, countStudents } from './lib/quota';
 import { createStaffAccount, schoolShortCode, resetStaffPassword, updateStaffEmail } from './services/staffAccounts';
+import { decryptSecret } from './lib/secretBox';
 import { schoolTotals } from './lib/schoolStats';
 import { deleteSchoolCascade, deleteAccountByRole } from './services/cascadeDelete';
 
@@ -225,11 +226,15 @@ router.get('/schools/:id/admins', async (req: ActorRequest, res: Response) => {
   try {
     const { data, error } = await supabase
       .from('profiles')
-      .select('clerk_id, full_name, email, deactivated_at, must_change_password, created_at')
+      .select('clerk_id, full_name, email, deactivated_at, must_change_password, created_at, visible_password')
       .eq('school_id', req.params.id).eq('role', 'school_admin')
       .order('created_at', { ascending: true });
     if (error) throw error;
-    return res.json({ admins: data ?? [] });
+    const admins = ((data ?? []) as Record<string, unknown>[]).map(({ visible_password, ...rest }) => ({
+      ...rest,
+      password: decryptSecret(visible_password as string | null),
+    }));
+    return res.json({ admins });
   } catch (err: unknown) {
     const e = err as { message?: string };
     console.error('GET /owner/schools/:id/admins', err);

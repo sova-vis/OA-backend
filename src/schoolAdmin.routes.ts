@@ -14,6 +14,7 @@ import { supabase } from './lib/supabase';
 import { logAudit } from './lib/audit';
 import { getLimits, countActiveTeachers, countStudents, markingQuotaStatus, assertCanAddTeachers, CapacityError } from './lib/quota';
 import { createStaffAccount, resetStaffPassword } from './services/staffAccounts';
+import { decryptSecret } from './lib/secretBox';
 import { teacherStats } from './lib/schoolStats';
 import { deleteTeacherCascade } from './services/cascadeDelete';
 
@@ -79,14 +80,18 @@ router.get('/teachers', async (req: ActorRequest, res: Response) => {
   try {
     const { data } = await supabase
       .from('profiles')
-      .select('clerk_id, full_name, email, syllabus_codes, levels, deactivated_at, must_change_password, created_at')
+      .select('clerk_id, full_name, email, syllabus_codes, levels, deactivated_at, must_change_password, created_at, visible_password')
       .eq('school_id', schoolId(req))
       .eq('role', 'teacher')
       .order('full_name', { ascending: true });
-    const teachers = (data as { clerk_id: string }[]) ?? [];
-    const stats = await teacherStats(teachers.map((t) => t.clerk_id));
+    const rows = (data as Record<string, unknown>[]) ?? [];
+    const stats = await teacherStats(rows.map((t) => t.clerk_id as string));
     return res.json({
-      teachers: teachers.map((t) => ({ ...t, stats: stats.get(t.clerk_id) ?? { classes: 0, students: 0, assignments: 0 } })),
+      teachers: rows.map(({ visible_password, ...t }) => ({
+        ...t,
+        password: decryptSecret(visible_password as string | null),
+        stats: stats.get(t.clerk_id as string) ?? { classes: 0, students: 0, assignments: 0 },
+      })),
     });
   } catch (err: unknown) {
     console.error('GET /school-admin/teachers', err);
