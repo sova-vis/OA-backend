@@ -35,6 +35,7 @@ import ownerRoutes from './owner.routes';
 import schoolAdminRoutes from './schoolAdmin.routes';
 import datesheetRoutes from './datesheet.routes';
 import billingRoutes from './billing.routes';
+import askChatsRoutes from './askChats.routes';
 import { clerkAuth, warmupClerkVerifier } from './lib/clerkAuth';
 import { warmupEmbedder } from './lib/askai/embed';
 import { requirePro, BILLING_ENFORCED } from './lib/entitlements';
@@ -263,6 +264,7 @@ app.use('/tracking', paperTrackingRoutes);
 
 // Practice-paper progress API (autosave, timers, handwritten uploads)
 app.use('/practice', practiceProgressRoutes);
+app.use('/ask-chats', clerkAuth, askChatsRoutes);
 app.use('/dev', clerkAuth, devRoutes);
 
 // AI marking for practice papers (Grok text + vision) — auth + Pro gate + AI limit
