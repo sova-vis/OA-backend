@@ -225,6 +225,10 @@ app.use(cors({
 // headroom than the global 2mb body limit. The first JSON parser to read the body
 // wins, so register this before the global one below.
 app.use('/custom-questions', express.json({ limit: '16mb' }));
+// Handwritten answer photos (base64) also exceed the global 2mb limit; without this
+// a clear (large) photo is rejected with 413 before it can be stored or transcribed,
+// so the student sees "couldn't read" and the teacher never receives the image.
+app.use('/submissions', express.json({ limit: '16mb' }));
 app.use(express.json({
   limit: '2mb',
   // Stash the raw body so the Safepay webhook can verify its signature against the

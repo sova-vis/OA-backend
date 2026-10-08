@@ -491,7 +491,9 @@ router.post('/:id/answer/ocr', aiLimit, async (req: AuthenticatedRequest, res: R
         ocr_status: ocrStatus,
         // OCR text becomes the answer used for marking; teacher can correct it.
         answer_text: ocrText || null,
-        answered: Boolean(ocrText),
+        // An uploaded image IS an answer even when auto-transcription fails, so the
+        // question counts as answered and the photo reaches the teacher's review.
+        answered: images.length > 0 || Boolean(ocrText),
         updated_at: new Date().toISOString(),
       },
       { onConflict: 'submission_id,assignment_question_id' }
