@@ -695,12 +695,15 @@ router.get('/weak-spots', async (req: AuthenticatedRequest, res: Response) => {
       supabase.from('assignment_questions').select('id, snapshot').in('assignment_id', asgIds),
     ]);
     const topicByAq = new Map<string, string>();
-    for (const q of (aqs ?? []) as { id: string; snapshot: Record<string, unknown> }[]) topicByAq.set(q.id, String(q.snapshot?.topic ?? 'General'));
+    for (const q of (aqs ?? []) as { id: string; snapshot: Record<string, unknown> }[]) {
+      const t = String(q.snapshot?.topic ?? '').trim();
+      topicByAq.set(q.id, t || 'Overall');
+    }
 
     // topic -> { missed, total, mistakes[] }
     const byTopic = new Map<string, { missed: number; total: number; mistakes: string[] }>();
     for (const m of (marks ?? []) as Record<string, unknown>[]) {
-      const topic = topicByAq.get(m.assignment_question_id as string) || 'General';
+      const topic = topicByAq.get(m.assignment_question_id as string) || 'Overall';
       const criteria = (m.final_criteria ?? m.ai_criteria ?? []) as { criterion_text?: string; awarded?: boolean }[];
       const entry = byTopic.get(topic) ?? { missed: 0, total: 0, mistakes: [] };
       for (const c of criteria) {
@@ -720,7 +723,7 @@ router.get('/weak-spots', async (req: AuthenticatedRequest, res: Response) => {
       accuracy: v.total > 0 ? Math.round(((v.total - v.missed) / v.total) * 100) : 0,
       mistakes: v.mistakes,
     }))
-      .filter((t) => t.missed > 0 && t.topic !== 'General')
+      .filter((t) => t.missed > 0)
       .sort((a, b) => b.missed - a.missed)
       .slice(0, 6);
 
